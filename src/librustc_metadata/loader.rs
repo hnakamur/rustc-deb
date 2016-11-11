@@ -212,15 +212,15 @@
 //! no means all of the necessary details. Take a look at the rest of
 //! metadata::loader or metadata::creader for all the juicy details!
 
-use cstore::{MetadataBlob, MetadataVec, MetadataArchive};
-use common::{metadata_encoding_version, rustc_version};
-use decoder;
+use cstore::MetadataBlob;
+use schema::{METADATA_HEADER, RUSTC_VERSION};
 
 use rustc::hir::svh::Svh;
 use rustc::session::Session;
 use rustc::session::filesearch::{FileSearch, FileMatches, FileDoesntMatch};
 use rustc::session::search_paths::PathKind;
 use rustc::util::common;
+use rustc::util::nodemap::FnvHashMap;
 
 use rustc_llvm as llvm;
 use rustc_llvm::{False, ObjectFile, mk_section_iter};
@@ -230,7 +230,6 @@ use syntax_pos::Span;
 use rustc_back::target::Target;
 
 use std::cmp;
-use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -342,9 +341,11 @@ impl<'a> Context<'a> {
                              "found crate `{}` compiled by an incompatible version of rustc{}",
                              self.ident, add)
         } else {
-            struct_span_err!(self.sess, self.span, E0463,
-                             "can't find crate for `{}`{}",
-                             self.ident, add)
+            let mut err = struct_span_err!(self.sess, self.span, E0463,
+                                           "can't find crate for `{}`{}",
+                                           self.ident, add);
+            err.span_label(self.span, &format!("can't find crate"));
+            err
         };
 
         if !self.rejected_via_triple.is_empty() {
@@ -381,7 +382,7 @@ impl<'a> Context<'a> {
         }
         if !self.rejected_via_version.is_empty() {
             err.help(&format!("please recompile that crate using this compiler ({})",
-                              rustc_version()));
+                              RUSTC_VERSION));
             let mismatches = self.rejected_via_version.iter();
             for (i, &CrateMismatch { ref path, ref got }) in mismatches.enumerate() {
                 err.note(&format!("crate `{}` path #{}: {} compiled by {:?}",
@@ -413,7 +414,7 @@ impl<'a> Context<'a> {
         let rlib_prefix = format!("lib{}", self.crate_name);
         let staticlib_prefix = format!("{}{}", staticpair.0, self.crate_name);
 
-        let mut candidates = HashMap::new();
+        let mut candidates = FnvHashMap();
         let mut staticlibs = vec!();
 
         // First, find all possible candidate rlibs and dylibs purely based on
@@ -456,7 +457,7 @@ impl<'a> Context<'a> {
 
             let hash_str = hash.to_string();
             let slot = candidates.entry(hash_str)
-                                 .or_insert_with(|| (HashMap::new(), HashMap::new()));
+                                 .or_insert_with(|| (FnvHashMap(), FnvHashMap()));
             let (ref mut rlibs, ref mut dylibs) = *slot;
             fs::canonicalize(path).map(|p| {
                 if rlib {
@@ -477,7 +478,7 @@ impl<'a> Context<'a> {
         // A Library candidate is created if the metadata for the set of
         // libraries corresponds to the crate id and hash criteria that this
         // search is being performed for.
-        let mut libraries = HashMap::new();
+        let mut libraries = FnvHashMap();
         for (_hash, (rlibs, dylibs)) in candidates {
             let mut slot = None;
             let rlib = self.extract_one(rlibs, CrateFlavor::Rlib, &mut slot);
@@ -509,9 +510,7 @@ impl<'a> Context<'a> {
                     if let Some((ref p, _)) = lib.rlib {
                         err.note(&format!("path: {}", p.display()));
                     }
-                    let data = lib.metadata.as_slice();
-                    let name = decoder::get_crate_name(data);
-                    note_crate_name(&mut err, &name);
+                    note_crate_name(&mut err, &lib.metadata.get_root().name);
                 }
                 err.emit();
                 None
@@ -527,7 +526,7 @@ impl<'a> Context<'a> {
     // read the metadata from it if `*slot` is `None`. If the metadata couldn't
     // be read, it is assumed that the file isn't a valid rust library (no
     // errors are emitted).
-    fn extract_one(&mut self, m: HashMap<PathBuf, PathKind>, flavor: CrateFlavor,
+    fn extract_one(&mut self, m: FnvHashMap<PathBuf, PathKind>, flavor: CrateFlavor,
                    slot: &mut Option<(Svh, MetadataBlob)>) -> Option<(PathBuf, PathKind)> {
         let mut ret: Option<(PathBuf, PathKind)> = None;
         let mut error = 0;
@@ -549,7 +548,7 @@ impl<'a> Context<'a> {
             info!("{} reading metadata from: {}", flavor, lib.display());
             let (hash, metadata) = match get_metadata_section(self.target, flavor, &lib) {
                 Ok(blob) => {
-                    if let Some(h) = self.crate_matches(blob.as_slice(), &lib) {
+                    if let Some(h) = self.crate_matches(&blob, &lib) {
                         (h, blob)
                     } else {
                         info!("metadata mismatch");
@@ -596,45 +595,38 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn crate_matches(&mut self, crate_data: &[u8], libpath: &Path) -> Option<Svh> {
-        let crate_rustc_version = decoder::crate_rustc_version(crate_data);
-        if crate_rustc_version != Some(rustc_version()) {
-            let message = crate_rustc_version.unwrap_or(format!("an unknown compiler"));
-            info!("Rejecting via version: expected {} got {}", rustc_version(), message);
+    fn crate_matches(&mut self, metadata: &MetadataBlob, libpath: &Path) -> Option<Svh> {
+        let root = metadata.get_root();
+        if root.rustc_version != RUSTC_VERSION {
+            info!("Rejecting via version: expected {} got {}",
+                  RUSTC_VERSION, root.rustc_version);
             self.rejected_via_version.push(CrateMismatch {
                 path: libpath.to_path_buf(),
-                got: message
+                got: root.rustc_version
             });
             return None;
         }
 
         if self.should_match_name {
-            match decoder::maybe_get_crate_name(crate_data) {
-                Some(ref name) if self.crate_name == *name => {}
-                _ => { info!("Rejecting via crate name"); return None }
+            if self.crate_name != root.name {
+                info!("Rejecting via crate name"); return None;
             }
         }
-        let hash = match decoder::maybe_get_crate_hash(crate_data) {
-            None => { info!("Rejecting via lack of crate hash"); return None; }
-            Some(h) => h,
-        };
 
-        let triple = match decoder::get_crate_triple(crate_data) {
-            None => { debug!("triple not present"); return None }
-            Some(t) => t,
-        };
-        if triple != self.triple {
-            info!("Rejecting via crate triple: expected {} got {}", self.triple, triple);
+        if root.triple != self.triple {
+            info!("Rejecting via crate triple: expected {} got {}",
+                  self.triple, root.triple);
             self.rejected_via_triple.push(CrateMismatch {
                 path: libpath.to_path_buf(),
-                got: triple.to_string()
+                got: root.triple
             });
             return None;
         }
 
         if let Some(myhash) = self.hash {
-            if *myhash != hash {
-                info!("Rejecting via hash: expected {} got {}", *myhash, hash);
+            if *myhash != root.hash {
+                info!("Rejecting via hash: expected {} got {}",
+                      *myhash, root.hash);
                 self.rejected_via_hash.push(CrateMismatch {
                     path: libpath.to_path_buf(),
                     got: myhash.to_string()
@@ -643,7 +635,7 @@ impl<'a> Context<'a> {
             }
         }
 
-        Some(hash)
+        Some(root.hash)
     }
 
 
@@ -669,8 +661,8 @@ impl<'a> Context<'a> {
         // rlibs/dylibs.
         let sess = self.sess;
         let dylibname = self.dylibname();
-        let mut rlibs = HashMap::new();
-        let mut dylibs = HashMap::new();
+        let mut rlibs = FnvHashMap();
+        let mut dylibs = FnvHashMap();
         {
             let locs = locs.map(|l| PathBuf::from(l)).filter(|loc| {
                 if !loc.exists() {
@@ -764,11 +756,7 @@ impl ArchiveMetadata {
 fn verify_decompressed_encoding_version(blob: &MetadataBlob, filename: &Path)
                                         -> Result<(), String>
 {
-    let data = blob.as_slice_raw();
-    if data.len() < 4+metadata_encoding_version.len() ||
-        !<[u8]>::eq(&data[..4], &[0, 0, 0, 0]) ||
-        &data[4..4+metadata_encoding_version.len()] != metadata_encoding_version
-    {
+    if !blob.is_compatible() {
         Err((format!("incompatible metadata version found: '{}'",
                      filename.display())))
     } else {
@@ -803,11 +791,11 @@ fn get_metadata_section_imp(target: &Target, flavor: CrateFlavor, filename: &Pat
                                    filename.display()));
             }
         };
-        return match ArchiveMetadata::new(archive).map(|ar| MetadataArchive(ar)) {
+        return match ArchiveMetadata::new(archive).map(|ar| MetadataBlob::Archive(ar)) {
             None => Err(format!("failed to read rlib metadata: '{}'",
                                 filename.display())),
             Some(blob) => {
-                try!(verify_decompressed_encoding_version(&blob, filename));
+                verify_decompressed_encoding_version(&blob, filename)?;
                 Ok(blob)
             }
         };
@@ -838,12 +826,12 @@ fn get_metadata_section_imp(target: &Target, flavor: CrateFlavor, filename: &Pat
                 let cbuf = llvm::LLVMGetSectionContents(si.llsi);
                 let csz = llvm::LLVMGetSectionSize(si.llsi) as usize;
                 let cvbuf: *const u8 = cbuf as *const u8;
-                let vlen = metadata_encoding_version.len();
+                let vlen = METADATA_HEADER.len();
                 debug!("checking {} bytes of metadata-version stamp",
                        vlen);
                 let minsz = cmp::min(vlen, csz);
                 let buf0 = slice::from_raw_parts(cvbuf, minsz);
-                let version_ok = buf0 == metadata_encoding_version;
+                let version_ok = buf0 == METADATA_HEADER;
                 if !version_ok {
                     return Err((format!("incompatible metadata version found: '{}'",
                                         filename.display())));
@@ -855,8 +843,8 @@ fn get_metadata_section_imp(target: &Target, flavor: CrateFlavor, filename: &Pat
                 let bytes = slice::from_raw_parts(cvbuf1, csz - vlen);
                 match flate::inflate_bytes(bytes) {
                     Ok(inflated) => {
-                        let blob = MetadataVec(inflated);
-                        try!(verify_decompressed_encoding_version(&blob, filename));
+                        let blob = MetadataBlob::Inflated(inflated);
+                        verify_decompressed_encoding_version(&blob, filename)?;
                         return Ok(blob);
                     }
                     Err(_) => {}
@@ -900,7 +888,7 @@ pub fn list_file_metadata(target: &Target, path: &Path,
     let filename = path.file_name().unwrap().to_str().unwrap();
     let flavor = if filename.ends_with(".rlib") { CrateFlavor::Rlib } else { CrateFlavor::Dylib };
     match get_metadata_section(target, flavor, path) {
-        Ok(bytes) => decoder::list_crate_metadata(bytes.as_slice(), out),
+        Ok(metadata) => metadata.list_crate_metadata(out),
         Err(msg) => {
             write!(out, "{}\n", msg)
         }

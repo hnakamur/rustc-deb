@@ -56,7 +56,7 @@ fn owned_ptr_base_path<'a, 'tcx>(loan_path: &'a LoanPath<'tcx>) -> &'a LoanPath<
                 }
             }
             LpDowncast(ref lp_base, _) |
-            LpExtend(ref lp_base, _, _) => helper(&lp_base)
+            LpExtend(ref lp_base, ..) => helper(&lp_base)
         }
     }
 }
@@ -80,7 +80,7 @@ fn owned_ptr_base_path_rc<'tcx>(loan_path: &Rc<LoanPath<'tcx>>) -> Rc<LoanPath<'
                 }
             }
             LpDowncast(ref lp_base, _) |
-            LpExtend(ref lp_base, _, _) => helper(lp_base)
+            LpExtend(ref lp_base, ..) => helper(lp_base)
         }
     }
 }
@@ -126,7 +126,7 @@ impl<'a, 'tcx> euv::Delegate<'tcx> for CheckLoanCtxt<'a, 'tcx> {
               borrow_id: ast::NodeId,
               borrow_span: Span,
               cmt: mc::cmt<'tcx>,
-              loan_region: ty::Region,
+              loan_region: &'tcx ty::Region,
               bk: ty::BorrowKind,
               loan_cause: euv::LoanCause)
     {
@@ -312,7 +312,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                     break;
                 }
                 LpDowncast(ref lp_base, _) |
-                LpExtend(ref lp_base, _, _) => {
+                LpExtend(ref lp_base, ..) => {
                     loan_path = &lp_base;
                 }
             }
@@ -542,7 +542,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                     err
                 }
 
-                (_, _) => {
+                (..) => {
                     let mut err = struct_span_err!(self.bccx, new_loan.span, E0502,
                                                    "cannot borrow `{}`{} as {} because \
                                                    {} is also borrowed as {}{}",
@@ -647,10 +647,13 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                 struct_span_err!(self.bccx, span, E0503,
                                  "cannot use `{}` because it was mutably borrowed",
                                  &self.bccx.loan_path_to_string(copy_path))
-                    .span_note(loan_span,
+                    .span_label(loan_span,
                                &format!("borrow of `{}` occurs here",
                                        &self.bccx.loan_path_to_string(&loan_path))
                                )
+                    .span_label(span,
+                               &format!("use of borrowed `{}`",
+                                        &self.bccx.loan_path_to_string(&loan_path)))
                     .emit();
             }
         }
@@ -793,7 +796,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
             }
             LpExtend(ref lp_base, _, LpInterior(_, InteriorField(_))) => {
                 match lp_base.to_type().sty {
-                    ty::TyStruct(def, _) | ty::TyEnum(def, _) if def.has_dtor() => {
+                    ty::TyAdt(def, _) if def.has_dtor() => {
                         // In the case where the owner implements drop, then
                         // the path must be initialized to prevent a case of
                         // partial reinitialization

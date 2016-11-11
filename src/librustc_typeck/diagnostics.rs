@@ -572,7 +572,7 @@ impl Foo for Bar {
     // error, expected u16, found i16
     fn foo(x: i16) { }
 
-    // error, values differ in mutability
+    // error, types differ in mutability
     fn bar(&mut self) { }
 }
 ```
@@ -3422,13 +3422,6 @@ containing the unsized type is the last and only unsized type field in the
 struct.
 "##,
 
-E0379: r##"
-Trait methods cannot be declared `const` by design. For more information, see
-[RFC 911].
-
-[RFC 911]: https://github.com/rust-lang/rfcs/pull/911
-"##,
-
 E0380: r##"
 Default impls are only allowed for traits with no methods or associated items.
 For more information see the [opt-in builtin traits RFC](https://github.com/rust
@@ -3773,6 +3766,45 @@ extern "platform-intrinsic" {
 ```
 "##,
 
+E0513: r##"
+The type of the variable couldn't be found out.
+
+Erroneous code example:
+
+```compile_fail,E0513
+use std::mem;
+
+unsafe {
+    let size = mem::size_of::<u32>();
+    mem::transmute_copy::<u32, [u8; size]>(&8_8);
+    // error: no type for local variable
+}
+```
+
+To fix this error, please use a constant size instead of `size`. To make
+this error more obvious, you could run:
+
+```compile_fail,E0080
+use std::mem;
+
+unsafe {
+    mem::transmute_copy::<u32, [u8; mem::size_of::<u32>()]>(&8_8);
+    // error: constant evaluation error
+}
+```
+
+So now, you can fix your code by setting the size directly:
+
+```
+use std::mem;
+
+unsafe {
+    mem::transmute_copy::<u32, [u8; 4]>(&8_8);
+    // `u32` is 4 bytes so we replace the `mem::size_of` call with its size
+}
+```
+"##,
+
 E0516: r##"
 The `typeof` keyword is currently reserved but unimplemented.
 Erroneous code example:
@@ -4018,7 +4050,7 @@ register_diagnostics! {
 //  E0141,
 //  E0159, // use of trait `{}` as struct constructor
 //  E0163, // merged into E0071
-    E0167,
+//  E0167,
 //  E0168,
 //  E0173, // manual implementations of unboxed closure traits are experimental
 //  E0174,
@@ -4053,7 +4085,7 @@ register_diagnostics! {
 //  E0235, // structure constructor specifies a structure of type but
 //  E0236, // no lang item for range syntax
 //  E0237, // no lang item for range syntax
-    E0238, // parenthesized parameters may only be used with a trait
+//  E0238, // parenthesized parameters may only be used with a trait
 //  E0239, // `next` method of `Iterator` trait has unexpected type
 //  E0240,
 //  E0241,
@@ -4071,7 +4103,6 @@ register_diagnostics! {
     E0399, // trait items need to be implemented because the associated
            // type `{}` was overridden
     E0436, // functional record update requires a struct
-    E0513, // no type for local variable ..
     E0521, // redundant default implementations of trait
     E0533, // `{}` does not name a unit variant, unit struct or a constant
     E0562, // `impl Trait` not allowed outside of function
@@ -4079,4 +4110,6 @@ register_diagnostics! {
     E0563, // cannot determine a type for this `impl Trait`: {}
     E0564, // only named lifetimes are allowed in `impl Trait`,
            // but `{}` was found in the type `{}`
+    E0567, // auto traits can not have type parameters
+    E0568, // auto-traits can not have predicates,
 }

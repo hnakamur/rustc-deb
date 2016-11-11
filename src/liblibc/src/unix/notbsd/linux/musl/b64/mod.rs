@@ -1,4 +1,3 @@
-pub type c_char = i8;
 pub type wchar_t = i32;
 pub type c_long = i64;
 pub type c_ulong = u64;
@@ -74,6 +73,20 @@ s! {
         __pad2: ::c_ulong,
     }
 
+    pub struct msqid_ds {
+        pub msg_perm: ::ipc_perm,
+        pub msg_stime: ::time_t,
+        pub msg_rtime: ::time_t,
+        pub msg_ctime: ::time_t,
+        __msg_cbytes: ::c_ulong,
+        pub msg_qnum: ::msgqnum_t,
+        pub msg_qbytes: ::msglen_t,
+        pub msg_lspid: ::pid_t,
+        pub msg_lrpid: ::pid_t,
+        __pad1: ::c_ulong,
+        __pad2: ::c_ulong,
+    }
+
     pub struct statfs {
         pub f_type: ::c_ulong,
         pub f_bsize: ::c_ulong,
@@ -103,6 +116,14 @@ s! {
 
     pub struct sem_t {
         __val: [::c_int; 8],
+    }
+
+    pub struct siginfo_t {
+        pub si_signo: ::c_int,
+        pub si_errno: ::c_int,
+        pub si_code: ::c_int,
+        pub _pad: [::c_int; 29],
+        _align: [usize; 0],
     }
 }
 
@@ -329,6 +350,9 @@ pub const TIOCMBIC: ::c_int = 0x5417;
 pub const TIOCMSET: ::c_int = 0x5418;
 pub const FIONREAD: ::c_int = 0x541B;
 pub const TIOCCONS: ::c_int = 0x541D;
+
+pub const POLLWRNORM: ::c_short = 0x100;
+pub const POLLWRBAND: ::c_short = 0x200;
 
 cfg_if! {
     if #[cfg(target_arch = "aarch64")] {

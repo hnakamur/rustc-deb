@@ -10,18 +10,17 @@
 
 //! Support for inlining external documentation into the current AST.
 
-use std::collections::HashSet;
 use std::iter::once;
 
 use syntax::ast;
 use rustc::hir;
 
-use rustc::middle::cstore;
 use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
+use rustc::hir::map::DefPathData;
 use rustc::hir::print as pprust;
-use rustc::ty::{self, TyCtxt};
-use rustc::ty::subst;
+use rustc::ty::{self, TyCtxt, VariantKind};
+use rustc::util::nodemap::FnvHashSet;
 
 use rustc_const_eval::lookup_const_by_id;
 
@@ -84,20 +83,25 @@ fn try_inline_def<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
         }
         Def::Struct(did)
                 // If this is a struct constructor, we skip it
-                if tcx.sess.cstore.tuple_struct_definition_if_ctor(did).is_none() => {
+                if tcx.def_key(did).disambiguated_data.data != DefPathData::StructCtor => {
             record_extern_fqn(cx, did, clean::TypeStruct);
             ret.extend(build_impls(cx, tcx, did));
             clean::StructItem(build_struct(cx, tcx, did))
         }
+        Def::Union(did) => {
+            record_extern_fqn(cx, did, clean::TypeUnion);
+            ret.extend(build_impls(cx, tcx, did));
+            clean::UnionItem(build_union(cx, tcx, did))
+        }
         Def::TyAlias(did) => {
             record_extern_fqn(cx, did, clean::TypeTypedef);
             ret.extend(build_impls(cx, tcx, did));
-            build_type(cx, tcx, did)
+            clean::TypedefItem(build_type_alias(cx, tcx, did), false)
         }
         Def::Enum(did) => {
             record_extern_fqn(cx, did, clean::TypeEnum);
             ret.extend(build_impls(cx, tcx, did));
-            build_type(cx, tcx, did)
+            clean::EnumItem(build_enum(cx, tcx, did))
         }
         // Assume that the enum type is reexported next to the variant, and
         // variants don't show up in documentation specially.
@@ -161,7 +165,7 @@ pub fn build_external_trait<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tc
     let def = tcx.lookup_trait_def(did);
     let trait_items = tcx.trait_items(did).clean(cx);
     let predicates = tcx.lookup_predicates(did);
-    let generics = (&def.generics, &predicates, subst::TypeSpace).clean(cx);
+    let generics = (def.generics, &predicates).clean(cx);
     let generics = filter_non_trait_generics(did, generics);
     let (generics, supertrait_bounds) = separate_supertrait_bounds(generics);
     clean::Trait {
@@ -176,7 +180,7 @@ fn build_external_function<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx
                                      did: DefId) -> clean::Function {
     let t = tcx.lookup_item_type(did);
     let (decl, style, abi) = match t.ty.sty {
-        ty::TyFnDef(_, _, ref f) => ((did, &f.sig).clean(cx), f.unsafety, f.abi),
+        ty::TyFnDef(.., ref f) => ((did, &f.sig).clean(cx), f.unsafety, f.abi),
         _ => panic!("bad function"),
     };
 
@@ -189,10 +193,22 @@ fn build_external_function<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx
     let predicates = tcx.lookup_predicates(did);
     clean::Function {
         decl: decl,
-        generics: (&t.generics, &predicates, subst::FnSpace).clean(cx),
+        generics: (t.generics, &predicates).clean(cx),
         unsafety: style,
         constness: constness,
         abi: abi,
+    }
+}
+
+fn build_enum<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                        did: DefId) -> clean::Enum {
+    let t = tcx.lookup_item_type(did);
+    let predicates = tcx.lookup_predicates(did);
+
+    clean::Enum {
+        generics: (t.generics, &predicates).clean(cx),
+        variants_stripped: false,
+        variants: tcx.lookup_adt_def(did).variants.clean(cx),
     }
 }
 
@@ -203,37 +219,40 @@ fn build_struct<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let variant = tcx.lookup_adt_def(did).struct_variant();
 
     clean::Struct {
-        struct_type: match &variant.fields[..] {
-            &[] => doctree::Unit,
-            &[_] if variant.kind == ty::VariantKind::Tuple => doctree::Newtype,
-            &[..] if variant.kind == ty::VariantKind::Tuple => doctree::Tuple,
-            _ => doctree::Plain,
+        struct_type: match variant.kind {
+            VariantKind::Struct => doctree::Plain,
+            VariantKind::Tuple => doctree::Tuple,
+            VariantKind::Unit => doctree::Unit,
         },
-        generics: (&t.generics, &predicates, subst::TypeSpace).clean(cx),
+        generics: (t.generics, &predicates).clean(cx),
         fields: variant.fields.clean(cx),
         fields_stripped: false,
     }
 }
 
-fn build_type<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                        did: DefId) -> clean::ItemEnum {
+fn build_union<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                          did: DefId) -> clean::Union {
     let t = tcx.lookup_item_type(did);
     let predicates = tcx.lookup_predicates(did);
-    match t.ty.sty {
-        ty::TyEnum(edef, _) if !tcx.sess.cstore.is_typedef(did) => {
-            return clean::EnumItem(clean::Enum {
-                generics: (&t.generics, &predicates, subst::TypeSpace).clean(cx),
-                variants_stripped: false,
-                variants: edef.variants.clean(cx),
-            })
-        }
-        _ => {}
-    }
+    let variant = tcx.lookup_adt_def(did).struct_variant();
 
-    clean::TypedefItem(clean::Typedef {
+    clean::Union {
+        struct_type: doctree::Plain,
+        generics: (t.generics, &predicates).clean(cx),
+        fields: variant.fields.clean(cx),
+        fields_stripped: false,
+    }
+}
+
+fn build_type_alias<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                              did: DefId) -> clean::Typedef {
+    let t = tcx.lookup_item_type(did);
+    let predicates = tcx.lookup_predicates(did);
+
+    clean::Typedef {
         type_: t.ty.clean(cx),
-        generics: (&t.generics, &predicates, subst::TypeSpace).clean(cx),
-    }, false)
+        generics: (t.generics, &predicates).clean(cx),
+    }
 }
 
 pub fn build_impls<'a, 'tcx>(cx: &DocContext,
@@ -247,32 +266,49 @@ pub fn build_impls<'a, 'tcx>(cx: &DocContext,
             build_impl(cx, tcx, did, &mut impls);
         }
     }
-
-    // If this is the first time we've inlined something from this crate, then
-    // we inline *all* impls from the crate into this crate. Note that there's
+    // If this is the first time we've inlined something from another crate, then
+    // we inline *all* impls from all the crates into this crate. Note that there's
     // currently no way for us to filter this based on type, and we likely need
     // many impls for a variety of reasons.
     //
     // Primarily, the impls will be used to populate the documentation for this
     // type being inlined, but impls can also be used when generating
     // documentation for primitives (no way to find those specifically).
-    if cx.populated_crate_impls.borrow_mut().insert(did.krate) {
-        for item in tcx.sess.cstore.crate_top_level_items(did.krate) {
-            populate_impls(cx, tcx, item.def, &mut impls);
-        }
+    if cx.populated_all_crate_impls.get() {
+        return impls;
+    }
 
-        fn populate_impls<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                    def: cstore::DefLike,
-                                    impls: &mut Vec<clean::Item>) {
-            match def {
-                cstore::DlImpl(did) => build_impl(cx, tcx, did, impls),
-                cstore::DlDef(Def::Mod(did)) => {
-                    for item in tcx.sess.cstore.item_children(did) {
-                        populate_impls(cx, tcx, item.def, impls)
-                    }
-                }
-                _ => {}
-            }
+    cx.populated_all_crate_impls.set(true);
+
+    for did in tcx.sess.cstore.implementations_of_trait(None) {
+        build_impl(cx, tcx, did, &mut impls);
+    }
+
+    // Also try to inline primitive impls from other crates.
+    let primitive_impls = [
+        tcx.lang_items.isize_impl(),
+        tcx.lang_items.i8_impl(),
+        tcx.lang_items.i16_impl(),
+        tcx.lang_items.i32_impl(),
+        tcx.lang_items.i64_impl(),
+        tcx.lang_items.usize_impl(),
+        tcx.lang_items.u8_impl(),
+        tcx.lang_items.u16_impl(),
+        tcx.lang_items.u32_impl(),
+        tcx.lang_items.u64_impl(),
+        tcx.lang_items.f32_impl(),
+        tcx.lang_items.f64_impl(),
+        tcx.lang_items.char_impl(),
+        tcx.lang_items.str_impl(),
+        tcx.lang_items.slice_impl(),
+        tcx.lang_items.slice_impl(),
+        tcx.lang_items.const_ptr_impl()
+    ];
+
+    for def_id in primitive_impls.iter().filter_map(|&def_id| def_id) {
+        if !def_id.is_local() {
+            tcx.populate_implementations_for_primitive_if_necessary(def_id);
+            build_impl(cx, tcx, def_id, &mut impls);
         }
     }
 
@@ -331,12 +367,10 @@ pub fn build_impl<'a, 'tcx>(cx: &DocContext,
     }
 
     let predicates = tcx.lookup_predicates(did);
-    let trait_items = tcx.sess.cstore.impl_items(did)
+    let trait_items = tcx.sess.cstore.impl_or_trait_items(did)
             .iter()
-            .filter_map(|did| {
-        let did = did.def_id();
-        let impl_item = tcx.impl_or_trait_item(did);
-        match impl_item {
+            .filter_map(|&did| {
+        match tcx.impl_or_trait_item(did) {
             ty::ConstTraitItem(ref assoc_const) => {
                 let did = assoc_const.def_id;
                 let type_scheme = tcx.lookup_item_type(did);
@@ -389,14 +423,14 @@ pub fn build_impl<'a, 'tcx>(cx: &DocContext,
             }
             ty::TypeTraitItem(ref assoc_ty) => {
                 let did = assoc_ty.def_id;
-                let type_scheme = ty::TypeScheme {
-                    ty: assoc_ty.ty.unwrap(),
-                    generics: ty::Generics::empty()
+                let typedef = clean::Typedef {
+                    type_: assoc_ty.ty.unwrap().clean(cx),
+                    generics: clean::Generics {
+                        lifetimes: vec![],
+                        type_params: vec![],
+                        where_predicates: vec![]
+                    }
                 };
-                // Not sure the choice of ParamSpace actually matters here,
-                // because an associated type won't have generics on the LHS
-                let typedef = (type_scheme, ty::GenericPredicates::empty(),
-                               subst::ParamSpace::TypeSpace).clean(cx);
                 Some(clean::Item {
                     name: Some(assoc_ty.name.clean(cx)),
                     inner: clean::TypedefItem(typedef, true),
@@ -426,7 +460,7 @@ pub fn build_impl<'a, 'tcx>(cx: &DocContext,
                 .into_iter()
                 .map(|meth| meth.name.to_string())
                 .collect()
-    }).unwrap_or(HashSet::new());
+    }).unwrap_or(FnvHashSet());
 
     ret.push(clean::Item {
         inner: clean::ImplItem(clean::Impl {
@@ -434,9 +468,9 @@ pub fn build_impl<'a, 'tcx>(cx: &DocContext,
             provided_trait_methods: provided,
             trait_: trait_,
             for_: for_,
-            generics: (&ty.generics, &predicates, subst::TypeSpace).clean(cx),
+            generics: (ty.generics, &predicates).clean(cx),
             items: trait_items,
-            polarity: polarity.map(|p| { p.clean(cx) }),
+            polarity: Some(polarity.clean(cx)),
         }),
         source: clean::Span::empty(),
         name: None,
@@ -462,22 +496,15 @@ fn build_module<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
         // If we're reexporting a reexport it may actually reexport something in
         // two namespaces, so the target may be listed twice. Make sure we only
         // visit each node at most once.
-        let mut visited = HashSet::new();
+        let mut visited = FnvHashSet();
         for item in tcx.sess.cstore.item_children(did) {
-            match item.def {
-                cstore::DlDef(Def::ForeignMod(did)) => {
-                    fill_in(cx, tcx, did, items);
-                }
-                cstore::DlDef(def) if item.vis == ty::Visibility::Public => {
-                    if !visited.insert(def) { continue }
+            if tcx.sess.cstore.visibility(item.def_id) == ty::Visibility::Public {
+                if !visited.insert(item.def_id) { continue }
+                if let Some(def) = tcx.sess.cstore.describe_def(item.def_id) {
                     if let Some(i) = try_inline_def(cx, tcx, def) {
                         items.extend(i)
                     }
                 }
-                cstore::DlDef(..) => {}
-                // All impls were inlined above
-                cstore::DlImpl(..) => {}
-                cstore::DlField => panic!("unimplemented field"),
             }
         }
     }
@@ -512,11 +539,32 @@ fn build_static<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
 /// its associated types as well. We specifically move these clauses to the
 /// associated types instead when displaying, so when we're genering the
 /// generics for the trait itself we need to be sure to remove them.
+/// We also need to remove the implied "recursive" Self: Trait bound.
 ///
 /// The inverse of this filtering logic can be found in the `Clean`
 /// implementation for `AssociatedType`
 fn filter_non_trait_generics(trait_did: DefId, mut g: clean::Generics)
                              -> clean::Generics {
+    for pred in &mut g.where_predicates {
+        match *pred {
+            clean::WherePredicate::BoundPredicate {
+                ty: clean::Generic(ref s),
+                ref mut bounds
+            } if *s == "Self" => {
+                bounds.retain(|bound| {
+                    match *bound {
+                        clean::TyParamBound::TraitBound(clean::PolyTrait {
+                            trait_: clean::ResolvedPath { did, .. },
+                            ..
+                        }, _) => did != trait_did,
+                        _ => true
+                    }
+                });
+            }
+            _ => {}
+        }
+    }
+
     g.where_predicates.retain(|pred| {
         match *pred {
             clean::WherePredicate::BoundPredicate {
@@ -524,8 +572,8 @@ fn filter_non_trait_generics(trait_did: DefId, mut g: clean::Generics)
                     self_type: box clean::Generic(ref s),
                     trait_: box clean::ResolvedPath { did, .. },
                     name: ref _name,
-                }, ..
-            } => *s != "Self" || did != trait_did,
+                }, ref bounds
+            } => !(*s == "Self" && did == trait_did) && !bounds.is_empty(),
             _ => true,
         }
     });

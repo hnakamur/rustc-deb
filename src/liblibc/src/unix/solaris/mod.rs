@@ -432,6 +432,7 @@ pub const FIONBIO: ::c_int = 0x8004667e;
 
 pub const SIGCHLD: ::c_int = 18;
 pub const SIGBUS: ::c_int = 10;
+pub const SIGINFO: ::c_int = 41;
 pub const SIG_BLOCK: ::c_int = 1;
 pub const SIG_UNBLOCK: ::c_int = 2;
 pub const SIG_SETMASK: ::c_int = 3;
@@ -541,6 +542,7 @@ pub const SIGXCPU: ::c_int = 30;
 pub const SIGXFSZ: ::c_int = 31;
 
 pub const WNOHANG: ::c_int = 0x40;
+pub const WUNTRACED: ::c_int = 0x04;
 
 pub const PROT_NONE: ::c_int = 0;
 pub const PROT_READ: ::c_int = 1;
@@ -649,6 +651,8 @@ pub const EMULTIHOP: ::c_int = 74;
 pub const ENOLINK: ::c_int = 67;
 pub const EPROTO: ::c_int = 71;
 
+pub const EAI_SYSTEM: ::c_int = 11;
+
 pub const F_DUPFD: ::c_int = 0;
 pub const F_GETFD: ::c_int = 1;
 pub const F_SETFD: ::c_int = 2;
@@ -724,6 +728,8 @@ pub const SIGSTKSZ: ::size_t = 8192;
 // __CLOCK_REALTIME0==0 is an obsoleted version of CLOCK_REALTIME==3
 pub const CLOCK_REALTIME: clockid_t = 3;
 pub const CLOCK_MONOTONIC: clockid_t = 4;
+pub const TIMER_RELTIME: ::c_int = 0;
+pub const TIMER_ABSTIME: ::c_int = 1;
 
 pub const RLIMIT_CPU: ::c_int = 0;
 pub const RLIMIT_FSIZE: ::c_int = 1;
@@ -949,6 +955,9 @@ f! {
 }
 
 extern {
+    pub fn getifaddrs(ifap: *mut *mut ::ifaddrs) -> ::c_int;
+    pub fn freeifaddrs(ifa: *mut ::ifaddrs);
+
     pub fn stack_getbounds(sp: *mut ::stack_t) -> ::c_int;
     pub fn mincore(addr: *const ::c_void, len: ::size_t,
                    vec: *mut c_char) -> ::c_int;
@@ -959,6 +968,10 @@ extern {
                     -> ::c_int;
     pub fn clock_getres(clk_id: clockid_t, tp: *mut ::timespec) -> ::c_int;
     pub fn clock_gettime(clk_id: clockid_t, tp: *mut ::timespec) -> ::c_int;
+    pub fn clock_nanosleep(clk_id: clockid_t,
+                           flags: ::c_int,
+                           rqtp: *const ::timespec,
+                           rmtp:  *mut ::timespec) -> ::c_int;
     pub fn getnameinfo(sa: *const ::sockaddr,
                        salen: ::socklen_t,
                        host: *mut ::c_char,
@@ -966,10 +979,16 @@ extern {
                        serv: *mut ::c_char,
                        sevlen: ::socklen_t,
                        flags: ::c_int) -> ::c_int;
+    pub fn getpwnam_r(name: *const ::c_char,
+                      pwd: *mut passwd,
+                      buf: *mut ::c_char,
+                      buflen: ::c_int) -> *const passwd;
     pub fn getpwuid_r(uid: ::uid_t,
                       pwd: *mut passwd,
                       buf: *mut ::c_char,
-                      buflen: ::size_t) -> *const passwd;
+                      buflen: ::c_int) -> *const passwd;
+    pub fn setpwent();
+    pub fn getpwent() -> *mut passwd;
     pub fn readdir(dirp: *mut ::DIR) -> *const ::dirent;
     pub fn fdatasync(fd: ::c_int) -> ::c_int;
     pub fn nl_langinfo_l(item: ::nl_item, locale: ::locale_t) -> *mut ::c_char;
@@ -1021,5 +1040,8 @@ extern {
                                      clock_id: *mut clockid_t) -> ::c_int;
     pub fn pthread_condattr_setclock(attr: *mut pthread_condattr_t,
                                      clock_id: clockid_t) -> ::c_int;
+    pub fn sem_timedwait(sem: *mut sem_t,
+                         abstime: *const ::timespec) -> ::c_int;
+    pub fn pthread_mutex_timedlock(lock: *mut pthread_mutex_t,
+                                   abstime: *const ::timespec) -> ::c_int;
 }
-

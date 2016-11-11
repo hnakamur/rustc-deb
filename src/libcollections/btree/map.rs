@@ -11,7 +11,7 @@
 use core::cmp::Ordering;
 use core::fmt::Debug;
 use core::hash::{Hash, Hasher};
-use core::iter::{FromIterator, Peekable};
+use core::iter::{FromIterator, Peekable, FusedIterator};
 use core::marker::PhantomData;
 use core::ops::Index;
 use core::{fmt, intrinsics, mem, ptr};
@@ -56,8 +56,12 @@ use self::Entry::*;
 /// however, performance is excellent.
 ///
 /// It is a logic error for a key to be modified in such a way that the key's ordering relative to
-/// any other key, as determined by the `Ord` trait, changes while it is in the map. This is
-/// normally only possible through `Cell`, `RefCell`, global state, I/O, or unsafe code.
+/// any other key, as determined by the [`Ord`] trait, changes while it is in the map. This is
+/// normally only possible through [`Cell`], [`RefCell`], global state, I/O, or unsafe code.
+///
+/// [`Ord`]: ../../std/cmp/trait.Ord.html
+/// [`Cell`]: ../../std/cell/struct.Cell.html
+/// [`RefCell`]: ../../std/cell/struct.RefCell.html
 ///
 /// # Examples
 ///
@@ -1147,6 +1151,9 @@ impl<'a, K: 'a, V: 'a> Iterator for Iter<'a, K, V> {
     }
 }
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for Iter<'a, K, V> {}
+
 impl<'a, K: 'a, V: 'a> DoubleEndedIterator for Iter<'a, K, V> {
     fn next_back(&mut self) -> Option<(&'a K, &'a V)> {
         if self.length == 0 {
@@ -1215,6 +1222,9 @@ impl<'a, K: 'a, V: 'a> ExactSizeIterator for IterMut<'a, K, V> {
         self.length
     }
 }
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for IterMut<'a, K, V> {}
 
 impl<K, V> IntoIterator for BTreeMap<K, V> {
     type Item = (K, V);
@@ -1338,6 +1348,9 @@ impl<K, V> ExactSizeIterator for IntoIter<K, V> {
     }
 }
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<K, V> FusedIterator for IntoIter<K, V> {}
+
 impl<'a, K, V> Iterator for Keys<'a, K, V> {
     type Item = &'a K;
 
@@ -1361,6 +1374,9 @@ impl<'a, K, V> ExactSizeIterator for Keys<'a, K, V> {
         self.inner.len()
     }
 }
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for Keys<'a, K, V> {}
 
 impl<'a, K, V> Clone for Keys<'a, K, V> {
     fn clone(&self) -> Keys<'a, K, V> {
@@ -1391,6 +1407,9 @@ impl<'a, K, V> ExactSizeIterator for Values<'a, K, V> {
         self.inner.len()
     }
 }
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for Values<'a, K, V> {}
 
 impl<'a, K, V> Clone for Values<'a, K, V> {
     fn clone(&self) -> Values<'a, K, V> {
@@ -1436,6 +1455,10 @@ impl<'a, K, V> ExactSizeIterator for ValuesMut<'a, K, V> {
         self.inner.len()
     }
 }
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for ValuesMut<'a, K, V> {}
+
 
 impl<'a, K, V> Range<'a, K, V> {
     unsafe fn next_unchecked(&mut self) -> (&'a K, &'a V) {
@@ -1511,6 +1534,9 @@ impl<'a, K, V> Range<'a, K, V> {
     }
 }
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for Range<'a, K, V> {}
+
 impl<'a, K, V> Clone for Range<'a, K, V> {
     fn clone(&self) -> Range<'a, K, V> {
         Range {
@@ -1573,6 +1599,9 @@ impl<'a, K, V> DoubleEndedIterator for RangeMut<'a, K, V> {
         }
     }
 }
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for RangeMut<'a, K, V> {}
 
 impl<'a, K, V> RangeMut<'a, K, V> {
     unsafe fn next_back_unchecked(&mut self) -> (&'a K, &'a mut V) {
@@ -1638,6 +1667,7 @@ impl<K: Hash, V: Hash> Hash for BTreeMap<K, V> {
 }
 
 impl<K: Ord, V> Default for BTreeMap<K, V> {
+    /// Creates an empty `BTreeMap<K, V>`.
     fn default() -> BTreeMap<K, V> {
         BTreeMap::new()
     }
@@ -1995,7 +2025,7 @@ impl<'a, K: Ord, V> VacantEntry<'a, K, V> {
         self.key
     }
 
-    /// Sets the value of the entry with the VacantEntry's key,
+    /// Sets the value of the entry with the `VacantEntry`'s key,
     /// and returns a mutable reference to it.
     ///
     /// # Examples
@@ -2167,7 +2197,7 @@ impl<'a, K: Ord, V> OccupiedEntry<'a, K, V> {
         self.handle.into_kv_mut().1
     }
 
-    /// Sets the value of the entry with the OccupiedEntry's key,
+    /// Sets the value of the entry with the `OccupiedEntry`'s key,
     /// and returns the entry's old value.
     ///
     /// # Examples

@@ -56,7 +56,13 @@ pub const unwinder_private_data_size: usize = 2;
 #[cfg(target_arch = "mips")]
 pub const unwinder_private_data_size: usize = 2;
 
+#[cfg(target_arch = "mips64")]
+pub const unwinder_private_data_size: usize = 2;
+
 #[cfg(any(target_arch = "powerpc", target_arch = "powerpc64"))]
+pub const unwinder_private_data_size: usize = 2;
+
+#[cfg(target_arch = "s390x")]
 pub const unwinder_private_data_size: usize = 2;
 
 #[cfg(target_arch = "asmjs")]
@@ -235,6 +241,7 @@ if #[cfg(not(all(target_os = "ios", target_arch = "arm")))] {
 #[cfg_attr(any(all(target_os = "linux", not(target_env = "musl")),
                target_os = "freebsd",
                target_os = "solaris",
+               target_os = "haiku",
                all(target_os = "linux",
                    target_env = "musl",
                    not(target_arch = "x86"),

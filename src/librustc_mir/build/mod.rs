@@ -101,16 +101,6 @@ pub struct ScopeAuxiliary {
     pub postdoms: Vec<Location>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
-pub struct Location {
-    /// the location is within this block
-    pub block: BasicBlock,
-
-    /// the location is the start of the this statement; or, if `statement_index`
-    /// == num-statements, then the start of the terminator.
-    pub statement_index: usize,
-}
-
 pub type ScopeAuxiliaryVec = IndexVec<ScopeId, ScopeAuxiliary>;
 
 ///////////////////////////////////////////////////////////////////////////
@@ -207,8 +197,9 @@ pub fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
     // Gather the upvars of a closure, if any.
     let upvar_decls: Vec<_> = tcx.with_freevars(fn_id, |freevars| {
         freevars.iter().map(|fv| {
+            let var_id = tcx.map.as_local_node_id(fv.def.def_id()).unwrap();
             let by_ref = tcx.upvar_capture(ty::UpvarId {
-                var_id: fv.def.var_id(),
+                var_id: var_id,
                 closure_expr_id: fn_id
             }).map_or(false, |capture| match capture {
                 ty::UpvarCapture::ByValue => false,
@@ -218,7 +209,7 @@ pub fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
                 debug_name: keywords::Invalid.name(),
                 by_ref: by_ref
             };
-            if let Some(hir::map::NodeLocal(pat)) = tcx.map.find(fv.def.var_id()) {
+            if let Some(hir::map::NodeLocal(pat)) = tcx.map.find(var_id) {
                 if let hir::PatKind::Binding(_, ref ident, _) = pat.node {
                     decl.debug_name = ident.node;
                 }

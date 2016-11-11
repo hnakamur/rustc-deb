@@ -68,6 +68,23 @@ s! {
         __pad2: ::c_ulong,
     }
 
+    pub struct msqid_ds {
+        pub msg_perm: ::ipc_perm,
+        pub msg_stime: ::time_t,
+        __unused1: ::c_int,
+        pub msg_rtime: ::time_t,
+        __unused2: ::c_int,
+        pub msg_ctime: ::time_t,
+        __unused3: ::c_int,
+        __msg_cbytes: ::c_ulong,
+        pub msg_qnum: ::msgqnum_t,
+        pub msg_qbytes: ::msglen_t,
+        pub msg_lspid: ::pid_t,
+        pub msg_lrpid: ::pid_t,
+        __pad1: ::c_ulong,
+        __pad2: ::c_ulong,
+    }
+
     pub struct statfs {
         pub f_type: ::c_ulong,
         pub f_bsize: ::c_ulong,
@@ -81,6 +98,14 @@ s! {
         pub f_frsize: ::c_ulong,
         pub f_flags: ::c_ulong,
         pub f_spare: [::c_ulong; 4],
+    }
+
+    pub struct siginfo_t {
+        pub si_signo: ::c_int,
+        pub si_errno: ::c_int,
+        pub si_code: ::c_int,
+        pub _pad: [::c_int; 29],
+        _align: [usize; 0],
     }
 }
 
@@ -306,3 +331,6 @@ pub const TIOCCONS: ::c_int = 0x541D;
 
 pub const SYS_gettid: ::c_long = 224;
 pub const SYS_perf_event_open: ::c_long = 364;
+
+pub const POLLWRNORM: ::c_short = 0x100;
+pub const POLLWRBAND: ::c_short = 0x200;

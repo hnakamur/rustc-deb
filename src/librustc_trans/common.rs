@@ -16,7 +16,6 @@ use session::Session;
 use llvm;
 use llvm::{ValueRef, BasicBlockRef, BuilderRef, ContextRef, TypeKind};
 use llvm::{True, False, Bool, OperandBundleDef};
-use rustc::cfg;
 use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
 use rustc::infer::TransNormalize;
@@ -30,7 +29,6 @@ use builder::Builder;
 use callee::Callee;
 use cleanup;
 use consts;
-use datum;
 use debuginfo::{self, DebugLoc};
 use declare;
 use machine;
@@ -43,7 +41,6 @@ use rustc::ty::layout::Layout;
 use rustc::traits::{self, SelectionContext, Reveal};
 use rustc::ty::fold::TypeFoldable;
 use rustc::hir;
-use util::nodemap::NodeMap;
 
 use arena::TypedArena;
 use libc::{c_uint, c_char};
@@ -91,8 +88,7 @@ pub fn type_is_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -
         return false;
     }
     match ty.sty {
-        ty::TyStruct(..) | ty::TyEnum(..) | ty::TyTuple(..) | ty::TyArray(_, _) |
-        ty::TyClosure(..) => {
+        ty::TyAdt(..) | ty::TyTuple(..) | ty::TyArray(..) | ty::TyClosure(..) => {
             let llty = sizing_type_of(ccx, ty);
             llsize_of_alloc(ccx, llty) <= llsize_of_alloc(ccx, ccx.int_type())
         }
@@ -104,7 +100,7 @@ pub fn type_is_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -
 pub fn type_pair_fields<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>)
                                   -> Option<[Ty<'tcx>; 2]> {
     match ty.sty {
-        ty::TyEnum(adt, substs) | ty::TyStruct(adt, substs) => {
+        ty::TyAdt(adt, substs) => {
             assert_eq!(adt.variants.len(), 1);
             let fields = &adt.variants[0].fields;
             if fields.len() != 2 {
@@ -127,18 +123,7 @@ pub fn type_pair_fields<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>)
 /// Returns true if the type is represented as a pair of immediates.
 pub fn type_is_imm_pair<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>)
                                   -> bool {
-    let tcx = ccx.tcx();
-    let layout = tcx.normalizing_infer_ctxt(Reveal::All).enter(|infcx| {
-        match ty.layout(&infcx) {
-            Ok(layout) => layout,
-            Err(err) => {
-                bug!("type_is_imm_pair: layout for `{:?}` failed: {}",
-                     ty, err);
-            }
-        }
-    });
-
-    match *layout {
+    match *ccx.layout_of(ty) {
         Layout::FatPointer { .. } => true,
         Layout::Univariant { ref variant, .. } => {
             // There must be only 2 fields.
@@ -163,15 +148,6 @@ pub fn type_is_zero_size<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -
     use type_of::sizing_type_of;
     let llty = sizing_type_of(ccx, ty);
     llsize_of_alloc(ccx, llty) == 0
-}
-
-/// Generates a unique symbol based off the name given. This is used to create
-/// unique symbols for things like closures.
-pub fn gensym_name(name: &str) -> ast::Name {
-    let num = token::gensym(name).0;
-    // use one colon which will get translated to a period by the mangler, and
-    // we're guaranteed that `num` is globally unique for this crate.
-    token::gensym(&format!("{}:{}", name, num))
 }
 
 /*
@@ -202,16 +178,6 @@ pub fn gensym_name(name: &str) -> ast::Name {
 
 use Disr;
 
-#[derive(Copy, Clone)]
-pub struct NodeIdAndSpan {
-    pub id: ast::NodeId,
-    pub span: Span,
-}
-
-pub fn expr_info(expr: &hir::Expr) -> NodeIdAndSpan {
-    NodeIdAndSpan { id: expr.id, span: expr.span }
-}
-
 /// The concrete version of ty::FieldDef. The name is the field index if
 /// the field is numeric.
 pub struct Field<'tcx>(pub ast::Name, pub Ty<'tcx>);
@@ -229,7 +195,7 @@ impl<'a, 'tcx> VariantInfo<'tcx> {
                    -> Self
     {
         match ty.sty {
-            ty::TyStruct(adt, substs) | ty::TyEnum(adt, substs) => {
+            ty::TyAdt(adt, substs) => {
                 let variant = match opt_def {
                     None => adt.struct_variant(),
                     Some(def) => adt.variant_of_def(def)
@@ -257,17 +223,6 @@ impl<'a, 'tcx> VariantInfo<'tcx> {
             }
         }
     }
-
-    /// Return the variant corresponding to a given node (e.g. expr)
-    pub fn of_node(tcx: TyCtxt<'a, 'tcx, 'tcx>, ty: Ty<'tcx>, id: ast::NodeId) -> Self {
-        Self::from_ty(tcx, ty, Some(tcx.expect_def(id)))
-    }
-
-    pub fn field_index(&self, name: ast::Name) -> usize {
-        self.fields.iter().position(|&Field(n,_)| n == name).unwrap_or_else(|| {
-            bug!("unknown field `{}`", name)
-        })
-    }
 }
 
 pub struct BuilderRef_res {
@@ -289,38 +244,7 @@ pub fn BuilderRef_res(b: BuilderRef) -> BuilderRef_res {
 }
 
 pub fn validate_substs(substs: &Substs) {
-    assert!(!substs.types.needs_infer());
-}
-
-// work around bizarre resolve errors
-type RvalueDatum<'tcx> = datum::Datum<'tcx, datum::Rvalue>;
-pub type LvalueDatum<'tcx> = datum::Datum<'tcx, datum::Lvalue>;
-
-#[derive(Clone, Debug)]
-struct HintEntry<'tcx> {
-    // The datum for the dropflag-hint itself; note that many
-    // source-level Lvalues will be associated with the same
-    // dropflag-hint datum.
-    datum: cleanup::DropHintDatum<'tcx>,
-}
-
-pub struct DropFlagHintsMap<'tcx> {
-    // Maps NodeId for expressions that read/write unfragmented state
-    // to that state's drop-flag "hint."  (A stack-local hint
-    // indicates either that (1.) it is certain that no-drop is
-    // needed, or (2.)  inline drop-flag must be consulted.)
-    node_map: NodeMap<HintEntry<'tcx>>,
-}
-
-impl<'tcx> DropFlagHintsMap<'tcx> {
-    pub fn new() -> DropFlagHintsMap<'tcx> { DropFlagHintsMap { node_map: NodeMap() } }
-    pub fn has_hint(&self, id: ast::NodeId) -> bool { self.node_map.contains_key(&id) }
-    pub fn insert(&mut self, id: ast::NodeId, datum: cleanup::DropHintDatum<'tcx>) {
-        self.node_map.insert(id, HintEntry { datum: datum });
-    }
-    pub fn hint_datum(&self, id: ast::NodeId) -> Option<cleanup::DropHintDatum<'tcx>> {
-        self.node_map.get(&id).map(|t|t.datum)
-    }
+    assert!(!substs.needs_infer());
 }
 
 // Function context.  Every LLVM function we create will have one of
@@ -352,12 +276,6 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
     // A marker for the place where we want to insert the function's static
     // allocas, so that LLVM will coalesce them into a single alloca call.
     pub alloca_insert_pt: Cell<Option<ValueRef>>,
-    pub llreturn: Cell<Option<BasicBlockRef>>,
-
-    // If the function has any nested return's, including something like:
-    // fn foo() -> Option<Foo> { Some(Foo { x: return None }) }, then
-    // we use a separate alloca for each return
-    pub needs_ret_allocas: bool,
 
     // When working with landingpad-based exceptions this value is alloca'd and
     // later loaded when using the resume instruction. This ends up being
@@ -366,17 +284,6 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
     //
     // Note that for cleanuppad-based exceptions this is not used.
     pub landingpad_alloca: Cell<Option<ValueRef>>,
-
-    // Maps the DefId's for local variables to the allocas created for
-    // them in llallocas.
-    pub lllocals: RefCell<NodeMap<LvalueDatum<'tcx>>>,
-
-    // Same as above, but for closure upvars
-    pub llupvars: RefCell<NodeMap<ValueRef>>,
-
-    // Carries info about drop-flags for local bindings (longer term,
-    // paths) for the code being compiled.
-    pub lldropflag_hints: RefCell<DropFlagHintsMap<'tcx>>,
 
     // Describes the return/argument LLVM types and their ABI handling.
     pub fn_ty: FnType,
@@ -402,9 +309,7 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
     pub debug_context: debuginfo::FunctionDebugContext,
 
     // Cleanup scopes.
-    pub scopes: RefCell<Vec<cleanup::CleanupScope<'a, 'tcx>>>,
-
-    pub cfg: Option<cfg::CFG>,
+    pub scopes: RefCell<Vec<cleanup::CleanupScope<'tcx>>>,
 }
 
 impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
@@ -420,74 +325,22 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         }
     }
 
-    pub fn get_llreturn(&self) -> BasicBlockRef {
-        if self.llreturn.get().is_none() {
-
-            self.llreturn.set(Some(unsafe {
-                llvm::LLVMAppendBasicBlockInContext(self.ccx.llcx(), self.llfn,
-                                                    "return\0".as_ptr() as *const _)
-            }))
-        }
-
-        self.llreturn.get().unwrap()
-    }
-
-    pub fn get_ret_slot(&self, bcx: Block<'a, 'tcx>, name: &str) -> ValueRef {
-        if self.needs_ret_allocas {
-            base::alloca(bcx, self.fn_ty.ret.memory_ty(self.ccx), name)
-        } else {
-            self.llretslotptr.get().unwrap()
-        }
-    }
-
     pub fn new_block(&'a self,
-                     name: &str,
-                     opt_node_id: Option<ast::NodeId>)
+                     name: &str)
                      -> Block<'a, 'tcx> {
         unsafe {
             let name = CString::new(name).unwrap();
             let llbb = llvm::LLVMAppendBasicBlockInContext(self.ccx.llcx(),
                                                            self.llfn,
                                                            name.as_ptr());
-            BlockS::new(llbb, opt_node_id, self)
+            BlockS::new(llbb, self)
         }
-    }
-
-    pub fn new_id_block(&'a self,
-                        name: &str,
-                        node_id: ast::NodeId)
-                        -> Block<'a, 'tcx> {
-        self.new_block(name, Some(node_id))
-    }
-
-    pub fn new_temp_block(&'a self,
-                          name: &str)
-                          -> Block<'a, 'tcx> {
-        self.new_block(name, None)
-    }
-
-    pub fn join_blocks(&'a self,
-                       id: ast::NodeId,
-                       in_cxs: &[Block<'a, 'tcx>])
-                       -> Block<'a, 'tcx> {
-        let out = self.new_id_block("join", id);
-        let mut reachable = false;
-        for bcx in in_cxs {
-            if !bcx.unreachable.get() {
-                build::Br(*bcx, out.llbb, DebugLoc::None);
-                reachable = true;
-            }
-        }
-        if !reachable {
-            build::Unreachable(out);
-        }
-        return out;
     }
 
     pub fn monomorphize<T>(&self, value: &T) -> T
         where T: TransNormalize<'tcx>
     {
-        monomorphize::apply_param_substs(self.ccx.tcx(),
+        monomorphize::apply_param_substs(self.ccx.shared(),
                                          self.param_substs,
                                          value)
     }
@@ -523,7 +376,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         let tcx = ccx.tcx();
         match tcx.lang_items.eh_personality() {
             Some(def_id) if !base::wants_msvc_seh(ccx.sess()) => {
-                Callee::def(ccx, def_id, tcx.mk_substs(Substs::empty())).reify(ccx).val
+                Callee::def(ccx, def_id, Substs::empty(tcx)).reify(ccx)
             }
             _ => {
                 if let Some(llpersonality) = ccx.eh_personality().get() {
@@ -550,7 +403,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         let tcx = ccx.tcx();
         assert!(ccx.sess().target.target.options.custom_unwind_resume);
         if let Some(def_id) = tcx.lang_items.eh_unwind_resume() {
-            return Callee::def(ccx, def_id, tcx.mk_substs(Substs::empty()));
+            return Callee::def(ccx, def_id, Substs::empty(tcx));
         }
 
         let ty = tcx.mk_fn_ptr(tcx.mk_bare_fn(ty::BareFnTy {
@@ -565,12 +418,12 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
 
         let unwresume = ccx.eh_unwind_resume();
         if let Some(llfn) = unwresume.get() {
-            return Callee::ptr(datum::immediate_rvalue(llfn, ty));
+            return Callee::ptr(llfn, ty);
         }
         let llfn = declare::declare_fn(ccx, "rust_eh_unwind_resume", ty);
         attributes::unwind(llfn, true);
         unwresume.set(Some(llfn));
-        Callee::ptr(datum::immediate_rvalue(llfn, ty))
+        Callee::ptr(llfn, ty)
     }
 }
 
@@ -593,10 +446,6 @@ pub struct BlockS<'blk, 'tcx: 'blk> {
     // kind of landing pad its in, otherwise this is none.
     pub lpad: Cell<Option<&'blk LandingPad>>,
 
-    // AST node-id associated with this block, if any. Used for
-    // debugging purposes only.
-    pub opt_node_id: Option<ast::NodeId>,
-
     // The function context for the function to which this block is
     // attached.
     pub fcx: &'blk FunctionContext<'blk, 'tcx>,
@@ -606,7 +455,6 @@ pub type Block<'blk, 'tcx> = &'blk BlockS<'blk, 'tcx>;
 
 impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
     pub fn new(llbb: BasicBlockRef,
-               opt_node_id: Option<ast::NodeId>,
                fcx: &'blk FunctionContext<'blk, 'tcx>)
                -> Block<'blk, 'tcx> {
         fcx.block_arena.alloc(BlockS {
@@ -614,7 +462,6 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
             terminated: Cell::new(false),
             unreachable: Cell::new(false),
             lpad: Cell::new(None),
-            opt_node_id: opt_node_id,
             fcx: fcx
         })
     }
@@ -662,7 +509,7 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
     pub fn monomorphize<T>(&self, value: &T) -> T
         where T: TransNormalize<'tcx>
     {
-        monomorphize::apply_param_substs(self.tcx(),
+        monomorphize::apply_param_substs(self.fcx.ccx.shared(),
                                          self.fcx.param_substs,
                                          value)
     }
@@ -883,13 +730,6 @@ pub fn C_integral(t: Type, u: u64, sign_extend: bool) -> ValueRef {
     }
 }
 
-pub fn C_floating(s: &str, t: Type) -> ValueRef {
-    unsafe {
-        let s = CString::new(s).unwrap();
-        llvm::LLVMConstRealOfString(t.to_ref(), s.as_ptr())
-    }
-}
-
 pub fn C_floating_f64(f: f64, t: Type) -> ValueRef {
     unsafe {
         llvm::LLVMConstReal(t.to_ref(), f)
@@ -914,19 +754,6 @@ pub fn C_u32(ccx: &CrateContext, i: u32) -> ValueRef {
 
 pub fn C_u64(ccx: &CrateContext, i: u64) -> ValueRef {
     C_integral(Type::i64(ccx), i, false)
-}
-
-pub fn C_int<I: AsI64>(ccx: &CrateContext, i: I) -> ValueRef {
-    let v = i.as_i64();
-
-    let bit_size = machine::llbitsize_of_real(ccx, ccx.int_type());
-
-    if bit_size < 64 {
-        // make sure it doesn't overflow
-        assert!(v < (1<<(bit_size-1)) && v >= -(1<<(bit_size-1)));
-    }
-
-    C_integral(ccx.int_type(), v as u64, true)
 }
 
 pub fn C_uint<I: AsU64>(ccx: &CrateContext, i: I) -> ValueRef {
@@ -980,7 +807,7 @@ pub fn C_cstr(cx: &CrateContext, s: InternedString, null_terminated: bool) -> Va
         });
         llvm::LLVMSetInitializer(g, sc);
         llvm::LLVMSetGlobalConstant(g, True);
-        llvm::LLVMSetLinkage(g, llvm::InternalLinkage);
+        llvm::LLVMRustSetLinkage(g, llvm::Linkage::InternalLinkage);
 
         cx.const_cstr_cache().borrow_mut().insert(s, g);
         g
@@ -1048,12 +875,6 @@ pub fn const_get_elt(v: ValueRef, us: &[c_uint])
     }
 }
 
-pub fn const_to_int(v: ValueRef) -> i64 {
-    unsafe {
-        llvm::LLVMConstIntGetSExtValue(v)
-    }
-}
-
 pub fn const_to_uint(v: ValueRef) -> u64 {
     unsafe {
         llvm::LLVMConstIntGetZExtValue(v)
@@ -1099,24 +920,6 @@ pub fn is_null(val: ValueRef) -> bool {
     }
 }
 
-pub fn monomorphize_type<'blk, 'tcx>(bcx: &BlockS<'blk, 'tcx>, t: Ty<'tcx>) -> Ty<'tcx> {
-    bcx.fcx.monomorphize(&t)
-}
-
-pub fn node_id_type<'blk, 'tcx>(bcx: &BlockS<'blk, 'tcx>, id: ast::NodeId) -> Ty<'tcx> {
-    let tcx = bcx.tcx();
-    let t = tcx.node_id_to_type(id);
-    monomorphize_type(bcx, t)
-}
-
-pub fn expr_ty<'blk, 'tcx>(bcx: &BlockS<'blk, 'tcx>, ex: &hir::Expr) -> Ty<'tcx> {
-    node_id_type(bcx, ex.id)
-}
-
-pub fn expr_ty_adjusted<'blk, 'tcx>(bcx: &BlockS<'blk, 'tcx>, ex: &hir::Expr) -> Ty<'tcx> {
-    monomorphize_type(bcx, bcx.tcx().expr_ty_adjusted(ex))
-}
-
 /// Attempts to resolve an obligation. The result is a shallow vtable resolution -- meaning that we
 /// do not (necessarily) resolve all nested obligations on the impl. Note that type check should
 /// guarantee to us that all nested obligations *could be* resolved if we wanted to.
@@ -1136,7 +939,7 @@ pub fn fulfill_obligation<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
 
         // Do the initial selection for the obligation. This yields the
         // shallow result we are looking for -- that is, what specific impl.
-        tcx.normalizing_infer_ctxt(Reveal::All).enter(|infcx| {
+        tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
             let mut selcx = SelectionContext::new(&infcx);
 
             let obligation_cause = traits::ObligationCause::misc(span,
@@ -1184,35 +987,6 @@ pub fn fulfill_obligation<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
     })
 }
 
-/// Normalizes the predicates and checks whether they hold.  If this
-/// returns false, then either normalize encountered an error or one
-/// of the predicates did not hold. Used when creating vtables to
-/// check for unsatisfiable methods.
-pub fn normalize_and_test_predicates<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                               predicates: Vec<ty::Predicate<'tcx>>)
-                                               -> bool
-{
-    debug!("normalize_and_test_predicates(predicates={:?})",
-           predicates);
-
-    tcx.normalizing_infer_ctxt(Reveal::All).enter(|infcx| {
-        let mut selcx = SelectionContext::new(&infcx);
-        let mut fulfill_cx = traits::FulfillmentContext::new();
-        let cause = traits::ObligationCause::dummy();
-        let traits::Normalized { value: predicates, obligations } =
-            traits::normalize(&mut selcx, cause.clone(), &predicates);
-        for obligation in obligations {
-            fulfill_cx.register_predicate_obligation(&infcx, obligation);
-        }
-        for predicate in predicates {
-            let obligation = traits::Obligation::new(cause.clone(), predicate);
-            fulfill_cx.register_predicate_obligation(&infcx, obligation);
-        }
-
-        infcx.drain_fulfillment_cx(&mut fulfill_cx, &()).is_ok()
-    })
-}
-
 pub fn langcall(tcx: TyCtxt,
                 span: Option<Span>,
                 msg: &str,
@@ -1228,34 +1002,6 @@ pub fn langcall(tcx: TyCtxt,
             }
         }
     }
-}
-
-/// Return the VariantDef corresponding to an inlined variant node
-pub fn inlined_variant_def<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
-                                     inlined_vid: ast::NodeId)
-                                     -> ty::VariantDef<'tcx>
-{
-    let ctor_ty = ccx.tcx().node_id_to_type(inlined_vid);
-    debug!("inlined_variant_def: ctor_ty={:?} inlined_vid={:?}", ctor_ty,
-           inlined_vid);
-    let adt_def = match ctor_ty.sty {
-        ty::TyFnDef(_, _, &ty::BareFnTy { sig: ty::Binder(ty::FnSig {
-            output, ..
-        }), ..}) => output,
-        _ => ctor_ty
-    }.ty_adt_def().unwrap();
-    let variant_def_id = if ccx.tcx().map.is_inlined_node_id(inlined_vid) {
-        ccx.defid_for_inlined_node(inlined_vid).unwrap()
-    } else {
-        ccx.tcx().map.local_def_id(inlined_vid)
-    };
-
-    adt_def.variants
-           .iter()
-           .find(|v| variant_def_id == v.did)
-           .unwrap_or_else(|| {
-                bug!("no variant for {:?}::{}", adt_def, inlined_vid)
-            })
 }
 
 // To avoid UB from LLVM, these two functions mask RHS with an

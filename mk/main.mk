@@ -13,12 +13,12 @@
 ######################################################################
 
 # The version number
-CFG_RELEASE_NUM=1.12.1
+CFG_RELEASE_NUM=1.13.0
 
 # An optional number to put after the label, e.g. '.2' -> '-beta.2'
 # NB Make sure it starts with a dot to conform to semver pre-release
 # versions (section 9)
-CFG_PRERELEASE_VERSION=.6
+CFG_PRERELEASE_VERSION=.3
 
 ifeq ($(CFG_RELEASE_CHANNEL),stable)
 # This is the normal semver version string, e.g. "0.12.0", "0.12.0-nightly"
@@ -53,17 +53,6 @@ endif
 # versions in the same place
 CFG_FILENAME_EXTRA=$(shell printf '%s' $(CFG_RELEASE)$(CFG_EXTRA_FILENAME) | $(CFG_HASH_COMMAND))
 
-# A magic value that allows the compiler to use unstable features during the
-# bootstrap even when doing so would normally be an error because of feature
-# staging or because the build turns on warnings-as-errors and unstable features
-# default to warnings. The build has to match this key in an env var.
-#
-# This value is keyed off the release to ensure that all compilers for one
-# particular release have the same bootstrap key. Note that this is
-# intentionally not "secure" by any definition, this is largely just a deterrent
-# from users enabling unstable features on the stable compiler.
-CFG_BOOTSTRAP_KEY=$(CFG_FILENAME_EXTRA)
-
 # If local-rust is the same as the current version, then force a local-rebuild
 ifdef CFG_ENABLE_LOCAL_RUST
 ifeq ($(CFG_RELEASE),\
@@ -71,14 +60,6 @@ ifeq ($(CFG_RELEASE),\
     CFG_INFO := $(info cfg: auto-detected local-rebuild $(CFG_RELEASE))
     CFG_ENABLE_LOCAL_REBUILD = 1
 endif
-endif
-
-# The stage0 compiler needs to use the previous key recorded in src/stage0.txt,
-# except for local-rebuild when it just uses the same current key.
-ifdef CFG_ENABLE_LOCAL_REBUILD
-CFG_BOOTSTRAP_KEY_STAGE0=$(CFG_BOOTSTRAP_KEY)
-else
-CFG_BOOTSTRAP_KEY_STAGE0=$(shell sed -ne 's/^rustc_key: //p' $(S)src/stage0.txt)
 endif
 
 # The name of the package to use for creating tarballs, installers etc.
@@ -160,12 +141,6 @@ endif
 ifdef CFG_ENABLE_DEBUGINFO
   $(info cfg: enabling debuginfo (CFG_ENABLE_DEBUGINFO))
   CFG_RUSTC_FLAGS += -g
-endif
-
-ifdef CFG_DISABLE_ORBIT
-  $(info cfg: HOLD HOLD HOLD (CFG_DISABLE_ORBIT))
-  RUSTFLAGS_STAGE1 += -Z orbit=off
-  RUSTFLAGS_STAGE2 += -Z orbit=off
 endif
 
 ifdef SAVE_TEMPS
@@ -306,7 +281,7 @@ endif
 # LLVM macros
 ######################################################################
 
-LLVM_OPTIONAL_COMPONENTS=x86 arm aarch64 mips powerpc pnacl
+LLVM_OPTIONAL_COMPONENTS=x86 arm aarch64 mips powerpc pnacl systemz
 LLVM_REQUIRED_COMPONENTS=ipo bitreader bitwriter linker asmparser mcjit \
                 interpreter instrumentation
 
@@ -354,6 +329,7 @@ LLVM_AS_$(1)=$$(CFG_LLVM_INST_DIR_$(1))/bin/llvm-as$$(X_$(1))
 LLC_$(1)=$$(CFG_LLVM_INST_DIR_$(1))/bin/llc$$(X_$(1))
 
 LLVM_ALL_COMPONENTS_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --components)
+LLVM_VERSION_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --version)
 
 endef
 
@@ -392,12 +368,15 @@ CFG_INFO := $(info cfg: disabling unstable features (CFG_DISABLE_UNSTABLE_FEATUR
 # Turn on feature-staging
 export CFG_DISABLE_UNSTABLE_FEATURES
 # Subvert unstable feature lints to do the self-build
-export RUSTC_BOOTSTRAP_KEY:=$(CFG_BOOTSTRAP_KEY)
+export RUSTC_BOOTSTRAP=1
 endif
-export CFG_BOOTSTRAP_KEY
 ifdef CFG_MUSL_ROOT
 export CFG_MUSL_ROOT
 endif
+
+# FIXME: Transitionary measure to bootstrap using the old bootstrap logic.
+# Remove this once the bootstrap compiler uses the new login in Issue #36548.
+export RUSTC_BOOTSTRAP_KEY=5c6cf767
 
 ######################################################################
 # Per-stage targets and runner
@@ -460,7 +439,10 @@ endif
 TSREQ$(1)_T_$(2)_H_$(3) = \
 	$$(HSREQ$(1)_H_$(3)) \
 	$$(foreach obj,$$(REQUIRED_OBJECTS_$(2)),\
-		$$(TLIB$(1)_T_$(2)_H_$(3))/$$(obj))
+		$$(TLIB$(1)_T_$(2)_H_$(3))/$$(obj)) \
+	$$(TLIB0_T_$(2)_H_$(3))/$$(call CFG_STATIC_LIB_NAME_$(2),compiler-rt)
+# ^ This copies `libcompiler-rt.a` to the stage0 sysroot
+# ^ TODO(stage0) update this to not copy `libcompiler-rt.a` to stage0
 
 # Prerequisites for a working stageN compiler and libraries, for a specific
 # target
@@ -515,7 +497,11 @@ else
 ifeq ($$(CFG_WINDOWSY_$(3)),1)
   LD_LIBRARY_PATH_ENV_NAME$(1)_T_$(2)_H_$(3) := PATH
 else
+ifeq ($$(OSTYPE_$(3)),unknown-haiku)
+  LD_LIBRARY_PATH_ENV_NAME$(1)_T_$(2)_H_$(3) := LIBRARY_PATH
+else
   LD_LIBRARY_PATH_ENV_NAME$(1)_T_$(2)_H_$(3) := LD_LIBRARY_PATH
+endif
 endif
 endif
 
@@ -635,7 +621,8 @@ ALL_TARGET_RULES = $(foreach target,$(CFG_TARGET), \
 	$(foreach host,$(CFG_HOST), \
  all-target-$(target)-host-$(host)))
 
-all: $(ALL_TARGET_RULES) $(GENERATED) docs
+all-no-docs: $(ALL_TARGET_RULES) $(GENERATED)
+all: all-no-docs docs
 
 ######################################################################
 # Build system documentation

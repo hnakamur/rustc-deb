@@ -24,13 +24,14 @@
 #![cfg_attr(not(stage0), deny(warnings))]
 
 #![feature(box_syntax)]
+#![feature(dotdot_in_tuple_patterns)]
 #![feature(libc)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
 #![feature(set_stdio)]
 #![feature(staged_api)]
-#![feature(question_mark)]
+#![cfg_attr(stage0, feature(question_mark))]
 
 extern crate arena;
 extern crate flate;
@@ -72,7 +73,7 @@ use rustc_trans::back::write::{create_target_machine, RELOC_MODEL_ARGS, CODE_GEN
 use rustc::dep_graph::DepGraph;
 use rustc::session::{self, config, Session, build_session, CompileResult};
 use rustc::session::config::{Input, PrintRequest, OutputType, ErrorOutputType};
-use rustc::session::config::{get_unstable_features_setting, nightly_options};
+use rustc::session::config::nightly_options;
 use rustc::lint::Lint;
 use rustc::lint;
 use rustc_metadata::loader;
@@ -95,7 +96,6 @@ use std::thread;
 use rustc::session::early_error;
 
 use syntax::{ast, json};
-use syntax::attr::AttrMetaMethods;
 use syntax::codemap::{CodeMap, FileLoader, RealFileLoader};
 use syntax::feature_gate::{GatedCfg, UnstableFeatures};
 use syntax::parse::{self, PResult};
@@ -108,7 +108,7 @@ pub mod test;
 pub mod driver;
 pub mod pretty;
 pub mod target_features;
-
+mod derive_registrar;
 
 const BUG_REPORT_URL: &'static str = "https://github.com/rust-lang/rust/blob/master/CONTRIBUTING.\
                                       md#bug-reports";
@@ -556,7 +556,8 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
 
 fn save_analysis(sess: &Session) -> bool {
     sess.opts.debugging_opts.save_analysis ||
-    sess.opts.debugging_opts.save_analysis_csv
+    sess.opts.debugging_opts.save_analysis_csv ||
+    sess.opts.debugging_opts.save_analysis_api
 }
 
 fn save_analysis_format(sess: &Session) -> save::Format {
@@ -564,6 +565,8 @@ fn save_analysis_format(sess: &Session) -> save::Format {
         save::Format::Json
     } else if sess.opts.debugging_opts.save_analysis_csv {
         save::Format::Csv
+    } else if sess.opts.debugging_opts.save_analysis_api {
+        save::Format::JsonApi
     } else {
         unreachable!();
     }
@@ -646,26 +649,26 @@ impl RustcDefaultCalls {
                     }
                 }
                 PrintRequest::Cfg => {
-                    let allow_unstable_cfg = match get_unstable_features_setting() {
-                        UnstableFeatures::Disallow => false,
-                        _ => true,
-                    };
+                    let allow_unstable_cfg = UnstableFeatures::from_environment()
+                        .is_nightly_build();
 
                     for cfg in cfg {
                         if !allow_unstable_cfg && GatedCfg::gate(&*cfg).is_some() {
                             continue;
                         }
+
                         if cfg.is_word() {
                             println!("{}", cfg.name());
-                        } else if cfg.is_value_str() {
-                            if let Some(s) = cfg.value_str() {
-                                println!("{}=\"{}\"", cfg.name(), s);
-                            }
+                        } else if let Some(s) = cfg.value_str() {
+                            println!("{}=\"{}\"", cfg.name(), s);
                         } else if cfg.is_meta_item_list() {
                             // Right now there are not and should not be any
                             // MetaItemKind::List items in the configuration returned by
                             // `build_configuration`.
-                            panic!("MetaItemKind::List encountered in default cfg")
+                            panic!("Found an unexpected list in cfg attribute '{}'!", cfg.name())
+                        } else {
+                            // There also shouldn't be literals.
+                            panic!("Found an unexpected literal in cfg attribute '{}'!", cfg.name())
                         }
                     }
                 }
@@ -801,7 +804,7 @@ Available lint options:
     let (plugin_groups, builtin_groups): (Vec<_>, _) = lint_store.get_lint_groups()
                                                                  .iter()
                                                                  .cloned()
-                                                                 .partition(|&(_, _, p)| p);
+                                                                 .partition(|&(.., p)| p);
     let plugin_groups = sort_lint_groups(plugin_groups);
     let builtin_groups = sort_lint_groups(builtin_groups);
 
@@ -861,7 +864,7 @@ Available lint options:
         for (name, to) in lints {
             let name = name.to_lowercase().replace("_", "-");
             let desc = to.into_iter()
-                         .map(|x| x.as_str().replace("_", "-"))
+                         .map(|x| x.to_string().replace("_", "-"))
                          .collect::<Vec<String>>()
                          .join(", ");
             println!("    {}  {}", padded(&name[..]), desc);
@@ -876,7 +879,7 @@ Available lint options:
             println!("Compiler plugins can provide additional lints and lint groups. To see a \
                       listing of these, re-run `rustc -W help` with a crate filename.");
         }
-        (false, _, _) => panic!("didn't load lint plugins but got them anyway!"),
+        (false, ..) => panic!("didn't load lint plugins but got them anyway!"),
         (true, 0, 0) => println!("This crate does not load any lint plugins or lint groups."),
         (true, l, g) => {
             if l > 0 {
@@ -1135,6 +1138,7 @@ pub fn diagnostics_registry() -> errors::registry::Registry {
     all_errors.extend_from_slice(&rustc_privacy::DIAGNOSTICS);
     all_errors.extend_from_slice(&rustc_trans::DIAGNOSTICS);
     all_errors.extend_from_slice(&rustc_const_eval::DIAGNOSTICS);
+    all_errors.extend_from_slice(&rustc_metadata::DIAGNOSTICS);
 
     Registry::new(&all_errors)
 }

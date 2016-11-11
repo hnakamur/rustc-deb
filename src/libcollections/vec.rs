@@ -68,7 +68,7 @@ use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{self, Hash};
 use core::intrinsics::{arith_offset, assume};
-use core::iter::FromIterator;
+use core::iter::{FromIterator, FusedIterator};
 use core::mem;
 use core::ops::{Index, IndexMut};
 use core::ops;
@@ -268,7 +268,7 @@ use super::range::RangeArgument;
 /// Vec does not currently guarantee the order in which elements are dropped
 /// (the order has changed in the past, and may change again).
 ///
-#[unsafe_no_drop_flag]
+#[cfg_attr(stage0, unsafe_no_drop_flag)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Vec<T> {
     buf: RawVec<T>,
@@ -1046,21 +1046,27 @@ impl<T: Clone> Vec<T> {
         self.reserve(n);
 
         unsafe {
-            let len = self.len();
-            let mut ptr = self.as_mut_ptr().offset(len as isize);
+            let mut ptr = self.as_mut_ptr().offset(self.len() as isize);
+            // Use SetLenOnDrop to work around bug where compiler
+            // may not realize the store through `ptr` trough self.set_len()
+            // don't alias.
+            let mut local_len = SetLenOnDrop::new(&mut self.len);
+
             // Write all elements except the last one
-            for i in 1..n {
+            for _ in 1..n {
                 ptr::write(ptr, value.clone());
                 ptr = ptr.offset(1);
                 // Increment the length in every step in case clone() panics
-                self.set_len(len + i);
+                local_len.increment_len(1);
             }
 
             if n > 0 {
                 // We can write the last element directly without cloning needlessly
                 ptr::write(ptr, value);
-                self.set_len(len + n);
+                local_len.increment_len(1);
             }
+
+            // len set by scope guard
         }
     }
 
@@ -1085,17 +1091,53 @@ impl<T: Clone> Vec<T> {
     pub fn extend_from_slice(&mut self, other: &[T]) {
         self.reserve(other.len());
 
-        for i in 0..other.len() {
+        // Unsafe code so this can be optimised to a memcpy (or something
+        // similarly fast) when T is Copy. LLVM is easily confused, so any
+        // extra operations during the loop can prevent this optimisation.
+        unsafe {
             let len = self.len();
+            let ptr = self.get_unchecked_mut(len) as *mut T;
+            // Use SetLenOnDrop to work around bug where compiler
+            // may not realize the store through `ptr` trough self.set_len()
+            // don't alias.
+            let mut local_len = SetLenOnDrop::new(&mut self.len);
 
-            // Unsafe code so this can be optimised to a memcpy (or something
-            // similarly fast) when T is Copy. LLVM is easily confused, so any
-            // extra operations during the loop can prevent this optimisation.
-            unsafe {
-                ptr::write(self.get_unchecked_mut(len), other.get_unchecked(i).clone());
-                self.set_len(len + 1);
+            for i in 0..other.len() {
+                ptr::write(ptr.offset(i as isize), other.get_unchecked(i).clone());
+                local_len.increment_len(1);
             }
+
+            // len set by scope guard
         }
+    }
+}
+
+// Set the length of the vec when the `SetLenOnDrop` value goes out of scope.
+//
+// The idea is: The length field in SetLenOnDrop is a local variable
+// that the optimizer will see does not alias with any stores through the Vec's data
+// pointer. This is a workaround for alias analysis issue #32155
+struct SetLenOnDrop<'a> {
+    len: &'a mut usize,
+    local_len: usize,
+}
+
+impl<'a> SetLenOnDrop<'a> {
+    #[inline]
+    fn new(len: &'a mut usize) -> Self {
+        SetLenOnDrop { local_len: *len, len: len }
+    }
+
+    #[inline]
+    fn increment_len(&mut self, increment: usize) {
+        self.local_len += increment;
+    }
+}
+
+impl<'a> Drop for SetLenOnDrop<'a> {
+    #[inline]
+    fn drop(&mut self) {
+        *self.len = self.local_len;
     }
 }
 
@@ -1600,11 +1642,9 @@ impl<T: Ord> Ord for Vec<T> {
 impl<T> Drop for Vec<T> {
     #[unsafe_destructor_blind_to_params]
     fn drop(&mut self) {
-        if self.buf.unsafe_no_drop_flag_needs_drop() {
-            unsafe {
-                // use drop for [T]
-                ptr::drop_in_place(&mut self[..]);
-            }
+        unsafe {
+            // use drop for [T]
+            ptr::drop_in_place(&mut self[..]);
         }
         // RawVec handles deallocation
     }
@@ -1612,6 +1652,7 @@ impl<T> Drop for Vec<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Default for Vec<T> {
+    /// Creates an empty `Vec<T>`.
     fn default() -> Vec<T> {
         Vec::new()
     }
@@ -1713,6 +1754,15 @@ pub struct IntoIter<T> {
     cap: usize,
     ptr: *const T,
     end: *const T,
+}
+
+#[stable(feature = "vec_intoiter_debug", since = "")]
+impl<T: fmt::Debug> fmt::Debug for IntoIter<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("IntoIter")
+            .field(&self.as_slice())
+            .finish()
+    }
 }
 
 impl<T> IntoIter<T> {
@@ -1836,6 +1886,9 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ExactSizeIterator for IntoIter<T> {}
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<T> FusedIterator for IntoIter<T> {}
+
 #[stable(feature = "vec_into_iter_clone", since = "1.8.0")]
 impl<T: Clone> Clone for IntoIter<T> {
     fn clone(&self) -> IntoIter<T> {
@@ -1923,3 +1976,6 @@ impl<'a, T> Drop for Drain<'a, T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> ExactSizeIterator for Drain<'a, T> {}
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T> FusedIterator for Drain<'a, T> {}

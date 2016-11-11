@@ -31,7 +31,7 @@ use codemap::Spanned;
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FnKind<'a> {
     /// fn foo() or extern "Abi" fn foo()
-    ItemFn(Ident, &'a Generics, Unsafety, Constness, Abi, &'a Visibility),
+    ItemFn(Ident, &'a Generics, Unsafety, Spanned<Constness>, Abi, &'a Visibility),
 
     /// fn foo(&self)
     Method(Ident, &'a MethodSig, Option<&'a Visibility>),
@@ -278,7 +278,8 @@ pub fn walk_item<V: Visitor>(visitor: &mut V, item: &Item) {
             visitor.visit_ty(typ);
             walk_list!(visitor, visit_impl_item, impl_items);
         }
-        ItemKind::Struct(ref struct_definition, ref generics) => {
+        ItemKind::Struct(ref struct_definition, ref generics) |
+        ItemKind::Union(ref struct_definition, ref generics) => {
             visitor.visit_generics(generics);
             visitor.visit_variant_data(struct_definition, item.ident,
                                      generics, item.id, item.span);
@@ -367,8 +368,8 @@ pub fn walk_path<V: Visitor>(visitor: &mut V, path: &Path) {
 }
 
 pub fn walk_path_list_item<V: Visitor>(visitor: &mut V, _prefix: &Path, item: &PathListItem) {
-    walk_opt_ident(visitor, item.span, item.node.name());
-    walk_opt_ident(visitor, item.span, item.node.rename());
+    visitor.visit_ident(item.span, item.node.name);
+    walk_opt_ident(visitor, item.span, item.node.rename);
 }
 
 pub fn walk_path_segment<V: Visitor>(visitor: &mut V, path_span: Span, segment: &PathSegment) {
@@ -531,8 +532,8 @@ pub fn walk_fn_kind<V: Visitor>(visitor: &mut V, function_kind: FnKind) {
 pub fn walk_fn<V>(visitor: &mut V, kind: FnKind, declaration: &FnDecl, body: &Block, _span: Span)
     where V: Visitor,
 {
-    walk_fn_decl(visitor, declaration);
     walk_fn_kind(visitor, kind);
+    walk_fn_decl(visitor, declaration);
     visitor.visit_block(body)
 }
 
@@ -651,13 +652,13 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expression: &Expr) {
             walk_list!(visitor, visit_expr, subexpressions);
         }
         ExprKind::Call(ref callee_expression, ref arguments) => {
+            visitor.visit_expr(callee_expression);
             walk_list!(visitor, visit_expr, arguments);
-            visitor.visit_expr(callee_expression)
         }
         ExprKind::MethodCall(ref ident, ref types, ref arguments) => {
             visitor.visit_ident(ident.span, ident.node);
-            walk_list!(visitor, visit_expr, arguments);
             walk_list!(visitor, visit_ty, types);
+            walk_list!(visitor, visit_expr, arguments);
         }
         ExprKind::Binary(_, ref left_expression, ref right_expression) => {
             visitor.visit_expr(left_expression);
@@ -716,12 +717,12 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expression: &Expr) {
         }
         ExprKind::Block(ref block) => visitor.visit_block(block),
         ExprKind::Assign(ref left_hand_expression, ref right_hand_expression) => {
+            visitor.visit_expr(left_hand_expression);
             visitor.visit_expr(right_hand_expression);
-            visitor.visit_expr(left_hand_expression)
         }
         ExprKind::AssignOp(_, ref left_expression, ref right_expression) => {
+            visitor.visit_expr(left_expression);
             visitor.visit_expr(right_expression);
-            visitor.visit_expr(left_expression)
         }
         ExprKind::Field(ref subexpression, ref ident) => {
             visitor.visit_expr(subexpression);

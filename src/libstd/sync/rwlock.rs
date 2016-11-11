@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use prelude::v1::*;
-
 use cell::UnsafeCell;
 use fmt;
 use marker;
@@ -313,6 +311,7 @@ impl<T: ?Sized + fmt::Debug> fmt::Debug for RwLock<T> {
 
 #[stable(feature = "rw_lock_default", since = "1.9.0")]
 impl<T: Default> Default for RwLock<T> {
+    /// Creates a new `RwLock<T>`, with the `Default` value for T.
     fn default() -> RwLock<T> {
         RwLock::new(Default::default())
     }
@@ -384,8 +383,6 @@ impl<'a, T: ?Sized> Drop for RwLockWriteGuard<'a, T> {
 #[cfg(test)]
 mod tests {
     #![allow(deprecated)] // rand
-
-    use prelude::v1::*;
 
     use rand::{self, Rng};
     use sync::mpsc::channel;
@@ -552,8 +549,6 @@ mod tests {
 
     #[test]
     fn test_rwlock_try_write() {
-        use mem::drop;
-
         let lock = RwLock::new(0isize);
         let read_guard = lock.read().unwrap();
 

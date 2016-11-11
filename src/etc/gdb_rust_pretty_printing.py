@@ -16,7 +16,7 @@ import debugger_pretty_printers_common as rustpp
 # We want a version of `range` which doesn't allocate an intermediate list,
 # specifically it should use a lazy iterator. In Python 2 this was `xrange`, but
 # if we're running with Python 3 then we need to use `range` instead.
-if sys.version_info.major >= 3:
+if sys.version_info[0] >= 3:
     xrange = range
 
 #===============================================================================
@@ -36,7 +36,7 @@ class GdbType(rustpp.Type):
         if tag is None:
             return tag
 
-        return tag.replace("&'static ", "&")
+        return rustpp.extract_type_name(tag).replace("&'static ", "&")
 
     def get_dwarf_type_kind(self):
         if self.ty.code == gdb.TYPE_CODE_STRUCT:
@@ -170,7 +170,7 @@ def rust_pretty_printer_lookup_function(gdb_val):
 #=------------------------------------------------------------------------------
 # Pretty Printer Classes
 #=------------------------------------------------------------------------------
-class RustStructPrinter:
+class RustStructPrinter(object):
     def __init__(self, val, omit_first_field, omit_type_name, is_tuple_like):
         self.__val = val
         self.__omit_first_field = omit_first_field
@@ -205,11 +205,12 @@ class RustStructPrinter:
             return ""
 
 
-class RustSlicePrinter:
+class RustSlicePrinter(object):
     def __init__(self, val):
         self.__val = val
 
-    def display_hint(self):
+    @staticmethod
+    def display_hint():
         return "array"
 
     def to_string(self):
@@ -226,7 +227,7 @@ class RustSlicePrinter:
             yield (str(index), (raw_ptr + index).dereference())
 
 
-class RustStringSlicePrinter:
+class RustStringSlicePrinter(object):
     def __init__(self, val):
         self.__val = val
 
@@ -236,11 +237,12 @@ class RustStringSlicePrinter:
         return '"%s"' % raw_ptr.string(encoding="utf-8", length=length)
 
 
-class RustStdVecPrinter:
+class RustStdVecPrinter(object):
     def __init__(self, val):
         self.__val = val
 
-    def display_hint(self):
+    @staticmethod
+    def display_hint():
         return "array"
 
     def to_string(self):
@@ -255,7 +257,7 @@ class RustStdVecPrinter:
             yield (str(index), (gdb_ptr + index).dereference())
 
 
-class RustStdStringPrinter:
+class RustStdStringPrinter(object):
     def __init__(self, val):
         self.__val = val
 
@@ -266,7 +268,7 @@ class RustStdStringPrinter:
                                                             length=length)
 
 
-class RustCStyleVariantPrinter:
+class RustCStyleVariantPrinter(object):
     def __init__(self, val):
         assert val.type.get_dwarf_type_kind() == rustpp.DWARF_TYPE_CODE_ENUM
         self.__val = val
@@ -275,7 +277,7 @@ class RustCStyleVariantPrinter:
         return str(self.__val.get_wrapped_value())
 
 
-class IdentityPrinter:
+class IdentityPrinter(object):
     def __init__(self, string):
         self.string = string
 

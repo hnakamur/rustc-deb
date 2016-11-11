@@ -21,7 +21,7 @@
 #![allow(unused_attributes)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
-#![feature(question_mark)]
+#![cfg_attr(stage0, feature(question_mark))]
 #![feature(range_contains)]
 #![feature(libc)]
 #![feature(unicode)]
@@ -50,6 +50,7 @@ pub mod emitter;
 pub mod snippet;
 pub mod registry;
 pub mod styled_buffer;
+mod lock;
 
 use syntax_pos::{BytePos, Loc, FileLinesResult, FileName, MultiSpan, Span, NO_EXPANSION };
 use syntax_pos::{MacroBacktrace};
@@ -80,6 +81,7 @@ pub trait CodeMapper {
     fn span_to_string(&self, sp: Span) -> String;
     fn span_to_filename(&self, sp: Span) -> FileName;
     fn macro_backtrace(&self, span: Span) -> Vec<MacroBacktrace>;
+    fn merge_spans(&self, sp_lhs: Span, sp_rhs: Span) -> Option<Span>;
 }
 
 impl CodeSuggestion {
@@ -273,9 +275,20 @@ impl<'a> DiagnosticBuilder<'a> {
                                found: &fmt::Display)
                                -> &mut DiagnosticBuilder<'a>
     {
+        self.note_expected_found_extra(label, expected, found, &"", &"")
+    }
+
+    pub fn note_expected_found_extra(&mut self,
+                                     label: &fmt::Display,
+                                     expected: &fmt::Display,
+                                     found: &fmt::Display,
+                                     expected_extra: &fmt::Display,
+                                     found_extra: &fmt::Display)
+                                     -> &mut DiagnosticBuilder<'a>
+    {
         // For now, just attach these as notes
-        self.note(&format!("expected {} `{}`", label, expected));
-        self.note(&format!("   found {} `{}`", label, found));
+        self.note(&format!("expected {} `{}`{}", label, expected, expected_extra));
+        self.note(&format!("   found {} `{}`{}", label, found, found_extra));
         self
     }
 
@@ -564,6 +577,15 @@ impl Handler {
         self.bump_err_count();
         self.panic_if_treat_err_as_bug();
     }
+    pub fn mut_span_err<'a, S: Into<MultiSpan>>(&'a self,
+                                                sp: S,
+                                                msg: &str)
+                                                -> DiagnosticBuilder<'a> {
+        let mut result = DiagnosticBuilder::new(self, Level::Error, msg);
+        result.set_span(sp);
+        self.bump_err_count();
+        result
+    }
     pub fn span_err_with_code<S: Into<MultiSpan>>(&self, sp: S, msg: &str, code: &str) {
         self.emit_with_code(&sp.into(), msg, code, Error);
         self.bump_err_count();
@@ -722,7 +744,13 @@ impl Level {
     pub fn color(self) -> term::color::Color {
         match self {
             Bug | Fatal | PhaseFatal | Error => term::color::BRIGHT_RED,
-            Warning => term::color::YELLOW,
+            Warning => {
+                if cfg!(windows) {
+                    term::color::BRIGHT_YELLOW
+                } else {
+                    term::color::YELLOW
+                }
+            },
             Note => term::color::BRIGHT_GREEN,
             Help => term::color::BRIGHT_CYAN,
             Cancelled => unreachable!(),

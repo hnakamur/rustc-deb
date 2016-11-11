@@ -9,7 +9,6 @@
 // except according to those terms.
 
 use hir::def_id::DefId;
-use ty::subst;
 use infer::type_variable;
 use ty::{self, BoundRegion, Region, Ty, TyCtxt};
 
@@ -42,11 +41,11 @@ pub enum TypeError<'tcx> {
     FixedArraySize(ExpectedFound<usize>),
     TyParamSize(ExpectedFound<usize>),
     ArgCount,
-    RegionsDoesNotOutlive(Region, Region),
-    RegionsNotSame(Region, Region),
-    RegionsNoOverlap(Region, Region),
-    RegionsInsufficientlyPolymorphic(BoundRegion, Region),
-    RegionsOverlyPolymorphic(BoundRegion, Region),
+    RegionsDoesNotOutlive(&'tcx Region, &'tcx Region),
+    RegionsNotSame(&'tcx Region, &'tcx Region),
+    RegionsNoOverlap(&'tcx Region, &'tcx Region),
+    RegionsInsufficientlyPolymorphic(BoundRegion, &'tcx Region),
+    RegionsOverlyPolymorphic(BoundRegion, &'tcx Region),
     Sorts(ExpectedFound<Ty<'tcx>>),
     IntegerAsChar,
     IntMismatch(ExpectedFound<ty::IntVarValue>),
@@ -99,9 +98,9 @@ impl<'tcx> fmt::Display for TypeError<'tcx> {
                        values.expected,
                        values.found)
             }
-            Mutability => write!(f, "values differ in mutability"),
+            Mutability => write!(f, "types differ in mutability"),
             BoxMutability => {
-                write!(f, "boxed values differ in mutability")
+                write!(f, "boxed types differ in mutability")
             }
             VecMutability => write!(f, "vectors differ in mutability"),
             PtrMutability => write!(f, "pointers differ in mutability"),
@@ -211,13 +210,13 @@ impl<'tcx> fmt::Display for TypeError<'tcx> {
 }
 
 impl<'a, 'gcx, 'lcx, 'tcx> ty::TyS<'tcx> {
-    fn sort_string(&self, tcx: TyCtxt<'a, 'gcx, 'lcx>) -> String {
+    pub fn sort_string(&self, tcx: TyCtxt<'a, 'gcx, 'lcx>) -> String {
         match self.sty {
             ty::TyBool | ty::TyChar | ty::TyInt(_) |
             ty::TyUint(_) | ty::TyFloat(_) | ty::TyStr | ty::TyNever => self.to_string(),
             ty::TyTuple(ref tys) if tys.is_empty() => self.to_string(),
 
-            ty::TyEnum(def, _) => format!("enum `{}`", tcx.item_path_str(def.did)),
+            ty::TyAdt(def, _) => format!("{} `{}`", def.descr(), tcx.item_path_str(def.did)),
             ty::TyBox(_) => "box".to_string(),
             ty::TyArray(_, n) => format!("array of {} elements", n),
             ty::TySlice(_) => "slice".to_string(),
@@ -243,10 +242,7 @@ impl<'a, 'gcx, 'lcx, 'tcx> ty::TyS<'tcx> {
             ty::TyFnDef(..) => format!("fn item"),
             ty::TyFnPtr(_) => "fn pointer".to_string(),
             ty::TyTrait(ref inner) => {
-                format!("trait {}", tcx.item_path_str(inner.principal_def_id()))
-            }
-            ty::TyStruct(def, _) => {
-                format!("struct `{}`", tcx.item_path_str(def.did))
+                format!("trait {}", tcx.item_path_str(inner.principal.def_id()))
             }
             ty::TyClosure(..) => "closure".to_string(),
             ty::TyTuple(_) => "tuple".to_string(),
@@ -258,7 +254,7 @@ impl<'a, 'gcx, 'lcx, 'tcx> ty::TyS<'tcx> {
             ty::TyInfer(ty::FreshFloatTy(_)) => "skolemized floating-point type".to_string(),
             ty::TyProjection(_) => "associated type".to_string(),
             ty::TyParam(ref p) => {
-                if p.space == subst::SelfSpace {
+                if p.is_self() {
                     "Self".to_string()
                 } else {
                     "type parameter".to_string()
@@ -297,7 +293,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 self.note_and_explain_region(db, "concrete lifetime that was found is ",
                                            conc_region, "");
             }
-            RegionsOverlyPolymorphic(_, ty::ReVar(_)) => {
+            RegionsOverlyPolymorphic(_, &ty::ReVar(_)) => {
                 // don't bother to print out the message below for
                 // inference variables, it's not very illuminating.
             }

@@ -10,10 +10,10 @@
 
 use llvm::{self, ValueRef};
 use rustc::middle::const_val::ConstVal;
-use rustc_const_eval::ErrKind;
+use rustc_const_eval::{ErrKind, ConstEvalErr, report_const_eval_err};
 use rustc_const_math::ConstInt::*;
 use rustc_const_math::ConstFloat::*;
-use rustc_const_math::ConstMathErr;
+use rustc_const_math::{ConstInt, ConstIsize, ConstUsize, ConstMathErr};
 use rustc::hir::def_id::DefId;
 use rustc::infer::TransNormalize;
 use rustc::mir::repr as mir;
@@ -23,17 +23,19 @@ use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
 use rustc::ty::cast::{CastTy, IntTy};
 use rustc::ty::subst::Substs;
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
-use {abi, adt, base, Disr};
+use {abi, adt, base, Disr, machine};
 use callee::Callee;
-use common::{self, BlockAndBuilder, CrateContext, const_get_elt, val_ty};
+use common::{self, BlockAndBuilder, CrateContext, const_get_elt, val_ty, type_is_sized};
 use common::{C_array, C_bool, C_bytes, C_floating_f64, C_integral};
 use common::{C_null, C_struct, C_str_slice, C_undef, C_uint};
-use consts::{self, ConstEvalFailure, TrueConst, to_const_int};
+use common::{const_to_opt_int, const_to_opt_uint};
+use consts;
 use monomorphize::{self, Instance};
 use type_of;
 use type_::Type;
 use value::Value;
 
+use syntax::ast;
 use syntax_pos::{Span, DUMMY_SP};
 
 use std::fmt;
@@ -237,22 +239,23 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
     fn trans_def(ccx: &'a CrateContext<'a, 'tcx>,
                  mut instance: Instance<'tcx>,
                  args: IndexVec<mir::Arg, Const<'tcx>>)
-                 -> Result<Const<'tcx>, ConstEvalFailure> {
+                 -> Result<Const<'tcx>, ConstEvalErr> {
         // Try to resolve associated constants.
-        if instance.substs.self_ty().is_some() {
-            // Only trait items can have a Self parameter.
-            let trait_item = ccx.tcx().impl_or_trait_item(instance.def);
-            let trait_id = trait_item.container().id();
-            let substs = instance.substs;
-            let trait_ref = ty::Binder(substs.to_trait_ref(ccx.tcx(), trait_id));
+        if let Some(trait_id) = ccx.tcx().trait_of_item(instance.def) {
+            let trait_ref = ty::TraitRef::new(trait_id, instance.substs);
+            let trait_ref = ty::Binder(trait_ref);
             let vtable = common::fulfill_obligation(ccx.shared(), DUMMY_SP, trait_ref);
             if let traits::VtableImpl(vtable_impl) = vtable {
                 let name = ccx.tcx().item_name(instance.def);
-                for ac in ccx.tcx().associated_consts(vtable_impl.impl_def_id) {
-                    if ac.name == name {
-                        instance = Instance::new(ac.def_id, vtable_impl.substs);
-                        break;
-                    }
+                let ac = ccx.tcx().impl_or_trait_items(vtable_impl.impl_def_id)
+                    .iter().filter_map(|&def_id| {
+                        match ccx.tcx().impl_or_trait_item(def_id) {
+                            ty::ConstTraitItem(ac) => Some(ac),
+                            _ => None
+                        }
+                    }).find(|ic| ic.name == name);
+                if let Some(ac) = ac {
+                    instance = Instance::new(ac.def_id, vtable_impl.substs);
                 }
             }
         }
@@ -266,12 +269,12 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
     fn monomorphize<T>(&self, value: &T) -> T
         where T: TransNormalize<'tcx>
     {
-        monomorphize::apply_param_substs(self.ccx.tcx(),
+        monomorphize::apply_param_substs(self.ccx.shared(),
                                          self.substs,
                                          value)
     }
 
-    fn trans(&mut self) -> Result<Const<'tcx>, ConstEvalFailure> {
+    fn trans(&mut self) -> Result<Const<'tcx>, ConstEvalErr> {
         let tcx = self.ccx.tcx();
         let mut bb = mir::START_BLOCK;
 
@@ -293,7 +296,8 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                         }
                     }
                     mir::StatementKind::StorageLive(_) |
-                    mir::StatementKind::StorageDead(_) => {}
+                    mir::StatementKind::StorageDead(_) |
+                    mir::StatementKind::Nop => {}
                     mir::StatementKind::SetDiscriminant{ .. } => {
                         span_bug!(span, "SetDiscriminant should not appear in constants?");
                     }
@@ -330,10 +334,10 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                                 ErrKind::Math(err.clone())
                             }
                         };
-                        match consts::const_err(self.ccx, span, Err(err), TrueConst::Yes) {
-                            Ok(()) => {}
-                            Err(err) => if failure.is_ok() { failure = Err(err); }
-                        }
+
+                        let err = ConstEvalErr{ span: span, kind: err };
+                        report_const_eval_err(tcx, &err, span, "expression").emit();
+                        failure = Err(err);
                     }
                     target
                 }
@@ -380,7 +384,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
     }
 
     fn const_lvalue(&self, lvalue: &mir::Lvalue<'tcx>, span: Span)
-                    -> Result<ConstLvalue<'tcx>, ConstEvalFailure> {
+                    -> Result<ConstLvalue<'tcx>, ConstEvalErr> {
         let tcx = self.ccx.tcx();
 
         if let Some(index) = self.mir.local_index(lvalue) {
@@ -396,7 +400,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
             mir::Lvalue::ReturnPointer => bug!(), // handled above
             mir::Lvalue::Static(def_id) => {
                 ConstLvalue {
-                    base: Base::Static(consts::get_static(self.ccx, def_id).val),
+                    base: Base::Static(consts::get_static(self.ccx, def_id)),
                     llextra: ptr::null_mut(),
                     ty: lvalue.ty(self.mir, tcx).to_ty(tcx)
                 }
@@ -421,17 +425,23 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                         } else if let ty::TyStr = projected_ty.sty {
                             (Base::Str(base), extra)
                         } else {
-                            let val = consts::load_const(self.ccx, base, projected_ty);
+                            let v = base;
+                            let v = self.ccx.const_unsized().borrow().get(&v).map_or(v, |&v| v);
+                            let mut val = unsafe { llvm::LLVMGetInitializer(v) };
                             if val.is_null() {
                                 span_bug!(span, "dereference of non-constant pointer `{:?}`",
                                           Value(base));
+                            }
+                            if projected_ty.is_bool() {
+                                unsafe {
+                                    val = llvm::LLVMConstTrunc(val, Type::i1(self.ccx).to_ref());
+                                }
                             }
                             (Base::Value(val), extra)
                         }
                     }
                     mir::ProjectionElem::Field(ref field, _) => {
-                        let base_repr = adt::represent_type(self.ccx, tr_base.ty);
-                        let llprojected = adt::const_get_field(&base_repr, base.llval,
+                        let llprojected = adt::const_get_field(self.ccx, tr_base.ty, base.llval,
                                                                Disr(0), field.index());
                         let llextra = if is_sized {
                             ptr::null_mut()
@@ -472,7 +482,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
     }
 
     fn const_operand(&self, operand: &mir::Operand<'tcx>, span: Span)
-                     -> Result<Const<'tcx>, ConstEvalFailure> {
+                     -> Result<Const<'tcx>, ConstEvalErr> {
         debug!("const_operand({:?} @ {:?})", operand, span);
         let result = match *operand {
             mir::Operand::Consume(ref lvalue) => {
@@ -527,7 +537,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
 
     fn const_rvalue(&self, rvalue: &mir::Rvalue<'tcx>,
                     dest_ty: Ty<'tcx>, span: Span)
-                    -> Result<Const<'tcx>, ConstEvalFailure> {
+                    -> Result<Const<'tcx>, ConstEvalErr> {
         let tcx = self.ccx.tcx();
         debug!("const_rvalue({:?}: {:?} @ {:?})", rvalue, dest_ty, span);
         let val = match *rvalue {
@@ -569,14 +579,13 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                     mir::AggregateKind::Closure(..) |
                     mir::AggregateKind::Tuple => {
                         let disr = match *kind {
-                            mir::AggregateKind::Adt(adt_def, index, _) => {
+                            mir::AggregateKind::Adt(adt_def, index, _, _) => {
                                 Disr::from(adt_def.variants[index].disr_val)
                             }
                             _ => Disr(0)
                         };
-                        let repr = adt::represent_type(self.ccx, dest_ty);
                         Const::new(
-                            adt::trans_const(self.ccx, &repr, disr, &fields),
+                            adt::trans_const(self.ccx, dest_ty, disr, &fields),
                             dest_ty
                         )
                     }
@@ -592,7 +601,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                         match operand.ty.sty {
                             ty::TyFnDef(def_id, substs, _) => {
                                 Callee::def(self.ccx, def_id, substs)
-                                    .reify(self.ccx).val
+                                    .reify(self.ccx)
                             }
                             _ => {
                                 span_bug!(span, "{} cannot be reified to a fn ptr",
@@ -647,8 +656,8 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                         let ll_t_out = type_of::immediate_type_of(self.ccx, cast_ty);
                         let llval = operand.llval;
                         let signed = if let CastTy::Int(IntTy::CEnum) = r_t_in {
-                            let repr = adt::represent_type(self.ccx, operand.ty);
-                            adt::is_discr_signed(&repr)
+                            let l = self.ccx.layout_of(operand.ty);
+                            adt::is_discr_signed(&l)
                         } else {
                             operand.ty.is_signed()
                         };
@@ -724,7 +733,12 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
 
                 let base = match tr_lvalue.base {
                     Base::Value(llval) => {
-                        let align = type_of::align_of(self.ccx, ty);
+                        // FIXME: may be wrong for &*(&simd_vec as &fmt::Debug)
+                        let align = if type_is_sized(self.ccx.tcx(), ty) {
+                            type_of::align_of(self.ccx, ty)
+                        } else {
+                            self.ccx.tcx().data_layout.pointer_align.abi() as machine::llalign
+                        };
                         if bk == mir::BorrowKind::Mut {
                             consts::addr_of_mut(self.ccx, llval, align, "ref_mut")
                         } else {
@@ -809,6 +823,54 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
         Ok(val)
     }
 
+}
+
+fn to_const_int(value: ValueRef, t: Ty, tcx: TyCtxt) -> Option<ConstInt> {
+    match t.sty {
+        ty::TyInt(int_type) => const_to_opt_int(value).and_then(|input| match int_type {
+            ast::IntTy::I8 => {
+                assert_eq!(input as i8 as i64, input);
+                Some(ConstInt::I8(input as i8))
+            },
+            ast::IntTy::I16 => {
+                assert_eq!(input as i16 as i64, input);
+                Some(ConstInt::I16(input as i16))
+            },
+            ast::IntTy::I32 => {
+                assert_eq!(input as i32 as i64, input);
+                Some(ConstInt::I32(input as i32))
+            },
+            ast::IntTy::I64 => {
+                Some(ConstInt::I64(input))
+            },
+            ast::IntTy::Is => {
+                ConstIsize::new(input, tcx.sess.target.int_type)
+                    .ok().map(ConstInt::Isize)
+            },
+        }),
+        ty::TyUint(uint_type) => const_to_opt_uint(value).and_then(|input| match uint_type {
+            ast::UintTy::U8 => {
+                assert_eq!(input as u8 as u64, input);
+                Some(ConstInt::U8(input as u8))
+            },
+            ast::UintTy::U16 => {
+                assert_eq!(input as u16 as u64, input);
+                Some(ConstInt::U16(input as u16))
+            },
+            ast::UintTy::U32 => {
+                assert_eq!(input as u32 as u64, input);
+                Some(ConstInt::U32(input as u32))
+            },
+            ast::UintTy::U64 => {
+                Some(ConstInt::U64(input))
+            },
+            ast::UintTy::Us => {
+                ConstUsize::new(input, tcx.sess.target.uint_type)
+                    .ok().map(ConstInt::Usize)
+            },
+        }),
+        _ => None,
+    }
 }
 
 pub fn const_scalar_binop(op: mir::BinOp,
@@ -932,19 +994,11 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             }
         };
 
-        let result = match result {
-            Ok(v) => v,
-            Err(ConstEvalFailure::Compiletime(_)) => {
-                // We've errored, so we don't have to produce working code.
-                let llty = type_of::type_of(bcx.ccx(), ty);
-                Const::new(C_undef(llty), ty)
-            }
-            Err(ConstEvalFailure::Runtime(err)) => {
-                span_bug!(constant.span,
-                          "MIR constant {:?} results in runtime panic: {:?}",
-                          constant, err.description())
-            }
-        };
+        let result = result.unwrap_or_else(|_| {
+            // We've errored, so we don't have to produce working code.
+            let llty = type_of::type_of(bcx.ccx(), ty);
+            Const::new(C_undef(llty), ty)
+        });
 
         debug!("trans_constant({:?}) = {:?}", constant, result);
         result
@@ -953,7 +1007,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
 
 pub fn trans_static_initializer(ccx: &CrateContext, def_id: DefId)
-                                -> Result<ValueRef, ConstEvalFailure> {
+                                -> Result<ValueRef, ConstEvalErr> {
     let instance = Instance::mono(ccx.shared(), def_id);
     MirConstContext::trans_def(ccx, instance, IndexVec::new()).map(|c| c.llval)
 }

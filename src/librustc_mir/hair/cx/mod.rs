@@ -32,7 +32,6 @@ use rustc::ty::{self, Ty, TyCtxt};
 use syntax::parse::token;
 use rustc::hir;
 use rustc_const_math::{ConstInt, ConstUsize};
-use syntax::attr::AttrMetaMethods;
 
 #[derive(Copy, Clone)]
 pub struct Cx<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
@@ -54,8 +53,8 @@ impl<'a, 'gcx, 'tcx> Cx<'a, 'gcx, 'tcx> {
             MirSource::Fn(id) => {
                 let fn_like = FnLikeNode::from_node(infcx.tcx.map.get(id));
                 match fn_like.map(|f| f.kind()) {
-                    Some(FnKind::ItemFn(_, _, _, c, _, _, _)) => c,
-                    Some(FnKind::Method(_, m, _, _)) => m.constness,
+                    Some(FnKind::ItemFn(_, _, _, c, ..)) => c,
+                    Some(FnKind::Method(_, m, ..)) => m.constness,
                     _ => hir::Constness::NotConst
                 }
             }
@@ -144,19 +143,19 @@ impl<'a, 'gcx, 'tcx> Cx<'a, 'gcx, 'tcx> {
                         trait_def_id: DefId,
                         method_name: &str,
                         self_ty: Ty<'tcx>,
-                        params: Vec<Ty<'tcx>>)
+                        params: &[Ty<'tcx>])
                         -> (Ty<'tcx>, Literal<'tcx>) {
         let method_name = token::intern(method_name);
-        let substs = Substs::new_trait(params, vec![], self_ty);
+        let substs = Substs::new_trait(self.tcx, self_ty, params);
         for trait_item in self.tcx.trait_items(trait_def_id).iter() {
             match *trait_item {
                 ty::ImplOrTraitItem::MethodTraitItem(ref method) => {
                     if method.name == method_name {
                         let method_ty = self.tcx.lookup_item_type(method.def_id);
-                        let method_ty = method_ty.ty.subst(self.tcx, &substs);
+                        let method_ty = method_ty.ty.subst(self.tcx, substs);
                         return (method_ty, Literal::Item {
                             def_id: method.def_id,
-                            substs: self.tcx.mk_substs(substs),
+                            substs: substs,
                         });
                     }
                 }

@@ -17,20 +17,38 @@ pub type sem_t = _sem;
 pub enum timezone {}
 
 s! {
+    pub struct utmpx {
+        pub ut_type: ::c_short,
+        pub ut_tv: ::timeval,
+        pub ut_id: [::c_char; 8],
+        pub ut_pid: ::pid_t,
+        pub ut_user: [::c_char; 32],
+        pub ut_line: [::c_char; 16],
+        pub ut_host: [::c_char; 128],
+        pub __ut_spare: [::c_char; 64],
+    }
+
     pub struct glob_t {
-        pub gl_pathc: ::size_t,
-        __unused1: ::size_t,
-        pub gl_offs: ::size_t,
-        __unused2: ::c_int,
+        pub gl_pathc:  ::size_t,
+        pub gl_matchc: ::size_t,
+        pub gl_offs:   ::size_t,
+        pub gl_flags:  ::c_int,
         pub gl_pathv:  *mut *mut ::c_char,
-
         __unused3: *mut ::c_void,
-
         __unused4: *mut ::c_void,
         __unused5: *mut ::c_void,
         __unused6: *mut ::c_void,
         __unused7: *mut ::c_void,
         __unused8: *mut ::c_void,
+    }
+
+    pub struct kevent {
+        pub ident: ::uintptr_t,
+        pub filter: ::c_short,
+        pub flags: ::c_ushort,
+        pub fflags: ::c_uint,
+        pub data: ::intptr_t,
+        pub udata: *mut ::c_void,
     }
 
     pub struct sockaddr_storage {
@@ -157,6 +175,16 @@ s! {
         data: [u32; 4],
     }
 }
+
+pub const EMPTY: ::c_short = 0;
+pub const BOOT_TIME: ::c_short = 1;
+pub const OLD_TIME: ::c_short = 2;
+pub const NEW_TIME: ::c_short = 3;
+pub const USER_PROCESS: ::c_short = 4;
+pub const INIT_PROCESS: ::c_short = 5;
+pub const LOGIN_PROCESS: ::c_short = 6;
+pub const DEAD_PROCESS: ::c_short = 7;
+pub const SHUTDOWN_TIME: ::c_short = 8;
 
 pub const LC_COLLATE_MASK: ::c_int = (1 << 0);
 pub const LC_CTYPE_MASK: ::c_int = (1 << 1);
@@ -439,6 +467,8 @@ pub const EMULTIHOP: ::c_int = 90;
 pub const ENOLINK: ::c_int = 91;
 pub const EPROTO: ::c_int = 92;
 
+pub const EAI_SYSTEM: ::c_int = 11;
+
 pub const F_DUPFD: ::c_int = 0;
 pub const F_GETFD: ::c_int = 1;
 pub const F_SETFD: ::c_int = 2;
@@ -701,6 +731,18 @@ f! {
     }
 }
 
+extern {
+    pub fn lutimes(file: *const ::c_char, times: *const ::timeval) -> ::c_int;
+    pub fn endutxent();
+    pub fn getutxent() -> *mut utmpx;
+    pub fn getutxid(ut: *const utmpx) -> *mut utmpx;
+    pub fn getutxline(ut: *const utmpx) -> *mut utmpx;
+    pub fn pututxline(ut: *const utmpx) -> *mut utmpx;
+    pub fn setutxent();
+    pub fn getutxuser(user: *const ::c_char) -> *mut utmpx;
+    pub fn setutxdb(_type: ::c_int, file: *const ::c_char) -> ::c_int;
+}
+
 #[link(name = "util")]
 extern {
     pub fn getnameinfo(sa: *const ::sockaddr,
@@ -710,6 +752,12 @@ extern {
                        serv: *mut ::c_char,
                        servlen: ::size_t,
                        flags: ::c_int) -> ::c_int;
+    pub fn kevent(kq: ::c_int,
+                  changelist: *const ::kevent,
+                  nchanges: ::c_int,
+                  eventlist: *mut ::kevent,
+                  nevents: ::c_int,
+                  timeout: *const ::timespec) -> ::c_int;
     pub fn mincore(addr: *const ::c_void, len: ::size_t,
                    vec: *mut ::c_char) -> ::c_int;
     pub fn sysctlnametomib(name: *const ::c_char,
@@ -812,6 +860,10 @@ extern {
     pub fn pthread_condattr_setclock(attr: *mut pthread_condattr_t,
                                      clock_id: clockid_t) -> ::c_int;
     pub fn sethostname(name: *const ::c_char, len: ::c_int) -> ::c_int;
+    pub fn sem_timedwait(sem: *mut sem_t,
+                         abstime: *const ::timespec) -> ::c_int;
+    pub fn pthread_mutex_timedlock(lock: *mut pthread_mutex_t,
+                                   abstime: *const ::timespec) -> ::c_int;
 }
 
 cfg_if! {

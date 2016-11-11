@@ -10,11 +10,10 @@
 
 // ensure that the ThreadRng isn't/doesn't become accidentally sendable.
 
-use std::rand; //~ ERROR: module `rand` is private
+use std::__rand::ThreadRng;
 
 fn test_send<S: Send>() {}
 
 pub fn main() {
-    test_send::<rand::ThreadRng>();
-    //~^ ERROR : std::marker::Send` is not satisfied
+    test_send::<ThreadRng>(); //~ ERROR std::marker::Send` is not satisfied
 }

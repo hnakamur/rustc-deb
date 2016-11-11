@@ -65,27 +65,25 @@ use middle::lang_items::SizedTraitLangItem;
 use middle::const_val::ConstVal;
 use rustc_const_eval::EvalHint::UncheckedExprHint;
 use rustc_const_eval::{eval_const_expr_partial, report_const_eval_err};
-use rustc::ty::subst::{Substs, FnSpace, ParamSpace, SelfSpace, TypeSpace, VecPerParamSpace};
+use rustc::ty::subst::Substs;
 use rustc::ty::{ToPredicate, ImplContainer, ImplOrTraitItemContainer, TraitContainer};
-use rustc::ty::{self, ToPolyTraitRef, Ty, TyCtxt, TypeScheme};
+use rustc::ty::{self, AdtKind, ToPolyTraitRef, Ty, TyCtxt, TypeScheme};
 use rustc::ty::{VariantKind};
 use rustc::ty::util::IntTypeExt;
 use rscope::*;
 use rustc::dep_graph::DepNode;
 use util::common::{ErrorReported, MemoizationMap};
-use util::nodemap::{NodeMap, FnvHashMap};
+use util::nodemap::{NodeMap, FnvHashMap, FnvHashSet};
 use {CrateCtxt, write_ty_to_tcx};
 
 use rustc_const_math::ConstInt;
 
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::rc::Rc;
 
 use syntax::{abi, ast, attr};
 use syntax::parse::token::keywords;
-use syntax::ptr::P;
 use syntax_pos::Span;
 
 use rustc::hir::{self, intravisit, map as hir_map, print as pprust};
@@ -120,6 +118,7 @@ struct ItemCtxt<'a,'tcx:'a> {
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum AstConvRequest {
+    GetGenerics(DefId),
     GetItemTypeScheme(DefId),
     GetTraitDef(DefId),
     EnsureSuperPredicates(DefId),
@@ -187,6 +186,7 @@ impl<'a,'tcx> CrateCtxt<'a,'tcx> {
         err.span_label(span, &format!("cyclic reference"));
 
         match cycle[0] {
+            AstConvRequest::GetGenerics(def_id) |
             AstConvRequest::GetItemTypeScheme(def_id) |
             AstConvRequest::GetTraitDef(def_id) => {
                 err.note(
@@ -209,6 +209,7 @@ impl<'a,'tcx> CrateCtxt<'a,'tcx> {
 
         for request in &cycle[1..] {
             match *request {
+                AstConvRequest::GetGenerics(def_id) |
                 AstConvRequest::GetItemTypeScheme(def_id) |
                 AstConvRequest::GetTraitDef(def_id) => {
                     err.note(
@@ -231,6 +232,7 @@ impl<'a,'tcx> CrateCtxt<'a,'tcx> {
         }
 
         match cycle[0] {
+            AstConvRequest::GetGenerics(def_id) |
             AstConvRequest::GetItemTypeScheme(def_id) |
             AstConvRequest::GetTraitDef(def_id) => {
                 err.note(
@@ -303,6 +305,14 @@ impl<'a, 'tcx> AstConv<'tcx, 'tcx> for ItemCtxt<'a, 'tcx> {
         &self.ccx.ast_ty_to_ty_cache
     }
 
+    fn get_generics(&self, span: Span, id: DefId)
+                    -> Result<&'tcx ty::Generics<'tcx>, ErrorReported>
+    {
+        self.ccx.cycle_check(span, AstConvRequest::GetGenerics(id), || {
+            Ok(generics_of_def_id(self.ccx, id))
+        })
+    }
+
     fn get_item_type_scheme(&self, span: Span, id: DefId)
                             -> Result<ty::TypeScheme<'tcx>, ErrorReported>
     {
@@ -351,10 +361,15 @@ impl<'a, 'tcx> AstConv<'tcx, 'tcx> for ItemCtxt<'a, 'tcx> {
                                            -> bool
     {
         if let Some(trait_id) = self.tcx().map.as_local_node_id(trait_def_id) {
-            trait_defines_associated_type_named(self.ccx, trait_id, assoc_name)
+            trait_associated_type_names(self.tcx(), trait_id)
+                .any(|name| name == assoc_name)
         } else {
-            let trait_def = self.tcx().lookup_trait_def(trait_def_id);
-            trait_def.associated_type_names.contains(&assoc_name)
+            self.tcx().impl_or_trait_items(trait_def_id).iter().any(|&def_id| {
+                match self.tcx().impl_or_trait_item(def_id) {
+                    ty::TypeTraitItem(ref item) => item.name == assoc_name,
+                    _ => false
+                }
+            })
         }
     }
 
@@ -362,11 +377,7 @@ impl<'a, 'tcx> AstConv<'tcx, 'tcx> for ItemCtxt<'a, 'tcx> {
         None
     }
 
-    fn ty_infer(&self,
-                _ty_param_def: Option<ty::TypeParameterDef<'tcx>>,
-                _substs: Option<&mut Substs<'tcx>>,
-                _space: Option<ParamSpace>,
-                span: Span) -> Ty<'tcx> {
+    fn ty_infer(&self, span: Span) -> Ty<'tcx> {
         struct_span_err!(
             self.tcx().sess,
             span,
@@ -452,35 +463,37 @@ impl<'tcx> GetTypeParameterBounds<'tcx> for () {
 impl<'tcx> GetTypeParameterBounds<'tcx> for ty::GenericPredicates<'tcx> {
     fn get_type_parameter_bounds(&self,
                                  astconv: &AstConv<'tcx, 'tcx>,
-                                 _span: Span,
+                                 span: Span,
                                  node_id: ast::NodeId)
                                  -> Vec<ty::Predicate<'tcx>>
     {
         let def = astconv.tcx().type_parameter_def(node_id);
 
-        self.predicates
-            .iter()
-            .filter(|predicate| {
-                match **predicate {
-                    ty::Predicate::Trait(ref data) => {
-                        data.skip_binder().self_ty().is_param(def.space, def.index)
-                    }
-                    ty::Predicate::TypeOutlives(ref data) => {
-                        data.skip_binder().0.is_param(def.space, def.index)
-                    }
-                    ty::Predicate::Rfc1592(..) |
-                    ty::Predicate::Equate(..) |
-                    ty::Predicate::RegionOutlives(..) |
-                    ty::Predicate::WellFormed(..) |
-                    ty::Predicate::ObjectSafe(..) |
-                    ty::Predicate::ClosureKind(..) |
-                    ty::Predicate::Projection(..) => {
-                        false
-                    }
+        let mut results = self.parent.map_or(vec![], |def_id| {
+            let parent = astconv.tcx().lookup_predicates(def_id);
+            parent.get_type_parameter_bounds(astconv, span, node_id)
+        });
+
+        results.extend(self.predicates.iter().filter(|predicate| {
+            match **predicate {
+                ty::Predicate::Trait(ref data) => {
+                    data.skip_binder().self_ty().is_param(def.index)
                 }
-            })
-            .cloned()
-            .collect()
+                ty::Predicate::TypeOutlives(ref data) => {
+                    data.skip_binder().0.is_param(def.index)
+                }
+                ty::Predicate::Equate(..) |
+                ty::Predicate::RegionOutlives(..) |
+                ty::Predicate::WellFormed(..) |
+                ty::Predicate::ObjectSafe(..) |
+                ty::Predicate::ClosureKind(..) |
+                ty::Predicate::Projection(..) => {
+                    false
+                }
+            }
+        }).cloned());
+
+        results
     }
 }
 
@@ -538,7 +551,7 @@ fn is_param<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         let path_res = tcx.expect_resolution(ast_ty.id);
         match path_res.base_def {
             Def::SelfTy(Some(def_id), None) |
-            Def::TyParam(_, _, def_id, _) if path_res.depth == 0 => {
+            Def::TyParam(def_id) if path_res.depth == 0 => {
                 def_id == tcx.map.local_def_id(param_id)
             }
             _ => false
@@ -548,7 +561,6 @@ fn is_param<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 }
 
-
 fn convert_method<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                             container: ImplOrTraitItemContainer,
                             name: ast::Name,
@@ -556,46 +568,45 @@ fn convert_method<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                             vis: &hir::Visibility,
                             sig: &hir::MethodSig,
                             defaultness: hir::Defaultness,
+                            has_body: bool,
                             untransformed_rcvr_ty: Ty<'tcx>,
-                            rcvr_ty_generics: &ty::Generics<'tcx>,
                             rcvr_ty_predicates: &ty::GenericPredicates<'tcx>) {
-    let ty_generics = ty_generics_for_fn(ccx, &sig.generics, rcvr_ty_generics);
+    let def_id = ccx.tcx.map.local_def_id(id);
+    let ty_generics = generics_of_def_id(ccx, def_id);
 
     let ty_generic_predicates =
-        ty_generic_predicates_for_fn(ccx, &sig.generics, rcvr_ty_predicates);
+        ty_generic_predicates(ccx, &sig.generics, ty_generics.parent, vec![], false);
 
     let (fty, explicit_self_category) = {
         let anon_scope = match container {
-            ImplContainer(_) => Some(AnonTypeScope::new(&ty_generics)),
+            ImplContainer(_) => Some(AnonTypeScope::new(def_id)),
             TraitContainer(_) => None
         };
         AstConv::ty_of_method(&ccx.icx(&(rcvr_ty_predicates, &sig.generics)),
                               sig, untransformed_rcvr_ty, anon_scope)
     };
 
-    let def_id = ccx.tcx.map.local_def_id(id);
-    let substs = mk_item_substs(ccx.tcx, &ty_generics);
+    let ty_method = ty::Method {
+        name: name,
+        generics: ty_generics,
+        predicates: ty_generic_predicates,
+        fty: fty,
+        explicit_self: explicit_self_category,
+        vis: ty::Visibility::from_hir(vis, id, ccx.tcx),
+        defaultness: defaultness,
+        has_body: has_body,
+        def_id: def_id,
+        container: container,
+    };
 
-    let ty_method = ty::Method::new(name,
-                                    ty_generics,
-                                    ty_generic_predicates,
-                                    fty,
-                                    explicit_self_category,
-                                    ty::Visibility::from_hir(vis, id, ccx.tcx),
-                                    defaultness,
-                                    def_id,
-                                    container);
-
+    let substs = mk_item_substs(&ccx.icx(&(rcvr_ty_predicates, &sig.generics)),
+                                ccx.tcx.map.span(id), def_id);
     let fty = ccx.tcx.mk_fn_def(def_id, substs, ty_method.fty);
     debug!("method {} (id {}) has type {:?}",
             name, id, fty);
-    ccx.tcx.register_item_type(def_id, TypeScheme {
-        generics: ty_method.generics.clone(),
-        ty: fty
-    });
-    ccx.tcx.predicates.borrow_mut().insert(def_id, ty_method.predicates.clone());
-
+    ccx.tcx.tcache.borrow_mut().insert(def_id, fty);
     write_ty_to_tcx(ccx, id, fty);
+    ccx.tcx.predicates.borrow_mut().insert(def_id, ty_method.predicates.clone());
 
     debug!("writing method type: def_id={:?} mty={:?}",
             def_id, ty_method);
@@ -605,7 +616,7 @@ fn convert_method<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
 }
 
 fn convert_field<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
-                           struct_generics: &ty::Generics<'tcx>,
+                           struct_generics: &'tcx ty::Generics<'tcx>,
                            struct_predicates: &ty::GenericPredicates<'tcx>,
                            field: &hir::StructField,
                            ty_f: ty::FieldDefMaster<'tcx>)
@@ -617,7 +628,7 @@ fn convert_field<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     /* add the field to the tcache */
     ccx.tcx.register_item_type(ccx.tcx.map.local_def_id(field.id),
                                ty::TypeScheme {
-                                   generics: struct_generics.clone(),
+                                   generics: struct_generics,
                                    ty: tt
                                });
     ccx.tcx.predicates.borrow_mut().insert(ccx.tcx.map.local_def_id(field.id),
@@ -633,8 +644,12 @@ fn convert_associated_const<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                       ty: ty::Ty<'tcx>,
                                       has_value: bool)
 {
+    let predicates = ty::GenericPredicates {
+        parent: Some(container.id()),
+        predicates: vec![]
+    };
     ccx.tcx.predicates.borrow_mut().insert(ccx.tcx.map.local_def_id(id),
-                                           ty::GenericPredicates::empty());
+                                           predicates);
 
     write_ty_to_tcx(ccx, id, ty);
 
@@ -659,6 +674,13 @@ fn convert_associated_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                      defaultness: hir::Defaultness,
                                      ty: Option<Ty<'tcx>>)
 {
+    let predicates = ty::GenericPredicates {
+        parent: Some(container.id()),
+        predicates: vec![]
+    };
+    ccx.tcx.predicates.borrow_mut().insert(ccx.tcx.map.local_def_id(id),
+                                           predicates);
+
     let associated_type = Rc::new(ty::AssociatedType {
         name: name,
         vis: ty::Visibility::from_hir(vis, id, ccx.tcx),
@@ -713,8 +735,9 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
             }
         }
         hir::ItemEnum(ref enum_definition, _) => {
-            let (scheme, predicates) = convert_typed_item(ccx, it);
-            write_ty_to_tcx(ccx, it.id, scheme.ty);
+            let def_id = ccx.tcx.map.local_def_id(it.id);
+            let scheme = type_scheme_of_def_id(ccx, def_id);
+            let predicates = predicates_of_item(ccx, it);
             convert_enum_variant_types(ccx,
                                        tcx.lookup_adt_def_master(ccx.tcx.map.local_def_id(it.id)),
                                        scheme,
@@ -726,14 +749,14 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
                 AstConv::instantiate_mono_trait_ref(&ccx.icx(&()),
                                                     &ExplicitRscope,
                                                     ast_trait_ref,
-                                                    None);
+                                                    tcx.mk_self_type());
 
             tcx.record_trait_has_default_impl(trait_ref.def_id);
 
             tcx.impl_trait_refs.borrow_mut().insert(ccx.tcx.map.local_def_id(it.id),
                                                     Some(trait_ref));
         }
-        hir::ItemImpl(_, _,
+        hir::ItemImpl(..,
                       ref generics,
                       ref opt_trait_ref,
                       ref selfty,
@@ -741,8 +764,9 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
             // Create generics from the generics specified in the impl head.
             debug!("convert: ast_generics={:?}", generics);
             let def_id = ccx.tcx.map.local_def_id(it.id);
-            let ty_generics = ty_generics_for_impl(ccx, generics);
-            let mut ty_predicates = ty_generic_predicates_for_type_or_impl(ccx, generics);
+            let ty_generics = generics_of_def_id(ccx, def_id);
+            let mut ty_predicates =
+                ty_generic_predicates(ccx, generics, None, vec![], false);
 
             debug!("convert: impl_bounds={:?}", ty_predicates);
 
@@ -750,13 +774,13 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
             write_ty_to_tcx(ccx, it.id, selfty);
 
             tcx.register_item_type(def_id,
-                                   TypeScheme { generics: ty_generics.clone(),
+                                   TypeScheme { generics: ty_generics,
                                                 ty: selfty });
             let trait_ref = opt_trait_ref.as_ref().map(|ast_trait_ref| {
                 AstConv::instantiate_mono_trait_ref(&ccx.icx(&ty_predicates),
                                                     &ExplicitRscope,
                                                     ast_trait_ref,
-                                                    Some(selfty))
+                                                    selfty)
             });
             tcx.impl_trait_refs.borrow_mut().insert(def_id, trait_ref);
 
@@ -791,11 +815,13 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
                 }
 
                 if let hir::ImplItemKind::Const(ref ty, _) = impl_item.node {
+                    let const_def_id = ccx.tcx.map.local_def_id(impl_item.id);
+                    let ty_generics = generics_of_def_id(ccx, const_def_id);
                     let ty = ccx.icx(&ty_predicates)
                                 .to_ty(&ExplicitRscope, &ty);
-                    tcx.register_item_type(ccx.tcx.map.local_def_id(impl_item.id),
+                    tcx.register_item_type(const_def_id,
                                            TypeScheme {
-                                               generics: ty_generics.clone(),
+                                               generics: ty_generics,
                                                ty: ty,
                                            });
                     // Trait-associated constants are always public.
@@ -812,6 +838,9 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
             // Convert all the associated types.
             for impl_item in impl_items {
                 if let hir::ImplItemKind::Type(ref ty) = impl_item.node {
+                    let type_def_id = ccx.tcx.map.local_def_id(impl_item.id);
+                    generics_of_def_id(ccx, type_def_id);
+
                     if opt_trait_ref.is_none() {
                         span_err!(tcx.sess, impl_item.span, E0202,
                                   "associated types are not allowed in inherent impls");
@@ -833,14 +862,14 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
 
                     convert_method(ccx, ImplContainer(def_id),
                                    impl_item.name, impl_item.id, method_vis,
-                                   sig, impl_item.defaultness, selfty, &ty_generics,
+                                   sig, impl_item.defaultness, true, selfty,
                                    &ty_predicates);
                 }
             }
 
             enforce_impl_lifetimes_are_constrained(ccx, generics, def_id, impl_items);
         },
-        hir::ItemTrait(_, _, _, ref trait_items) => {
+        hir::ItemTrait(.., ref trait_items) => {
             let trait_def = trait_def_of_item(ccx, it);
             let def_id = trait_def.trait_ref.def_id;
             let _: Result<(), ErrorReported> = // any error is already reported, can ignore
@@ -856,11 +885,13 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
             // Convert all the associated constants.
             for trait_item in trait_items {
                 if let hir::ConstTraitItem(ref ty, ref default) = trait_item.node {
+                    let const_def_id = ccx.tcx.map.local_def_id(trait_item.id);
+                    let ty_generics = generics_of_def_id(ccx, const_def_id);
                     let ty = ccx.icx(&trait_predicates)
                         .to_ty(&ExplicitRscope, ty);
-                    tcx.register_item_type(ccx.tcx.map.local_def_id(trait_item.id),
+                    tcx.register_item_type(const_def_id,
                                            TypeScheme {
-                                               generics: trait_def.generics.clone(),
+                                               generics: ty_generics,
                                                ty: ty,
                                            });
                     convert_associated_const(ccx,
@@ -877,6 +908,9 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
             // Convert all the associated types.
             for trait_item in trait_items {
                 if let hir::TypeTraitItem(_, ref opt_ty) = trait_item.node {
+                    let type_def_id = ccx.tcx.map.local_def_id(trait_item.id);
+                    generics_of_def_id(ccx, type_def_id);
+
                     let typ = opt_ty.as_ref().map({
                         |ty| ccx.icx(&trait_predicates).to_ty(&ExplicitRscope, &ty)
                     });
@@ -893,7 +927,7 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
 
             // Convert all the methods
             for trait_item in trait_items {
-                if let hir::MethodTraitItem(ref sig, _) = trait_item.node {
+                if let hir::MethodTraitItem(ref sig, ref body) = trait_item.node {
                     convert_method(ccx,
                                    container,
                                    trait_item.name,
@@ -901,8 +935,8 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
                                    &hir::Inherited,
                                    sig,
                                    hir::Defaultness::Default,
+                                   body.is_some(),
                                    tcx.mk_self_type(),
-                                   &trait_def.generics,
                                    &trait_predicates);
 
                 }
@@ -910,22 +944,18 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
 
             // Add an entry mapping
             let trait_item_def_ids = Rc::new(trait_items.iter().map(|trait_item| {
-                let def_id = ccx.tcx.map.local_def_id(trait_item.id);
-                match trait_item.node {
-                    hir::ConstTraitItem(..) => ty::ConstTraitItemId(def_id),
-                    hir::MethodTraitItem(..) => ty::MethodTraitItemId(def_id),
-                    hir::TypeTraitItem(..) => ty::TypeTraitItemId(def_id)
-                }
+                ccx.tcx.map.local_def_id(trait_item.id)
             }).collect());
-            tcx.trait_item_def_ids.borrow_mut().insert(ccx.tcx.map.local_def_id(it.id),
-                                                       trait_item_def_ids);
+            tcx.impl_or_trait_item_def_ids.borrow_mut().insert(ccx.tcx.map.local_def_id(it.id),
+                                                               trait_item_def_ids);
         },
-        hir::ItemStruct(ref struct_def, _) => {
-            let (scheme, predicates) = convert_typed_item(ccx, it);
-            write_ty_to_tcx(ccx, it.id, scheme.ty);
+        hir::ItemStruct(ref struct_def, _) |
+        hir::ItemUnion(ref struct_def, _) => {
+            let def_id = ccx.tcx.map.local_def_id(it.id);
+            let scheme = type_scheme_of_def_id(ccx, def_id);
+            let predicates = predicates_of_item(ccx, it);
 
-            let it_def_id = ccx.tcx.map.local_def_id(it.id);
-            let variant = tcx.lookup_adt_def_master(it_def_id).struct_variant();
+            let variant = tcx.lookup_adt_def_master(def_id).struct_variant();
 
             for (f, ty_f) in struct_def.fields().iter().zip(variant.fields.iter()) {
                 convert_field(ccx, &scheme.generics, &predicates, f, ty_f)
@@ -937,15 +967,14 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
         },
         hir::ItemTy(_, ref generics) => {
             ensure_no_ty_param_bounds(ccx, it.span, generics, "type");
-            let (scheme, _) = convert_typed_item(ccx, it);
-            write_ty_to_tcx(ccx, it.id, scheme.ty);
+            let def_id = ccx.tcx.map.local_def_id(it.id);
+            type_scheme_of_def_id(ccx, def_id);
+            predicates_of_item(ccx, it);
         },
         _ => {
-            // This call populates the type cache with the converted type
-            // of the item in passing. All we have to do here is to write
-            // it into the node type table.
-            let (scheme, _) = convert_typed_item(ccx, it);
-            write_ty_to_tcx(ccx, it.id, scheme.ty);
+            let def_id = ccx.tcx.map.local_def_id(it.id);
+            type_scheme_of_def_id(ccx, def_id);
+            predicates_of_item(ccx, it);
         },
     }
 }
@@ -956,6 +985,8 @@ fn convert_variant_ctor<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                   scheme: ty::TypeScheme<'tcx>,
                                   predicates: ty::GenericPredicates<'tcx>) {
     let tcx = ccx.tcx;
+    let def_id = tcx.map.local_def_id(ctor_id);
+    generics_of_def_id(ccx, def_id);
     let ctor_ty = match variant.kind {
         VariantKind::Unit | VariantKind::Struct => scheme.ty,
         VariantKind::Tuple => {
@@ -964,8 +995,8 @@ fn convert_variant_ctor<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                 .iter()
                 .map(|field| field.unsubst_ty())
                 .collect();
-            let def_id = tcx.map.local_def_id(ctor_id);
-            let substs = mk_item_substs(tcx, &scheme.generics);
+            let substs = mk_item_substs(&ccx.icx(&predicates),
+                                        ccx.tcx.map.span(ctor_id), def_id);
             tcx.mk_fn_def(def_id, substs, tcx.mk_bare_fn(ty::BareFnTy {
                 unsafety: hir::Unsafety::Normal,
                 abi: abi::Abi::Rust,
@@ -978,12 +1009,8 @@ fn convert_variant_ctor<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
         }
     };
     write_ty_to_tcx(ccx, ctor_id, ctor_ty);
+    tcx.tcache.borrow_mut().insert(def_id, ctor_ty);
     tcx.predicates.borrow_mut().insert(tcx.map.local_def_id(ctor_id), predicates);
-    tcx.register_item_type(tcx.map.local_def_id(ctor_id),
-                           TypeScheme {
-                               generics: scheme.generics,
-                               ty: ctor_ty
-                           });
 }
 
 fn convert_enum_variant_types<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
@@ -1053,12 +1080,22 @@ fn convert_struct_def<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     let ctor_id = if !def.is_struct() { Some(ccx.tcx.map.local_def_id(def.id())) } else { None };
     let variants = vec![convert_struct_variant(ccx, ctor_id.unwrap_or(did), it.name,
                                                ConstInt::Infer(0), def)];
-    let adt = ccx.tcx.intern_adt_def(did, ty::AdtKind::Struct, variants);
+    let adt = ccx.tcx.intern_adt_def(did, AdtKind::Struct, variants);
     if let Some(ctor_id) = ctor_id {
         // Make adt definition available through constructor id as well.
         ccx.tcx.insert_adt_def(ctor_id, adt);
     }
     adt
+}
+
+fn convert_union_def<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
+                                it: &hir::Item,
+                                def: &hir::VariantData)
+                                -> ty::AdtDefMaster<'tcx>
+{
+    let did = ccx.tcx.map.local_def_id(it.id);
+    let variants = vec![convert_struct_variant(ccx, did, it.name, ConstInt::Infer(0), def)];
+    ccx.tcx.intern_adt_def(did, AdtKind::Union, variants)
 }
 
     fn evaluate_disr_expr(ccx: &CrateCtxt, repr_ty: attr::IntType, e: &hir::Expr)
@@ -1138,7 +1175,7 @@ fn convert_enum_def<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
         let did = tcx.map.local_def_id(v.node.data.id());
         convert_struct_variant(ccx, did, v.node.name, disr, &v.node.data)
     }).collect();
-    tcx.intern_adt_def(tcx.map.local_def_id(it.id), ty::AdtKind::Enum, variants)
+    tcx.intern_adt_def(tcx.map.local_def_id(it.id), AdtKind::Enum, variants)
 }
 
 /// Ensures that the super-predicates of the trait with def-id
@@ -1185,9 +1222,8 @@ fn ensure_super_predicates_step(ccx: &CrateCtxt,
         // generic types:
         let trait_def = trait_def_of_item(ccx, item);
         let self_predicate = ty::GenericPredicates {
-            predicates: VecPerParamSpace::new(vec![],
-                                              vec![trait_def.trait_ref.to_predicate()],
-                                              vec![])
+            parent: None,
+            predicates: vec![trait_def.trait_ref.to_predicate()]
         };
         let scope = &(generics, &self_predicate);
 
@@ -1209,7 +1245,8 @@ fn ensure_super_predicates_step(ccx: &CrateCtxt,
         // Combine the two lists to form the complete set of superbounds:
         let superbounds = superbounds1.into_iter().chain(superbounds2).collect();
         let superpredicates = ty::GenericPredicates {
-            predicates: VecPerParamSpace::new(superbounds, vec![], vec![])
+            parent: None,
+            predicates: superbounds
         };
         debug!("superpredicates for trait {:?} = {:?}",
                tcx.map.local_def_id(item.id),
@@ -1242,8 +1279,10 @@ fn trait_def_of_item<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
         return def.clone();
     }
 
-    let (unsafety, generics, items) = match it.node {
-        hir::ItemTrait(unsafety, ref generics, _, ref items) => (unsafety, generics, items),
+    let (unsafety, generics) = match it.node {
+        hir::ItemTrait(unsafety, ref generics, _, _) => {
+            (unsafety, generics)
+        }
         _ => span_bug!(it.span, "trait_def_of_item invoked on non-trait"),
     };
 
@@ -1259,83 +1298,36 @@ fn trait_def_of_item<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
         err.emit();
     }
 
-    let substs = ccx.tcx.mk_substs(mk_trait_substs(ccx, generics));
+    let ty_generics = generics_of_def_id(ccx, def_id);
+    let substs = mk_item_substs(&ccx.icx(generics), it.span, def_id);
 
-    let ty_generics = ty_generics_for_trait(ccx, it.id, substs, generics);
+    let def_path_hash = tcx.def_path(def_id).deterministic_hash(tcx);
 
-    let associated_type_names: Vec<_> = items.iter().filter_map(|trait_item| {
-        match trait_item.node {
-            hir::TypeTraitItem(..) => Some(trait_item.name),
-            _ => None,
-        }
-    }).collect();
+    let trait_ref = ty::TraitRef::new(def_id, substs);
+    let trait_def = ty::TraitDef::new(unsafety, paren_sugar, ty_generics, trait_ref,
+                                      def_path_hash);
 
-    let trait_ref = ty::TraitRef {
-        def_id: def_id,
-        substs: substs,
-    };
-
-    let trait_def = ty::TraitDef::new(unsafety,
-                                      paren_sugar,
-                                      ty_generics,
-                                      trait_ref,
-                                      associated_type_names);
-
-    return tcx.intern_trait_def(trait_def);
-
-    fn mk_trait_substs<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
-                                 generics: &hir::Generics)
-                                 -> Substs<'tcx>
-    {
-        let tcx = ccx.tcx;
-
-        // Creates a no-op substitution for the trait's type parameters.
-        let regions =
-            generics.lifetimes
-                    .iter()
-                    .enumerate()
-                    .map(|(i, def)| ty::ReEarlyBound(ty::EarlyBoundRegion {
-                        space: TypeSpace,
-                        index: i as u32,
-                        name: def.lifetime.name
-                    }))
-                    .collect();
-
-        // Start with the generics in the type parameters...
-        let types: Vec<_> =
-            generics.ty_params
-                    .iter()
-                    .enumerate()
-                    .map(|(i, def)| tcx.mk_param(TypeSpace,
-                                                 i as u32, def.name))
-                    .collect();
-
-        // ...and also create the `Self` parameter.
-        let self_ty = tcx.mk_self_type();
-
-        Substs::new_trait(types, regions, self_ty)
-    }
+    tcx.intern_trait_def(trait_def)
 }
 
-fn trait_defines_associated_type_named(ccx: &CrateCtxt,
-                                       trait_node_id: ast::NodeId,
-                                       assoc_name: ast::Name)
-                                       -> bool
+pub fn trait_associated_type_names<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
+                                                   trait_node_id: ast::NodeId)
+                                                   -> impl Iterator<Item=ast::Name> + 'a
 {
-    let item = match ccx.tcx.map.get(trait_node_id) {
+    let item = match tcx.map.get(trait_node_id) {
         hir_map::NodeItem(item) => item,
         _ => bug!("trait_node_id {} is not an item", trait_node_id)
     };
 
     let trait_items = match item.node {
-        hir::ItemTrait(_, _, _, ref trait_items) => trait_items,
+        hir::ItemTrait(.., ref trait_items) => trait_items,
         _ => bug!("trait_node_id {} is not a trait", trait_node_id)
     };
 
-    trait_items.iter().any(|trait_item| {
+    trait_items.iter().filter_map(|trait_item| {
         match trait_item.node {
-            hir::TypeTraitItem(..) => trait_item.name == assoc_name,
-            _ => false,
+            hir::TypeTraitItem(..) => Some(trait_item.name),
+            _ => None,
         }
     })
 }
@@ -1363,23 +1355,23 @@ fn convert_trait_predicates<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>, it: &hir::Item)
     // but to get the full set of predicates on a trait we need to add
     // in the supertrait bounds and anything declared on the
     // associated types.
-    let mut base_predicates = super_predicates;
+    let mut base_predicates = super_predicates.predicates;
 
     // Add in a predicate that `Self:Trait` (where `Trait` is the
     // current trait).  This is needed for builtin bounds.
     let self_predicate = trait_def.trait_ref.to_poly_trait_ref().to_predicate();
-    base_predicates.predicates.push(SelfSpace, self_predicate);
+    base_predicates.push(self_predicate);
 
     // add in the explicit where-clauses
     let mut trait_predicates =
-        ty_generic_predicates(ccx, TypeSpace, generics, &base_predicates);
+        ty_generic_predicates(ccx, generics, None, base_predicates, true);
 
     let assoc_predicates = predicates_for_associated_types(ccx,
                                                            generics,
                                                            &trait_predicates,
                                                            trait_def.trait_ref,
                                                            items);
-    trait_predicates.predicates.extend(TypeSpace, assoc_predicates.into_iter());
+    trait_predicates.predicates.extend(assoc_predicates);
 
     let prev_predicates = tcx.predicates.borrow_mut().insert(def_id, trait_predicates);
     assert!(prev_predicates.is_none());
@@ -1416,192 +1408,272 @@ fn convert_trait_predicates<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>, it: &hir::Item)
     }
 }
 
-fn type_scheme_of_def_id<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
-                                  def_id: DefId)
-                                  -> ty::TypeScheme<'tcx>
-{
-    if let Some(node_id) = ccx.tcx.map.as_local_node_id(def_id) {
-        match ccx.tcx.map.find(node_id) {
-            Some(hir_map::NodeItem(item)) => {
-                type_scheme_of_item(ccx, &item)
+fn generics_of_def_id<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
+                                def_id: DefId)
+                                -> &'tcx ty::Generics<'tcx> {
+    let tcx = ccx.tcx;
+    let node_id = if let Some(id) = tcx.map.as_local_node_id(def_id) {
+        id
+    } else {
+        return tcx.lookup_generics(def_id);
+    };
+    tcx.generics.memoize(def_id, || {
+        use rustc::hir::map::*;
+        use rustc::hir::*;
+
+        let node = tcx.map.get(node_id);
+        let parent_def_id = match node {
+            NodeImplItem(_) |
+            NodeTraitItem(_) |
+            NodeVariant(_) |
+            NodeStructCtor(_) => {
+                let parent_id = tcx.map.get_parent(node_id);
+                Some(tcx.map.local_def_id(parent_id))
             }
-            Some(hir_map::NodeForeignItem(foreign_item)) => {
+            _ => None
+        };
+
+        let mut opt_self = None;
+        let mut allow_defaults = false;
+
+        let no_generics = hir::Generics::empty();
+        let ast_generics = match node {
+            NodeTraitItem(item) => {
+                match item.node {
+                    MethodTraitItem(ref sig, _) => &sig.generics,
+                    _ => &no_generics
+                }
+            }
+
+            NodeImplItem(item) => {
+                match item.node {
+                    ImplItemKind::Method(ref sig, _) => &sig.generics,
+                    _ => &no_generics
+                }
+            }
+
+            NodeItem(item) => {
+                match item.node {
+                    ItemFn(.., ref generics, _) |
+                    ItemImpl(_, _, ref generics, ..) => generics,
+
+                    ItemTy(_, ref generics) |
+                    ItemEnum(_, ref generics) |
+                    ItemStruct(_, ref generics) |
+                    ItemUnion(_, ref generics) => {
+                        allow_defaults = true;
+                        generics
+                    }
+
+                    ItemTrait(_, ref generics, ..) => {
+                        // Add in the self type parameter.
+                        //
+                        // Something of a hack: use the node id for the trait, also as
+                        // the node id for the Self type parameter.
+                        let param_id = item.id;
+
+                        let parent = ccx.tcx.map.get_parent(param_id);
+
+                        let def = ty::TypeParameterDef {
+                            index: 0,
+                            name: keywords::SelfType.name(),
+                            def_id: tcx.map.local_def_id(param_id),
+                            default_def_id: tcx.map.local_def_id(parent),
+                            default: None,
+                            object_lifetime_default: ty::ObjectLifetimeDefault::BaseDefault,
+                        };
+                        tcx.ty_param_defs.borrow_mut().insert(param_id, def.clone());
+                        opt_self = Some(def);
+
+                        allow_defaults = true;
+                        generics
+                    }
+
+                    _ => &no_generics
+                }
+            }
+
+            NodeForeignItem(item) => {
+                match item.node {
+                    ForeignItemStatic(..) => &no_generics,
+                    ForeignItemFn(_, ref generics) => generics
+                }
+            }
+
+            _ => &no_generics
+        };
+
+        let has_self = opt_self.is_some();
+        let mut parent_has_self = false;
+        let mut own_start = has_self as u32;
+        let (parent_regions, parent_types) = parent_def_id.map_or((0, 0), |def_id| {
+            let generics = generics_of_def_id(ccx, def_id);
+            assert_eq!(generics.parent, None);
+            assert_eq!(generics.parent_regions, 0);
+            assert_eq!(generics.parent_types, 0);
+            assert_eq!(has_self, false);
+            parent_has_self = generics.has_self;
+            own_start = generics.count() as u32;
+            (generics.regions.len() as u32, generics.types.len() as u32)
+        });
+
+        let early_lifetimes = early_bound_lifetimes_from_generics(ccx, ast_generics);
+        let regions = early_lifetimes.iter().enumerate().map(|(i, l)| {
+            ty::RegionParameterDef {
+                name: l.lifetime.name,
+                index: own_start + i as u32,
+                def_id: tcx.map.local_def_id(l.lifetime.id),
+                bounds: l.bounds.iter().map(|l| {
+                    ast_region_to_region(tcx, l)
+                }).collect()
+            }
+        }).collect::<Vec<_>>();
+
+        // Now create the real type parameters.
+        let type_start = own_start + regions.len() as u32;
+        let types = ast_generics.ty_params.iter().enumerate().map(|(i, p)| {
+            let i = type_start + i as u32;
+            get_or_create_type_parameter_def(ccx, ast_generics, i, p, allow_defaults)
+        });
+        let types: Vec<_> = opt_self.into_iter().chain(types).collect();
+
+        // Debugging aid.
+        if tcx.has_attr(def_id, "rustc_object_lifetime_default") {
+            let object_lifetime_default_reprs: String =
+                types.iter().map(|t| {
+                    match t.object_lifetime_default {
+                        ty::ObjectLifetimeDefault::Specific(r) => r.to_string(),
+                        d => format!("{:?}", d),
+                    }
+                }).collect::<Vec<String>>().join(",");
+            tcx.sess.span_err(tcx.map.span(node_id), &object_lifetime_default_reprs);
+        }
+
+        tcx.alloc_generics(ty::Generics {
+            parent: parent_def_id,
+            parent_regions: parent_regions,
+            parent_types: parent_types,
+            regions: regions,
+            types: types,
+            has_self: has_self || parent_has_self
+        })
+    })
+}
+
+fn type_of_def_id<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
+                            def_id: DefId)
+                            -> Ty<'tcx> {
+    let node_id = if let Some(id) = ccx.tcx.map.as_local_node_id(def_id) {
+        id
+    } else {
+        return ccx.tcx.lookup_item_type(def_id).ty;
+    };
+    ccx.tcx.tcache.memoize(def_id, || {
+        use rustc::hir::map::*;
+        use rustc::hir::*;
+
+        let ty = match ccx.tcx.map.get(node_id) {
+            NodeItem(item) => {
+                match item.node {
+                    ItemStatic(ref t, ..) | ItemConst(ref t, _) => {
+                        ccx.icx(&()).to_ty(&StaticRscope::new(&ccx.tcx), &t)
+                    }
+                    ItemFn(ref decl, unsafety, _, abi, ref generics, _) => {
+                        let tofd = AstConv::ty_of_bare_fn(&ccx.icx(generics), unsafety, abi, &decl,
+                                                          Some(AnonTypeScope::new(def_id)));
+                        let substs = mk_item_substs(&ccx.icx(generics), item.span, def_id);
+                        ccx.tcx.mk_fn_def(def_id, substs, tofd)
+                    }
+                    ItemTy(ref t, ref generics) => {
+                        ccx.icx(generics).to_ty(&ExplicitRscope, &t)
+                    }
+                    ItemEnum(ref ei, ref generics) => {
+                        let def = convert_enum_def(ccx, item, ei);
+                        let substs = mk_item_substs(&ccx.icx(generics), item.span, def_id);
+                        ccx.tcx.mk_adt(def, substs)
+                    }
+                    ItemStruct(ref si, ref generics) => {
+                        let def = convert_struct_def(ccx, item, si);
+                        let substs = mk_item_substs(&ccx.icx(generics), item.span, def_id);
+                        ccx.tcx.mk_adt(def, substs)
+                    }
+                    ItemUnion(ref un, ref generics) => {
+                        let def = convert_union_def(ccx, item, un);
+                        let substs = mk_item_substs(&ccx.icx(generics), item.span, def_id);
+                        ccx.tcx.mk_adt(def, substs)
+                    }
+                    ItemDefaultImpl(..) |
+                    ItemTrait(..) |
+                    ItemImpl(..) |
+                    ItemMod(..) |
+                    ItemForeignMod(..) |
+                    ItemExternCrate(..) |
+                    ItemUse(..) => {
+                        span_bug!(
+                            item.span,
+                            "compute_type_of_item: unexpected item type: {:?}",
+                            item.node);
+                    }
+                }
+            }
+            NodeForeignItem(foreign_item) => {
                 let abi = ccx.tcx.map.get_foreign_abi(node_id);
-                type_scheme_of_foreign_item(ccx, &foreign_item, abi)
+
+                match foreign_item.node {
+                    ForeignItemFn(ref fn_decl, ref generics) => {
+                        compute_type_of_foreign_fn_decl(
+                            ccx, ccx.tcx.map.local_def_id(foreign_item.id),
+                            fn_decl, generics, abi)
+                    }
+                    ForeignItemStatic(ref t, _) => {
+                        ccx.icx(&()).to_ty(&ExplicitRscope, t)
+                    }
+                }
             }
             x => {
-                bug!("unexpected sort of node in get_item_type_scheme(): {:?}",
-                     x);
+                bug!("unexpected sort of node in type_of_def_id(): {:?}", x);
             }
+        };
+
+        write_ty_to_tcx(ccx, node_id, ty);
+        ty
+    })
+}
+
+fn type_scheme_of_def_id<'a, 'tcx>(ccx: &CrateCtxt<'a,'tcx>,
+                                   def_id: DefId)
+                                   -> ty::TypeScheme<'tcx> {
+    if def_id.is_local() {
+        ty::TypeScheme {
+            generics: generics_of_def_id(ccx, def_id),
+            ty: type_of_def_id(ccx, def_id)
         }
     } else {
         ccx.tcx.lookup_item_type(def_id)
     }
 }
 
-fn type_scheme_of_item<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
-                                item: &hir::Item)
-                                -> ty::TypeScheme<'tcx>
-{
-    let item_def_id = ccx.tcx.map.local_def_id(item.id);
-    ccx.tcx.tcache.memoize(item_def_id, || {
-        // NB. Since the `memoized` function enters a new task, and we
-        // are giving this task access to the item `item`, we must
-        // register a read.
-        assert!(!ccx.tcx.map.is_inlined_def_id(item_def_id));
-        ccx.tcx.dep_graph.read(DepNode::Hir(item_def_id));
-        compute_type_scheme_of_item(ccx, item)
-    })
-}
-
-fn compute_type_scheme_of_item<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
-                                        it: &hir::Item)
-                                        -> ty::TypeScheme<'tcx>
-{
-    let tcx = ccx.tcx;
-    match it.node {
-        hir::ItemStatic(ref t, _, _) | hir::ItemConst(ref t, _) => {
-            let ty = ccx.icx(&()).to_ty(&ExplicitRscope, &t);
-            ty::TypeScheme { ty: ty, generics: ty::Generics::empty() }
-        }
-        hir::ItemFn(ref decl, unsafety, _, abi, ref generics, _) => {
-            let ty_generics = ty_generics_for_fn(ccx, generics, &ty::Generics::empty());
-            let tofd = AstConv::ty_of_bare_fn(&ccx.icx(generics), unsafety, abi, &decl,
-                                              Some(AnonTypeScope::new(&ty_generics)));
-            let def_id = ccx.tcx.map.local_def_id(it.id);
-            let substs = mk_item_substs(tcx, &ty_generics);
-            let ty = tcx.mk_fn_def(def_id, substs, tofd);
-            ty::TypeScheme { ty: ty, generics: ty_generics }
-        }
-        hir::ItemTy(ref t, ref generics) => {
-            let ty_generics = ty_generics_for_type(ccx, generics);
-            let ty = ccx.icx(generics).to_ty(&ExplicitRscope, &t);
-            ty::TypeScheme { ty: ty, generics: ty_generics }
-        }
-        hir::ItemEnum(ref ei, ref generics) => {
-            let def = convert_enum_def(ccx, it, ei);
-            let ty_generics = ty_generics_for_type(ccx, generics);
-            let substs = mk_item_substs(tcx, &ty_generics);
-            let t = tcx.mk_enum(def, substs);
-            ty::TypeScheme { ty: t, generics: ty_generics }
-        }
-        hir::ItemStruct(ref si, ref generics) => {
-            let def = convert_struct_def(ccx, it, si);
-            let ty_generics = ty_generics_for_type(ccx, generics);
-            let substs = mk_item_substs(tcx, &ty_generics);
-            let t = tcx.mk_struct(def, substs);
-            ty::TypeScheme { ty: t, generics: ty_generics }
-        }
-        hir::ItemDefaultImpl(..) |
-        hir::ItemTrait(..) |
-        hir::ItemImpl(..) |
-        hir::ItemMod(..) |
-        hir::ItemForeignMod(..) |
-        hir::ItemExternCrate(..) |
-        hir::ItemUse(..) => {
-            span_bug!(
-                it.span,
-                "compute_type_scheme_of_item: unexpected item type: {:?}",
-                it.node);
-        }
-    }
-}
-
-fn convert_typed_item<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
+fn predicates_of_item<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                 it: &hir::Item)
-                                -> (ty::TypeScheme<'tcx>, ty::GenericPredicates<'tcx>)
-{
-    let tcx = ccx.tcx;
+                                -> ty::GenericPredicates<'tcx> {
+    let def_id = ccx.tcx.map.local_def_id(it.id);
 
-    let tag = type_scheme_of_item(ccx, it);
-    let scheme = TypeScheme { generics: tag.generics, ty: tag.ty };
-    let predicates = match it.node {
-        hir::ItemStatic(..) | hir::ItemConst(..) => {
-            ty::GenericPredicates::empty()
-        }
-        hir::ItemFn(_, _, _, _, ref ast_generics, _) => {
-            ty_generic_predicates_for_fn(ccx, ast_generics, &ty::GenericPredicates::empty())
-        }
-        hir::ItemTy(_, ref generics) => {
-            ty_generic_predicates_for_type_or_impl(ccx, generics)
-        }
-        hir::ItemEnum(_, ref generics) => {
-            ty_generic_predicates_for_type_or_impl(ccx, generics)
-        }
-        hir::ItemStruct(_, ref generics) => {
-            ty_generic_predicates_for_type_or_impl(ccx, generics)
-        }
-        hir::ItemDefaultImpl(..) |
-        hir::ItemTrait(..) |
-        hir::ItemExternCrate(..) |
-        hir::ItemUse(..) |
-        hir::ItemImpl(..) |
-        hir::ItemMod(..) |
-        hir::ItemForeignMod(..) => {
-            span_bug!(
-                it.span,
-                "compute_type_scheme_of_item: unexpected item type: {:?}",
-                it.node);
-        }
+    let no_generics = hir::Generics::empty();
+    let generics = match it.node {
+        hir::ItemFn(.., ref generics, _) |
+        hir::ItemTy(_, ref generics) |
+        hir::ItemEnum(_, ref generics) |
+        hir::ItemStruct(_, ref generics) |
+        hir::ItemUnion(_, ref generics) => generics,
+        _ => &no_generics
     };
 
-    let prev_predicates = tcx.predicates.borrow_mut().insert(ccx.tcx.map.local_def_id(it.id),
-                                                             predicates.clone());
+    let predicates = ty_generic_predicates(ccx, generics, None, vec![], false);
+    let prev_predicates = ccx.tcx.predicates.borrow_mut().insert(def_id,
+                                                                 predicates.clone());
     assert!(prev_predicates.is_none());
 
-    // Debugging aid.
-    if tcx.has_attr(ccx.tcx.map.local_def_id(it.id), "rustc_object_lifetime_default") {
-        let object_lifetime_default_reprs: String =
-            scheme.generics.types.iter()
-                                 .map(|t| match t.object_lifetime_default {
-                                     ty::ObjectLifetimeDefault::Specific(r) => r.to_string(),
-                                     d => format!("{:?}", d),
-                                 })
-                                 .collect::<Vec<String>>()
-                                 .join(",");
-
-        tcx.sess.span_err(it.span, &object_lifetime_default_reprs);
-    }
-
-    return (scheme, predicates);
-}
-
-fn type_scheme_of_foreign_item<'a, 'tcx>(
-    ccx: &CrateCtxt<'a, 'tcx>,
-    item: &hir::ForeignItem,
-    abi: abi::Abi)
-    -> ty::TypeScheme<'tcx>
-{
-    let item_def_id = ccx.tcx.map.local_def_id(item.id);
-    ccx.tcx.tcache.memoize(item_def_id, || {
-        // NB. Since the `memoized` function enters a new task, and we
-        // are giving this task access to the item `item`, we must
-        // register a read.
-        assert!(!ccx.tcx.map.is_inlined_def_id(item_def_id));
-        ccx.tcx.dep_graph.read(DepNode::Hir(item_def_id));
-        compute_type_scheme_of_foreign_item(ccx, item, abi)
-    })
-}
-
-fn compute_type_scheme_of_foreign_item<'a, 'tcx>(
-    ccx: &CrateCtxt<'a, 'tcx>,
-    it: &hir::ForeignItem,
-    abi: abi::Abi)
-    -> ty::TypeScheme<'tcx>
-{
-    match it.node {
-        hir::ForeignItemFn(ref fn_decl, ref generics) => {
-            compute_type_scheme_of_foreign_fn_decl(
-                ccx, ccx.tcx.map.local_def_id(it.id),
-                fn_decl, generics, abi)
-        }
-        hir::ForeignItemStatic(ref t, _) => {
-            ty::TypeScheme {
-                generics: ty::Generics::empty(),
-                ty: AstConv::ast_ty_to_ty(&ccx.icx(&()), &ExplicitRscope, t)
-            }
-        }
-    }
+    predicates
 }
 
 fn convert_foreign_item<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
@@ -1611,93 +1683,18 @@ fn convert_foreign_item<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     // map, and I regard each time that I use it as a personal and
     // moral failing, but at the moment it seems like the only
     // convenient way to extract the ABI. - ndm
-    let tcx = ccx.tcx;
-    let abi = tcx.map.get_foreign_abi(it.id);
+    let def_id = ccx.tcx.map.local_def_id(it.id);
+    type_scheme_of_def_id(ccx, def_id);
 
-    let scheme = type_scheme_of_foreign_item(ccx, it, abi);
-    write_ty_to_tcx(ccx, it.id, scheme.ty);
-
-    let predicates = match it.node {
-        hir::ForeignItemFn(_, ref generics) => {
-            ty_generic_predicates_for_fn(ccx, generics, &ty::GenericPredicates::empty())
-        }
-        hir::ForeignItemStatic(..) => {
-            ty::GenericPredicates::empty()
-        }
+    let no_generics = hir::Generics::empty();
+    let generics = match it.node {
+        hir::ForeignItemFn(_, ref generics) => generics,
+        hir::ForeignItemStatic(..) => &no_generics
     };
 
-    let prev_predicates = tcx.predicates.borrow_mut().insert(ccx.tcx.map.local_def_id(it.id),
-                                                             predicates);
+    let predicates = ty_generic_predicates(ccx, generics, None, vec![], false);
+    let prev_predicates = ccx.tcx.predicates.borrow_mut().insert(def_id, predicates);
     assert!(prev_predicates.is_none());
-}
-
-fn ty_generics_for_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>, generics: &hir::Generics)
-                                  -> ty::Generics<'tcx> {
-    ty_generics(ccx, TypeSpace, generics, &ty::Generics::empty(), true)
-}
-
-fn ty_generics_for_impl<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>, generics: &hir::Generics)
-                                  -> ty::Generics<'tcx> {
-    ty_generics(ccx, TypeSpace, generics, &ty::Generics::empty(), false)
-}
-
-fn ty_generic_predicates_for_type_or_impl<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
-                                                   generics: &hir::Generics)
-                                                   -> ty::GenericPredicates<'tcx>
-{
-    ty_generic_predicates(ccx, TypeSpace, generics, &ty::GenericPredicates::empty())
-}
-
-fn ty_generics_for_trait<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
-                                   trait_id: ast::NodeId,
-                                   substs: &'tcx Substs<'tcx>,
-                                   ast_generics: &hir::Generics)
-                                   -> ty::Generics<'tcx>
-{
-    debug!("ty_generics_for_trait(trait_id={:?}, substs={:?})",
-           ccx.tcx.map.local_def_id(trait_id), substs);
-
-    let mut generics = ty_generics_for_type(ccx, ast_generics);
-
-    // Add in the self type parameter.
-    //
-    // Something of a hack: use the node id for the trait, also as
-    // the node id for the Self type parameter.
-    let param_id = trait_id;
-
-    let parent = ccx.tcx.map.get_parent(param_id);
-
-    let def = ty::TypeParameterDef {
-        space: SelfSpace,
-        index: 0,
-        name: keywords::SelfType.name(),
-        def_id: ccx.tcx.map.local_def_id(param_id),
-        default_def_id: ccx.tcx.map.local_def_id(parent),
-        default: None,
-        object_lifetime_default: ty::ObjectLifetimeDefault::BaseDefault,
-    };
-
-    ccx.tcx.ty_param_defs.borrow_mut().insert(param_id, def.clone());
-
-    generics.types.push(SelfSpace, def);
-
-    return generics;
-}
-
-fn ty_generics_for_fn<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
-                               generics: &hir::Generics,
-                               base_generics: &ty::Generics<'tcx>)
-                               -> ty::Generics<'tcx>
-{
-    ty_generics(ccx, FnSpace, generics, base_generics, false)
-}
-
-fn ty_generic_predicates_for_fn<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
-                                         generics: &hir::Generics,
-                                         base_predicates: &ty::GenericPredicates<'tcx>)
-                                         -> ty::GenericPredicates<'tcx>
-{
-    ty_generic_predicates(ccx, FnSpace, generics, base_predicates)
 }
 
 // Add the Sized bound, unless the type parameter is marked as `?Sized`.
@@ -1765,46 +1762,65 @@ fn early_bound_lifetimes_from_generics<'a, 'tcx, 'hir>(
 }
 
 fn ty_generic_predicates<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
-                                  space: ParamSpace,
                                   ast_generics: &hir::Generics,
-                                  base_predicates: &ty::GenericPredicates<'tcx>)
+                                  parent: Option<DefId>,
+                                  super_predicates: Vec<ty::Predicate<'tcx>>,
+                                  has_self: bool)
                                   -> ty::GenericPredicates<'tcx>
 {
     let tcx = ccx.tcx;
-    let mut result = base_predicates.clone();
+    let parent_count = parent.map_or(0, |def_id| {
+        let generics = generics_of_def_id(ccx, def_id);
+        assert_eq!(generics.parent, None);
+        assert_eq!(generics.parent_regions, 0);
+        assert_eq!(generics.parent_types, 0);
+        generics.count() as u32
+    });
+    let ref base_predicates = match parent {
+        Some(def_id) => {
+            assert_eq!(super_predicates, vec![]);
+            tcx.lookup_predicates(def_id)
+        }
+        None => {
+            ty::GenericPredicates {
+                parent: None,
+                predicates: super_predicates.clone()
+            }
+        }
+    };
+    let mut predicates = super_predicates;
+
+    // Collect the region predicates that were declared inline as
+    // well. In the case of parameters declared on a fn or method, we
+    // have to be careful to only iterate over early-bound regions.
+    let own_start = parent_count + has_self as u32;
+    let early_lifetimes = early_bound_lifetimes_from_generics(ccx, ast_generics);
+    for (index, param) in early_lifetimes.iter().enumerate() {
+        let index = own_start + index as u32;
+        let region = ccx.tcx.mk_region(ty::ReEarlyBound(ty::EarlyBoundRegion {
+            index: index,
+            name: param.lifetime.name
+        }));
+        for bound in &param.bounds {
+            let bound_region = ast_region_to_region(ccx.tcx, bound);
+            let outlives = ty::Binder(ty::OutlivesPredicate(region, bound_region));
+            predicates.push(outlives.to_predicate());
+        }
+    }
 
     // Collect the predicates that were written inline by the user on each
     // type parameter (e.g., `<T:Foo>`).
+    let type_start = own_start + early_lifetimes.len() as u32;
     for (index, param) in ast_generics.ty_params.iter().enumerate() {
-        let index = index as u32;
-        let param_ty = ty::ParamTy::new(space, index, param.name).to_ty(ccx.tcx);
+        let index = type_start + index as u32;
+        let param_ty = ty::ParamTy::new(index, param.name).to_ty(ccx.tcx);
         let bounds = compute_bounds(&ccx.icx(&(base_predicates, ast_generics)),
                                     param_ty,
                                     &param.bounds,
                                     SizedByDefault::Yes,
                                     None,
                                     param.span);
-        let predicates = bounds.predicates(ccx.tcx, param_ty);
-        result.predicates.extend(space, predicates.into_iter());
-    }
-
-    // Collect the region predicates that were declared inline as
-    // well. In the case of parameters declared on a fn or method, we
-    // have to be careful to only iterate over early-bound regions.
-    let early_lifetimes = early_bound_lifetimes_from_generics(ccx, ast_generics);
-    for (index, param) in early_lifetimes.iter().enumerate() {
-        let index = index as u32;
-        let region =
-            ty::ReEarlyBound(ty::EarlyBoundRegion {
-                space: space,
-                index: index,
-                name: param.lifetime.name
-            });
-        for bound in &param.bounds {
-            let bound_region = ast_region_to_region(ccx.tcx, bound);
-            let outlives = ty::Binder(ty::OutlivesPredicate(region, bound_region));
-            result.predicates.push(space, outlives.to_predicate());
-        }
+        predicates.extend(bounds.predicates(ccx.tcx, param_ty));
     }
 
     // Add in the bounds that appear in the where-clause
@@ -1822,22 +1838,24 @@ fn ty_generic_predicates<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                             let mut projections = Vec::new();
 
                             let trait_ref =
-                                conv_poly_trait_ref(&ccx.icx(&(base_predicates, ast_generics)),
-                                                    ty,
-                                                    poly_trait_ref,
-                                                    &mut projections);
+                                AstConv::instantiate_poly_trait_ref(&ccx.icx(&(base_predicates,
+                                                                               ast_generics)),
+                                                                    &ExplicitRscope,
+                                                                    poly_trait_ref,
+                                                                    ty,
+                                                                    &mut projections);
 
-                            result.predicates.push(space, trait_ref.to_predicate());
+                            predicates.push(trait_ref.to_predicate());
 
                             for projection in &projections {
-                                result.predicates.push(space, projection.to_predicate());
+                                predicates.push(projection.to_predicate());
                             }
                         }
 
                         &hir::TyParamBound::RegionTyParamBound(ref lifetime) => {
                             let region = ast_region_to_region(tcx, lifetime);
                             let pred = ty::Binder(ty::OutlivesPredicate(ty, region));
-                            result.predicates.push(space, ty::Predicate::TypeOutlives(pred))
+                            predicates.push(ty::Predicate::TypeOutlives(pred))
                         }
                     }
                 }
@@ -1848,7 +1866,7 @@ fn ty_generic_predicates<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                 for bound in &region_pred.bounds {
                     let r2 = ast_region_to_region(tcx, bound);
                     let pred = ty::Binder(ty::OutlivesPredicate(r1, r2));
-                    result.predicates.push(space, ty::Predicate::RegionOutlives(pred))
+                    predicates.push(ty::Predicate::RegionOutlives(pred))
                 }
             }
 
@@ -1861,89 +1879,27 @@ fn ty_generic_predicates<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
         }
     }
 
-    return result;
-}
-
-fn ty_generics<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
-                        space: ParamSpace,
-                        ast_generics: &hir::Generics,
-                        base_generics: &ty::Generics<'tcx>,
-                        allow_defaults: bool)
-                        -> ty::Generics<'tcx>
-{
-    let tcx = ccx.tcx;
-    let mut result = base_generics.clone();
-
-    let early_lifetimes = early_bound_lifetimes_from_generics(ccx, ast_generics);
-    for (i, l) in early_lifetimes.iter().enumerate() {
-        let bounds = l.bounds.iter()
-                             .map(|l| ast_region_to_region(tcx, l))
-                             .collect();
-        let def = ty::RegionParameterDef { name: l.lifetime.name,
-                                           space: space,
-                                           index: i as u32,
-                                           def_id: ccx.tcx.map.local_def_id(l.lifetime.id),
-                                           bounds: bounds };
-        result.regions.push(space, def);
+    ty::GenericPredicates {
+        parent: parent,
+        predicates: predicates
     }
-
-    assert!(result.types.is_empty_in(space));
-
-    // Now create the real type parameters.
-    for i in 0..ast_generics.ty_params.len() {
-        let def =
-            get_or_create_type_parameter_def(ccx, ast_generics, space, i as u32, allow_defaults);
-        debug!("ty_generics: def for type param: {:?}, {:?}", def, space);
-        result.types.push(space, def);
-    }
-
-    result
-}
-
-fn convert_default_type_parameter<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
-                                            path: &P<hir::Ty>,
-                                            space: ParamSpace,
-                                            index: u32)
-                                            -> Ty<'tcx>
-{
-    let ty = AstConv::ast_ty_to_ty(&ccx.icx(&()), &ExplicitRscope, &path);
-
-    for leaf_ty in ty.walk() {
-        if let ty::TyParam(p) = leaf_ty.sty {
-            if p.space == space && p.idx >= index {
-                struct_span_err!(ccx.tcx.sess, path.span, E0128,
-                                 "type parameters with a default cannot use \
-                                 forward declared identifiers")
-                    .span_label(path.span, &format!("defaulted type parameters \
-                                                    cannot be forward declared"))
-                    .emit();
-
-                return ccx.tcx.types.err
-            }
-        }
-    }
-
-    ty
 }
 
 fn get_or_create_type_parameter_def<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                                              ast_generics: &hir::Generics,
-                                             space: ParamSpace,
                                              index: u32,
+                                             param: &hir::TyParam,
                                              allow_defaults: bool)
                                              -> ty::TypeParameterDef<'tcx>
 {
-    let param = &ast_generics.ty_params[index as usize];
-
     let tcx = ccx.tcx;
     match tcx.ty_param_defs.borrow().get(&param.id) {
         Some(d) => { return d.clone(); }
         None => { }
     }
 
-    let default = param.default.as_ref().map(
-        |def| convert_default_type_parameter(ccx, def, space, index)
-    );
+    let default =
+        param.default.as_ref().map(|def| ccx.icx(&()).to_ty(&ExplicitRscope, def));
 
     let object_lifetime_default =
         compute_object_lifetime_default(ccx, param.id,
@@ -1963,7 +1919,6 @@ fn get_or_create_type_parameter_def<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
     }
 
     let def = ty::TypeParameterDef {
-        space: space,
         index: index,
         name: param.name,
         def_id: ccx.tcx.map.local_def_id(param.id),
@@ -1972,7 +1927,13 @@ fn get_or_create_type_parameter_def<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
         object_lifetime_default: object_lifetime_default,
     };
 
+    if def.name == keywords::SelfType.name() {
+        span_bug!(param.span, "`Self` should not be the name of a regular parameter");
+    }
+
     tcx.ty_param_defs.borrow_mut().insert(param.id, def.clone());
+
+    debug!("get_or_create_type_parameter_def: def for type param: {:?}", def);
 
     def
 }
@@ -1987,13 +1948,13 @@ fn compute_object_lifetime_default<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                                             param_id: ast::NodeId,
                                             param_bounds: &[hir::TyParamBound],
                                             where_clause: &hir::WhereClause)
-                                            -> ty::ObjectLifetimeDefault
+                                            -> ty::ObjectLifetimeDefault<'tcx>
 {
     let inline_bounds = from_bounds(ccx, param_bounds);
     let where_bounds = from_predicates(ccx, param_id, &where_clause.predicates);
-    let all_bounds: HashSet<_> = inline_bounds.into_iter()
-                                              .chain(where_bounds)
-                                              .collect();
+    let all_bounds: FnvHashSet<_> = inline_bounds.into_iter()
+                                                 .chain(where_bounds)
+                                                 .collect();
     return if all_bounds.len() > 1 {
         ty::ObjectLifetimeDefault::Ambiguous
     } else if all_bounds.len() == 0 {
@@ -2005,7 +1966,7 @@ fn compute_object_lifetime_default<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
 
     fn from_bounds<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                             bounds: &[hir::TyParamBound])
-                            -> Vec<ty::Region>
+                            -> Vec<&'tcx ty::Region>
     {
         bounds.iter()
               .filter_map(|bound| {
@@ -2022,7 +1983,7 @@ fn compute_object_lifetime_default<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
     fn from_predicates<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                                 param_id: ast::NodeId,
                                 predicates: &[hir::WherePredicate])
-                                -> Vec<ty::Region>
+                                -> Vec<&'tcx ty::Region>
     {
         predicates.iter()
                   .flat_map(|predicate| {
@@ -2076,7 +2037,7 @@ pub fn compute_bounds<'gcx: 'tcx, 'tcx>(astconv: &AstConv<'gcx, 'tcx>,
     let mut trait_bounds: Vec<_> = trait_bounds.iter().map(|&bound| {
         astconv.instantiate_poly_trait_ref(&rscope,
                                            bound,
-                                           Some(param_ty),
+                                           param_ty,
                                            &mut projection_bounds)
     }).collect();
 
@@ -2107,7 +2068,10 @@ fn predicates_from_bound<'tcx>(astconv: &AstConv<'tcx, 'tcx>,
     match *bound {
         hir::TraitTyParamBound(ref tr, hir::TraitBoundModifier::None) => {
             let mut projections = Vec::new();
-            let pred = conv_poly_trait_ref(astconv, param_ty, tr, &mut projections);
+            let pred = astconv.instantiate_poly_trait_ref(&ExplicitRscope,
+                                                          tr,
+                                                          param_ty,
+                                                          &mut projections);
             projections.into_iter()
                        .map(|p| p.to_predicate())
                        .chain(Some(pred.to_predicate()))
@@ -2124,29 +2088,14 @@ fn predicates_from_bound<'tcx>(astconv: &AstConv<'tcx, 'tcx>,
     }
 }
 
-fn conv_poly_trait_ref<'gcx: 'tcx, 'tcx>(astconv: &AstConv<'gcx, 'tcx>,
-                                         param_ty: Ty<'tcx>,
-                                         trait_ref: &hir::PolyTraitRef,
-                                         projections: &mut Vec<ty::PolyProjectionPredicate<'tcx>>)
-                                         -> ty::PolyTraitRef<'tcx>
-{
-    AstConv::instantiate_poly_trait_ref(astconv,
-                                        &ExplicitRscope,
-                                        trait_ref,
-                                        Some(param_ty),
-                                        projections)
-}
-
-fn compute_type_scheme_of_foreign_fn_decl<'a, 'tcx>(
+fn compute_type_of_foreign_fn_decl<'a, 'tcx>(
     ccx: &CrateCtxt<'a, 'tcx>,
-    id: DefId,
+    def_id: DefId,
     decl: &hir::FnDecl,
     ast_generics: &hir::Generics,
     abi: abi::Abi)
-    -> ty::TypeScheme<'tcx>
+    -> Ty<'tcx>
 {
-    let ty_generics = ty_generics_for_fn(ccx, ast_generics, &ty::Generics::empty());
-
     let rb = BindingRscope::new();
     let input_tys = decl.inputs
                         .iter()
@@ -2182,67 +2131,61 @@ fn compute_type_scheme_of_foreign_fn_decl<'a, 'tcx>(
         }
     }
 
-    let substs = mk_item_substs(ccx.tcx, &ty_generics);
-    let t_fn = ccx.tcx.mk_fn_def(id, substs, ccx.tcx.mk_bare_fn(ty::BareFnTy {
+    let id = ccx.tcx.map.as_local_node_id(def_id).unwrap();
+    let substs = mk_item_substs(&ccx.icx(ast_generics), ccx.tcx.map.span(id), def_id);
+    ccx.tcx.mk_fn_def(def_id, substs, ccx.tcx.mk_bare_fn(ty::BareFnTy {
         abi: abi,
         unsafety: hir::Unsafety::Unsafe,
         sig: ty::Binder(ty::FnSig {inputs: input_tys,
                                     output: output,
                                     variadic: decl.variadic}),
-    }));
-
-    ty::TypeScheme {
-        generics: ty_generics,
-        ty: t_fn
-    }
+    }))
 }
 
-pub fn mk_item_substs<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
-                                      ty_generics: &ty::Generics)
-                                      -> &'tcx Substs<'tcx>
-{
-    let types =
-        ty_generics.types.map(
-            |def| tcx.mk_param_from_def(def));
+pub fn mk_item_substs<'gcx: 'tcx, 'tcx>(astconv: &AstConv<'gcx, 'tcx>,
+                                        span: Span,
+                                        def_id: DefId)
+                                        -> &'tcx Substs<'tcx> {
+    let tcx = astconv.tcx();
+    // FIXME(eddyb) Do this request from Substs::for_item in librustc.
+    if let Err(ErrorReported) = astconv.get_generics(span, def_id) {
+        // No convenient way to recover from a cycle here. Just bail. Sorry!
+        tcx.sess.abort_if_errors();
+        bug!("ErrorReported returned, but no errors reports?")
+    }
 
-    let regions =
-        ty_generics.regions.map(
-            |def| def.to_early_bound_region());
-
-    tcx.mk_substs(Substs::new(types, regions))
+    Substs::for_item(tcx, def_id,
+                     |def, _| tcx.mk_region(def.to_early_bound_region()),
+                     |def, _| tcx.mk_param_from_def(def))
 }
 
 /// Checks that all the type parameters on an impl
 fn enforce_impl_params_are_constrained<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
-                                                 ast_generics: &hir::Generics,
+                                                 generics: &hir::Generics,
                                                  impl_predicates: &mut ty::GenericPredicates<'tcx>,
                                                  impl_def_id: DefId)
 {
     let impl_scheme = ccx.tcx.lookup_item_type(impl_def_id);
     let impl_trait_ref = ccx.tcx.impl_trait_ref(impl_def_id);
 
-    assert!(impl_predicates.predicates.is_empty_in(FnSpace));
-    assert!(impl_predicates.predicates.is_empty_in(SelfSpace));
-
     // The trait reference is an input, so find all type parameters
     // reachable from there, to start (if this is an inherent impl,
     // then just examine the self type).
-    let mut input_parameters: HashSet<_> =
+    let mut input_parameters: FnvHashSet<_> =
         ctp::parameters_for(&impl_scheme.ty, false).into_iter().collect();
     if let Some(ref trait_ref) = impl_trait_ref {
         input_parameters.extend(ctp::parameters_for(trait_ref, false));
     }
 
-    ctp::setup_constraining_predicates(impl_predicates.predicates.get_mut_slice(TypeSpace),
+    ctp::setup_constraining_predicates(&mut impl_predicates.predicates,
                                        impl_trait_ref,
                                        &mut input_parameters);
 
-    for (index, ty_param) in ast_generics.ty_params.iter().enumerate() {
-        let param_ty = ty::ParamTy { space: TypeSpace,
-                                     idx: index as u32,
-                                     name: ty_param.name };
-        if !input_parameters.contains(&ctp::Parameter::Type(param_ty)) {
-            report_unused_parameter(ccx, ty_param.span, "type", &param_ty.to_string());
+    let ty_generics = generics_of_def_id(ccx, impl_def_id);
+    for (ty_param, param) in ty_generics.types.iter().zip(&generics.ty_params) {
+        let param_ty = ty::ParamTy::for_def(ty_param);
+        if !input_parameters.contains(&ctp::Parameter::from(param_ty)) {
+            report_unused_parameter(ccx, param.span, "type", &param_ty.to_string());
         }
     }
 }
@@ -2257,7 +2200,7 @@ fn enforce_impl_lifetimes_are_constrained<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     let impl_predicates = ccx.tcx.lookup_predicates(impl_def_id);
     let impl_trait_ref = ccx.tcx.impl_trait_ref(impl_def_id);
 
-    let mut input_parameters: HashSet<_> =
+    let mut input_parameters: FnvHashSet<_> =
         ctp::parameters_for(&impl_scheme.ty, false).into_iter().collect();
     if let Some(ref trait_ref) = impl_trait_ref {
         input_parameters.extend(ctp::parameters_for(trait_ref, false));
@@ -2265,29 +2208,26 @@ fn enforce_impl_lifetimes_are_constrained<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     ctp::identify_constrained_type_params(
         &impl_predicates.predicates.as_slice(), impl_trait_ref, &mut input_parameters);
 
-    let lifetimes_in_associated_types: HashSet<_> = impl_items.iter()
+    let lifetimes_in_associated_types: FnvHashSet<_> = impl_items.iter()
         .map(|item| ccx.tcx.impl_or_trait_item(ccx.tcx.map.local_def_id(item.id)))
         .filter_map(|item| match item {
             ty::TypeTraitItem(ref assoc_ty) => assoc_ty.ty,
             ty::ConstTraitItem(..) | ty::MethodTraitItem(..) => None
         })
         .flat_map(|ty| ctp::parameters_for(&ty, true))
-        .filter_map(|p| match p {
-            ctp::Parameter::Type(_) => None,
-            ctp::Parameter::Region(r) => Some(r),
-        })
         .collect();
 
-    for (index, lifetime_def) in ast_generics.lifetimes.iter().enumerate() {
-        let region = ty::EarlyBoundRegion { space: TypeSpace,
-                                            index: index as u32,
-                                            name: lifetime_def.lifetime.name };
+    for (ty_lifetime, lifetime) in impl_scheme.generics.regions.iter()
+        .zip(&ast_generics.lifetimes)
+    {
+        let param = ctp::Parameter::from(ty_lifetime.to_early_bound_region_data());
+
         if
-            lifetimes_in_associated_types.contains(&region) && // (*)
-            !input_parameters.contains(&ctp::Parameter::Region(region))
+            lifetimes_in_associated_types.contains(&param) && // (*)
+            !input_parameters.contains(&param)
         {
-            report_unused_parameter(ccx, lifetime_def.lifetime.span,
-                                    "lifetime", &region.name.to_string());
+            report_unused_parameter(ccx, lifetime.lifetime.span,
+                                    "lifetime", &lifetime.lifetime.name.to_string());
         }
     }
 
@@ -2321,7 +2261,6 @@ fn report_unused_parameter(ccx: &CrateCtxt,
         "the {} parameter `{}` is not constrained by the \
         impl trait, self type, or predicates",
         kind, name)
-        .span_label(span, &format!("unconstrained lifetime parameter"))
+        .span_label(span, &format!("unconstrained {} parameter", kind))
         .emit();
-
 }

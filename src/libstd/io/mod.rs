@@ -236,7 +236,7 @@
 //! to read the line and print it, so we use `()`.
 //!
 //! [result]: type.Result.html
-//! [try]: ../macro.try!.html
+//! [try]: ../macro.try.html
 //!
 //! ## Platform-specific behavior
 //!
@@ -253,15 +253,8 @@ use cmp;
 use rustc_unicode::str as core_str;
 use error as std_error;
 use fmt;
-use iter::{Iterator};
-use marker::Sized;
-use ops::{Drop, FnOnce};
-use option::Option::{self, Some, None};
-use result::Result::{Ok, Err};
 use result;
-use string::String;
 use str;
-use vec::Vec;
 use memchr;
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -957,8 +950,8 @@ pub trait Write {
     /// explicitly be called. The [`write!`][write] macro should be favored to
     /// invoke this method instead.
     ///
-    /// [formatargs]: ../macro.format_args!.html
-    /// [write]: ../macro.write!.html
+    /// [formatargs]: ../macro.format_args.html
+    /// [write]: ../macro.write.html
     ///
     /// This function internally uses the [`write_all`][writeall] method on
     /// this trait and hence will continuously write data so long as no errors
@@ -1508,6 +1501,33 @@ impl<T> Take<T> {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn limit(&self) -> u64 { self.limit }
+
+    /// Consumes the `Take`, returning the wrapped reader.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(io_take_into_inner)]
+    ///
+    /// use std::io;
+    /// use std::io::prelude::*;
+    /// use std::fs::File;
+    ///
+    /// # fn foo() -> io::Result<()> {
+    /// let mut file = try!(File::open("foo.txt"));
+    ///
+    /// let mut buffer = [0; 5];
+    /// let mut handle = file.take(5);
+    /// try!(handle.read(&mut buffer));
+    ///
+    /// let file = handle.into_inner();
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[unstable(feature = "io_take_into_inner", issue = "0")]
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1734,7 +1754,6 @@ impl<B: BufRead> Iterator for Lines<B> {
 
 #[cfg(test)]
 mod tests {
-    use prelude::v1::*;
     use io::prelude::*;
     use io;
     use super::Cursor;

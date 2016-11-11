@@ -179,33 +179,6 @@ pub const IPV6_V6ONLY: ::c_int = 27;
 
 pub const ST_RDONLY: ::c_ulong = 1;
 
-pub const EV_ADD: ::uint16_t = 0x1;
-pub const EV_CLEAR: ::uint16_t = 0x20;
-pub const EV_DELETE: ::uint16_t = 0x2;
-pub const EV_DISABLE: ::uint16_t = 0x8;
-pub const EV_ENABLE: ::uint16_t = 0x4;
-pub const EV_EOF: ::uint16_t = 0x8000;
-pub const EV_ERROR: ::uint16_t = 0x4000;
-pub const EV_FLAG1: ::uint16_t = 0x2000;
-pub const EV_ONESHOT: ::uint16_t = 0x10;
-pub const EV_SYSFLAGS: ::uint16_t = 0xf000;
-
-pub const NOTE_ATTRIB: ::uint32_t = 0x8;
-pub const NOTE_CHILD: ::uint32_t = 0x4;
-pub const NOTE_DELETE: ::uint32_t = 0x1;
-pub const NOTE_EXEC: ::uint32_t = 0x20000000;
-pub const NOTE_EXIT: ::uint32_t = 0x80000000;
-pub const NOTE_EXTEND: ::uint32_t = 0x4;
-pub const NOTE_FORK: ::uint32_t = 0x40000000;
-pub const NOTE_LINK: ::uint32_t = 0x10;
-pub const NOTE_LOWAT: ::uint32_t = 0x1;
-pub const NOTE_PDATAMASK: ::uint32_t = 0x000fffff;
-pub const NOTE_RENAME: ::uint32_t = 0x20;
-pub const NOTE_REVOKE: ::uint32_t = 0x40;
-pub const NOTE_TRACK: ::uint32_t = 0x1;
-pub const NOTE_TRACKERR: ::uint32_t = 0x2;
-pub const NOTE_WRITE: ::uint32_t = 0x2;
-
 pub const NCCS: usize = 20;
 
 pub const O_ASYNC: ::c_int = 0x40;
@@ -348,18 +321,29 @@ f! {
 }
 
 extern {
+    pub fn getifaddrs(ifap: *mut *mut ::ifaddrs) -> ::c_int;
+    pub fn freeifaddrs(ifa: *mut ::ifaddrs);
     pub fn setgroups(ngroups: ::c_int,
                      ptr: *const ::gid_t) -> ::c_int;
     pub fn ioctl(fd: ::c_int, request: ::c_ulong, ...) -> ::c_int;
     pub fn kqueue() -> ::c_int;
     pub fn unmount(target: *const ::c_char, arg: ::c_int) -> ::c_int;
     pub fn syscall(num: ::c_int, ...) -> ::c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__getpwnam_r50")]
+    pub fn getpwnam_r(name: *const ::c_char,
+                      pwd: *mut passwd,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut passwd) -> ::c_int;
     #[cfg_attr(target_os = "netbsd", link_name = "__getpwuid_r50")]
     pub fn getpwuid_r(uid: ::uid_t,
                       pwd: *mut passwd,
                       buf: *mut ::c_char,
                       buflen: ::size_t,
                       result: *mut *mut passwd) -> ::c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__getpwent50")]
+    pub fn getpwent() -> *mut passwd;
+    pub fn setpwent();
     pub fn getprogname() -> *const ::c_char;
     pub fn setprogname(name: *const ::c_char);
     pub fn getloadavg(loadavg: *mut ::c_double, nelem: ::c_int) -> ::c_int;
@@ -373,8 +357,8 @@ cfg_if! {
         pub use self::apple::*;
     } else if #[cfg(any(target_os = "openbsd", target_os = "netbsd",
                         target_os = "bitrig"))] {
-        mod openbsdlike;
-        pub use self::openbsdlike::*;
+        mod netbsdlike;
+        pub use self::netbsdlike::*;
     } else if #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))] {
         mod freebsdlike;
         pub use self::freebsdlike::*;

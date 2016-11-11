@@ -20,9 +20,11 @@ use cabi_arm;
 use cabi_aarch64;
 use cabi_powerpc;
 use cabi_powerpc64;
+use cabi_s390x;
 use cabi_mips;
+use cabi_mips64;
 use cabi_asmjs;
-use machine::{llalign_of_min, llsize_of, llsize_of_real, llsize_of_store};
+use machine::{llalign_of_min, llsize_of, llsize_of_alloc};
 use type_::Type;
 use type_of;
 
@@ -34,6 +36,7 @@ use std::cmp;
 
 pub use syntax::abi::Abi;
 pub use rustc::ty::layout::{FAT_PTR_ADDR, FAT_PTR_EXTRA};
+use rustc::ty::layout::Layout;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum ArgKind {
@@ -99,7 +102,7 @@ impl ArgType {
         // Wipe old attributes, likely not valid through indirection.
         self.attrs = llvm::Attributes::default();
 
-        let llarg_sz = llsize_of_real(ccx, self.ty);
+        let llarg_sz = llsize_of_alloc(ccx, self.ty);
 
         // For non-immediate arguments the callee gets its own copy of
         // the value on the stack, so there are no aliases. It's also
@@ -197,7 +200,7 @@ impl ArgType {
                 base::call_memcpy(bcx,
                                   bcx.pointercast(dst, Type::i8p(ccx)),
                                   bcx.pointercast(llscratch, Type::i8p(ccx)),
-                                  C_uint(ccx, llsize_of_store(ccx, self.ty)),
+                                  C_uint(ccx, llsize_of_alloc(ccx, self.ty)),
                                   cmp::min(llalign_of_min(ccx, self.ty),
                                            llalign_of_min(ccx, ty)) as u32);
 
@@ -269,6 +272,7 @@ impl FnType {
             Vectorcall => llvm::X86_VectorCall,
             C => llvm::CCallConv,
             Win64 => llvm::X86_64_Win64,
+            SysV64 => llvm::X86_64_SysV,
 
             // These API constants ought to be more specific...
             Cdecl => llvm::CCallConv,
@@ -298,6 +302,9 @@ impl FnType {
         let win_x64_gnu = target.target_os == "windows"
                        && target.arch == "x86_64"
                        && target.target_env == "gnu";
+        let linux_s390x = target.target_os == "linux"
+                       && target.arch == "s390x"
+                       && target.target_env == "gnu";
         let rust_abi = match abi {
             RustIntrinsic | PlatformIntrinsic | Rust | RustCall => true,
             _ => false
@@ -315,10 +322,17 @@ impl FnType {
                 if ty.is_integral() {
                     arg.signedness = Some(ty.is_signed());
                 }
-                if llsize_of_real(ccx, arg.ty) == 0 {
+                // Rust enum types that map onto C enums also need to follow
+                // the target ABI zero-/sign-extension rules.
+                if let Layout::CEnum { signed, .. } = *ccx.layout_of(ty) {
+                    arg.signedness = Some(signed);
+                }
+                if llsize_of_alloc(ccx, arg.ty) == 0 {
                     // For some forsaken reason, x86_64-pc-windows-gnu
                     // doesn't ignore zero-sized struct arguments.
-                    if is_return || rust_abi || !win_x64_gnu {
+                    // The same is true for s390x-unknown-linux-gnu.
+                    if is_return || rust_abi ||
+                       (!win_x64_gnu && !linux_s390x) {
                         arg.ignore();
                     }
                 }
@@ -344,7 +358,7 @@ impl FnType {
                 ty::TyRef(_, ty::TypeAndMut { ty, .. }) |
                 ty::TyBox(ty) => {
                     let llty = type_of::sizing_type_of(ccx, ty);
-                    let llsz = llsize_of_real(ccx, llty);
+                    let llsz = llsize_of_alloc(ccx, llty);
                     ret.attrs.set_dereferenceable(llsz);
                 }
                 _ => {}
@@ -413,7 +427,7 @@ impl FnType {
             } else {
                 if let Some(inner) = rust_ptr_attrs(ty, &mut arg) {
                     let llty = type_of::sizing_type_of(ccx, inner);
-                    let llsz = llsize_of_real(ccx, llty);
+                    let llsz = llsize_of_alloc(ccx, llty);
                     arg.attrs.set_dereferenceable(llsz);
                 }
                 args.push(arg);
@@ -455,8 +469,8 @@ impl FnType {
                     return;
                 }
 
-                let size = llsize_of_real(ccx, llty);
-                if size > llsize_of_real(ccx, ccx.int_type()) {
+                let size = llsize_of_alloc(ccx, llty);
+                if size > llsize_of_alloc(ccx, ccx.int_type()) {
                     arg.make_indirect(ccx);
                 } else if size > 0 {
                     // We want to pass small aggregates as immediates, but using
@@ -483,7 +497,9 @@ impl FnType {
 
         match &ccx.sess().target.target.arch[..] {
             "x86" => cabi_x86::compute_abi_info(ccx, self),
-            "x86_64" => if ccx.sess().target.target.options.is_like_windows {
+            "x86_64" => if abi == Abi::SysV64 {
+                cabi_x86_64::compute_abi_info(ccx, self);
+            } else if abi == Abi::Win64 || ccx.sess().target.target.options.is_like_windows {
                 cabi_x86_win64::compute_abi_info(ccx, self);
             } else {
                 cabi_x86_64::compute_abi_info(ccx, self);
@@ -498,8 +514,10 @@ impl FnType {
                 cabi_arm::compute_abi_info(ccx, self, flavor);
             },
             "mips" => cabi_mips::compute_abi_info(ccx, self),
+            "mips64" => cabi_mips64::compute_abi_info(ccx, self),
             "powerpc" => cabi_powerpc::compute_abi_info(ccx, self),
             "powerpc64" => cabi_powerpc64::compute_abi_info(ccx, self),
+            "s390x" => cabi_s390x::compute_abi_info(ccx, self),
             "asmjs" => cabi_asmjs::compute_abi_info(ccx, self),
             a => ccx.sess().fatal(&format!("unrecognized arch \"{}\" in target specification", a))
         }

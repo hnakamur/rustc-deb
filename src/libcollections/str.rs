@@ -23,6 +23,7 @@ use core::str as core_str;
 use core::str::pattern::Pattern;
 use core::str::pattern::{Searcher, ReverseSearcher, DoubleEndedSearcher};
 use core::mem;
+use core::iter::FusedIterator;
 use rustc_unicode::str::{UnicodeStr, Utf16Encoder};
 
 use vec_deque::VecDeque;
@@ -135,6 +136,9 @@ impl<'a> Iterator for EncodeUtf16<'a> {
         self.encoder.size_hint()
     }
 }
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a> FusedIterator for EncodeUtf16<'a> {}
 
 // Return the initial codepoint accumulator for the first byte.
 // The first byte is special, only want bottom 5 bits for width 2, 4 bits
@@ -1582,6 +1586,49 @@ impl str {
         let mut result = String::new();
         let mut last_end = 0;
         for (start, part) in self.match_indices(from) {
+            result.push_str(unsafe { self.slice_unchecked(last_end, start) });
+            result.push_str(to);
+            last_end = start + part.len();
+        }
+        result.push_str(unsafe { self.slice_unchecked(last_end, self.len()) });
+        result
+    }
+
+    /// Replaces first N matches of a pattern with another string.
+    ///
+    /// `replacen` creates a new [`String`], and copies the data from this string slice into it.
+    /// While doing so, it attempts to find matches of a pattern. If it finds any, it
+    /// replaces them with the replacement string slice at most `N` times.
+    ///
+    /// [`String`]: string/struct.String.html
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// # #![feature(str_replacen)]
+    /// let s = "foo foo 123 foo";
+    /// assert_eq!("new new 123 foo", s.replacen("foo", "new", 2));
+    /// assert_eq!("faa fao 123 foo", s.replacen('o', "a", 3));
+    /// assert_eq!("foo foo new23 foo", s.replacen(char::is_numeric, "new", 1));
+    /// ```
+    ///
+    /// When the pattern doesn't match:
+    ///
+    /// ```
+    /// # #![feature(str_replacen)]
+    /// let s = "this is old";
+    /// assert_eq!(s, s.replacen("cookie monster", "little lamb", 10));
+    /// ```
+    #[unstable(feature = "str_replacen",
+               issue = "36436",
+               reason = "only need to replace first N matches")]
+    pub fn replacen<'a, P: Pattern<'a>>(&'a self, pat: P, to: &str, count: usize) -> String {
+        // Hope to reduce the times of re-allocation
+        let mut result = String::with_capacity(32);
+        let mut last_end = 0;
+        for (start, part) in self.match_indices(pat).take(count) {
             result.push_str(unsafe { self.slice_unchecked(last_end, start) });
             result.push_str(to);
             last_end = start + part.len();

@@ -129,13 +129,21 @@ impl<'test> TestCx<'test> {
     fn run_cfail_test(&self) {
         let proc_res = self.compile_test();
 
-        if proc_res.status.success() {
-            self.fatal_proc_rec(
-                &format!("{} test compiled successfully!", self.config.mode)[..],
-                &proc_res);
-        }
+        if self.props.must_compile_successfully {
+            if !proc_res.status.success() {
+                self.fatal_proc_rec(
+                    "test compilation failed although it shouldn't!",
+                    &proc_res);
+            }
+        } else {
+            if proc_res.status.success() {
+                self.fatal_proc_rec(
+                    &format!("{} test compiled successfully!", self.config.mode)[..],
+                    &proc_res);
+            }
 
-        self.check_correct_failure_status(&proc_res);
+            self.check_correct_failure_status(&proc_res);
+        }
 
         let output_to_check = self.get_output(&proc_res);
         let expected_errors = errors::load_errors(&self.testpaths.file, self.revision);
@@ -147,6 +155,7 @@ impl<'test> TestCx<'test> {
         } else {
             self.check_error_patterns(&output_to_check, &proc_res);
         }
+
         self.check_no_compiler_crash(&proc_res);
         self.check_forbid_output(&output_to_check, &proc_res);
     }
@@ -195,6 +204,11 @@ impl<'test> TestCx<'test> {
 
         if !proc_res.status.success() {
             self.fatal_proc_rec("compilation failed!", &proc_res);
+        }
+
+        let expected_errors = errors::load_errors(&self.testpaths.file, self.revision);
+        if !expected_errors.is_empty() {
+            self.check_expected_errors(expected_errors, &proc_res);
         }
 
         let proc_res = self.exec_compiled_test();
@@ -938,8 +952,12 @@ actual:\n\
                             output_to_check: &str,
                             proc_res: &ProcRes) {
         if self.props.error_patterns.is_empty() {
-            self.fatal(&format!("no error pattern specified in {:?}",
-                                self.testpaths.file.display()));
+            if self.props.must_compile_successfully {
+                return
+            } else {
+                self.fatal(&format!("no error pattern specified in {:?}",
+                                    self.testpaths.file.display()));
+            }
         }
         let mut next_err_idx = 0;
         let mut next_err_pat = self.props.error_patterns[next_err_idx].trim();
@@ -973,7 +991,7 @@ actual:\n\
 
     fn check_no_compiler_crash(&self, proc_res: &ProcRes) {
         for line in proc_res.stderr.lines() {
-            if line.starts_with("error: internal compiler error:") {
+            if line.contains("error: internal compiler error") {
                 self.fatal_proc_rec("compiler encountered internal error", proc_res);
             }
         }
@@ -992,7 +1010,8 @@ actual:\n\
     fn check_expected_errors(&self,
                              expected_errors: Vec<errors::Error>,
                              proc_res: &ProcRes) {
-        if proc_res.status.success() {
+        if proc_res.status.success() &&
+            expected_errors.iter().any(|x| x.kind == Some(ErrorKind::Error)) {
             self.fatal_proc_rec("process did not return an error status", proc_res);
         }
 
@@ -1320,6 +1339,7 @@ actual:\n\
         match self.config.mode {
             CompileFail |
             ParseFail |
+            RunPass |
             Incremental => {
                 // If we are extracting and matching errors in the new
                 // fashion, then you want JSON mode. Old-skool error
@@ -1350,7 +1370,6 @@ actual:\n\
                 args.push(dir_opt);
             }
             RunFail |
-            RunPass |
             RunPassValgrind |
             Pretty |
             DebugInfoGdb |
@@ -1970,7 +1989,10 @@ actual:\n\
         // runs.
         let incremental_dir = self.incremental_dir();
         if incremental_dir.exists() {
-            fs::remove_dir_all(&incremental_dir).unwrap();
+            // Canonicalizing the path will convert it to the //?/ format
+            // on Windows, which enables paths longer than 260 character
+            let canonicalized = incremental_dir.canonicalize().unwrap();
+            fs::remove_dir_all(canonicalized).unwrap();
         }
         fs::create_dir_all(&incremental_dir).unwrap();
 
@@ -2035,7 +2057,7 @@ actual:\n\
 
     /// Directory where incremental work products are stored.
     fn incremental_dir(&self) -> PathBuf {
-        self.output_base_name().with_extension("incremental")
+        self.output_base_name().with_extension("inc")
     }
 
     fn run_rmake_test(&self) {
@@ -2104,23 +2126,23 @@ actual:\n\
     }
 
     fn aggressive_rm_rf(&self, path: &Path) -> io::Result<()> {
-        for e in try!(path.read_dir()) {
-            let entry = try!(e);
+        for e in path.read_dir()? {
+            let entry = e?;
             let path = entry.path();
-            if try!(entry.file_type()).is_dir() {
-                try!(self.aggressive_rm_rf(&path));
+            if entry.file_type()?.is_dir() {
+                self.aggressive_rm_rf(&path)?;
             } else {
                 // Remove readonly files as well on windows (by default we can't)
-                try!(fs::remove_file(&path).or_else(|e| {
+                fs::remove_file(&path).or_else(|e| {
                     if cfg!(windows) && e.kind() == io::ErrorKind::PermissionDenied {
-                        let mut meta = try!(entry.metadata()).permissions();
+                        let mut meta = entry.metadata()?.permissions();
                         meta.set_readonly(false);
-                        try!(fs::set_permissions(&path, meta));
+                        fs::set_permissions(&path, meta)?;
                         fs::remove_file(&path)
                     } else {
                         Err(e)
                     }
-                }))
+                })?;
             }
         }
         fs::remove_dir(path)

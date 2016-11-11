@@ -8,11 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use prelude::v1::*;
-
 use ffi::CStr;
 use io;
-use libc::{self, c_int, size_t, sockaddr, socklen_t};
+use libc::{self, c_int, size_t, sockaddr, socklen_t, EAI_SYSTEM};
 use net::{SocketAddr, Shutdown};
 use str;
 use sys::fd::FileDesc;
@@ -40,7 +38,12 @@ pub struct Socket(FileDesc);
 pub fn init() {}
 
 pub fn cvt_gai(err: c_int) -> io::Result<()> {
-    if err == 0 { return Ok(()) }
+    if err == 0 {
+        return Ok(())
+    }
+    if err == EAI_SYSTEM {
+        return Err(io::Error::last_os_error())
+    }
 
     let detail = unsafe {
         str::from_utf8(CStr::from_ptr(libc::gai_strerror(err)).to_bytes()).unwrap()
@@ -215,7 +218,7 @@ impl Socket {
     }
 
     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
-        let mut nonblocking = nonblocking as libc::c_ulong;
+        let mut nonblocking = nonblocking as libc::c_int;
         cvt(unsafe { libc::ioctl(*self.as_inner(), libc::FIONBIO, &mut nonblocking) }).map(|_| ())
     }
 

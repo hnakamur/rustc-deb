@@ -11,7 +11,6 @@
 use borrowck::BorrowckCtxt;
 
 use syntax::ast::{self, MetaItem};
-use syntax::attr::AttrMetaMethods;
 use syntax::ptr::P;
 use syntax_pos::{Span, DUMMY_SP};
 
@@ -19,7 +18,7 @@ use rustc::hir;
 use rustc::hir::intravisit::{FnKind};
 
 use rustc::mir::repr;
-use rustc::mir::repr::{BasicBlock, BasicBlockData, Mir, Statement, Terminator};
+use rustc::mir::repr::{BasicBlock, BasicBlockData, Mir, Statement, Terminator, Location};
 use rustc::session::Session;
 use rustc::ty::{self, TyCtxt};
 
@@ -35,16 +34,16 @@ use self::dataflow::{DataflowOperator};
 use self::dataflow::{Dataflow, DataflowAnalysis, DataflowResults};
 use self::dataflow::{MaybeInitializedLvals, MaybeUninitializedLvals};
 use self::dataflow::{DefinitelyInitializedLvals};
-use self::gather_moves::{MoveData, MovePathIndex, Location};
-use self::gather_moves::{MovePathContent, MovePathData};
+use self::gather_moves::{MoveData, MovePathIndex, LookupResult};
 
 fn has_rustc_mir_with(attrs: &[ast::Attribute], name: &str) -> Option<P<MetaItem>> {
     for attr in attrs {
         if attr.check_name("rustc_mir") {
             let items = attr.meta_item_list();
             for item in items.iter().flat_map(|l| l.iter()) {
-                if item.check_name(name) {
-                    return Some(item.clone())
+                match item.meta_item() {
+                    Some(mi) if mi.check_name(name) => return Some(mi.clone()),
+                    _ => continue
                 }
             }
         }
@@ -67,8 +66,8 @@ pub fn borrowck_mir<'a, 'tcx: 'a>(
     id: ast::NodeId,
     attributes: &[ast::Attribute]) {
     match fk {
-        FnKind::ItemFn(name, _, _, _, _, _, _) |
-        FnKind::Method(name, _, _, _) => {
+        FnKind::ItemFn(name, ..) |
+        FnKind::Method(name, ..) => {
             debug!("borrowck_mir({}) UNIMPLEMENTED", name);
         }
         FnKind::Closure(_) => {
@@ -78,8 +77,8 @@ pub fn borrowck_mir<'a, 'tcx: 'a>(
 
     let tcx = bcx.tcx;
 
-    let move_data = MoveData::gather_moves(mir, tcx);
     let param_env = ty::ParameterEnvironment::for_item(tcx, id);
+    let move_data = MoveData::gather_moves(mir, tcx, &param_env);
     let mdpe = MoveDataParamEnv { move_data: move_data, param_env: param_env };
     let flow_inits =
         do_dataflow(tcx, mir, id, attributes, &mdpe, MaybeInitializedLvals::new(tcx, mir));
@@ -126,8 +125,6 @@ fn do_dataflow<'a, 'tcx, BD>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                              bd: BD) -> DataflowResults<BD>
     where BD: BitDenotation<Idx=MovePathIndex, Ctxt=MoveDataParamEnv<'tcx>> + DataflowOperator
 {
-    use syntax::attr::AttrMetaMethods;
-
     let name_found = |sess: &Session, attrs: &[ast::Attribute], name| -> Option<String> {
         if let Some(item) = has_rustc_mir_with(attrs, name) {
             if let Some(s) = item.value_str() {
@@ -213,23 +210,23 @@ impl DropFlagState {
     }
 }
 
-fn move_path_children_matching<'tcx, F>(move_paths: &MovePathData<'tcx>,
+fn move_path_children_matching<'tcx, F>(move_data: &MoveData<'tcx>,
                                         path: MovePathIndex,
                                         mut cond: F)
                                         -> Option<MovePathIndex>
     where F: FnMut(&repr::LvalueProjection<'tcx>) -> bool
 {
-    let mut next_child = move_paths[path].first_child;
+    let mut next_child = move_data.move_paths[path].first_child;
     while let Some(child_index) = next_child {
-        match move_paths[child_index].content {
-            MovePathContent::Lvalue(repr::Lvalue::Projection(ref proj)) => {
+        match move_data.move_paths[child_index].lvalue {
+            repr::Lvalue::Projection(ref proj) => {
                 if cond(proj) {
                     return Some(child_index)
                 }
             }
             _ => {}
         }
-        next_child = move_paths[child_index].next_sibling;
+        next_child = move_data.move_paths[child_index].next_sibling;
     }
 
     None
@@ -259,17 +256,35 @@ fn lvalue_contents_drop_state_cannot_differ<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx
     let ty = lv.ty(mir, tcx).to_ty(tcx);
     match ty.sty {
         ty::TyArray(..) | ty::TySlice(..) | ty::TyRef(..) | ty::TyRawPtr(..) => {
-            debug!("lvalue_contents_drop_state_cannot_differ lv: {:?} ty: {:?} refd => false",
+            debug!("lvalue_contents_drop_state_cannot_differ lv: {:?} ty: {:?} refd => true",
                    lv, ty);
             true
         }
-        ty::TyStruct(def, _) | ty::TyEnum(def, _) if def.has_dtor() => {
-            debug!("lvalue_contents_drop_state_cannot_differ lv: {:?} ty: {:?} Drop => false",
+        ty::TyAdt(def, _) if def.has_dtor() || def.is_union() => {
+            debug!("lvalue_contents_drop_state_cannot_differ lv: {:?} ty: {:?} Drop => true",
                    lv, ty);
             true
         }
         _ => {
             false
+        }
+    }
+}
+
+fn on_lookup_result_bits<'a, 'tcx, F>(
+    tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    mir: &Mir<'tcx>,
+    move_data: &MoveData<'tcx>,
+    lookup_result: LookupResult,
+    each_child: F)
+    where F: FnMut(MovePathIndex)
+{
+    match lookup_result {
+        LookupResult::Parent(..) => {
+            // access to untracked value - do not touch children
+        }
+        LookupResult::Exact(e) => {
+            on_all_children_bits(tcx, mir, move_data, e, each_child)
         }
     }
 }
@@ -288,12 +303,8 @@ fn on_all_children_bits<'a, 'tcx, F>(
         move_data: &MoveData<'tcx>,
         path: MovePathIndex) -> bool
     {
-        match move_data.move_paths[path].content {
-            MovePathContent::Lvalue(ref lvalue) => {
-                lvalue_contents_drop_state_cannot_differ(tcx, mir, lvalue)
-            }
-            _ => true
-        }
+        lvalue_contents_drop_state_cannot_differ(
+            tcx, mir, &move_data.move_paths[path].lvalue)
     }
 
     fn on_all_children_bits<'a, 'tcx, F>(
@@ -329,10 +340,10 @@ fn drop_flag_effects_for_function_entry<'a, 'tcx, F>(
     let move_data = &ctxt.move_data;
     for (arg, _) in mir.arg_decls.iter_enumerated() {
         let lvalue = repr::Lvalue::Arg(arg);
-        let move_path_index = move_data.rev_lookup.find(&lvalue);
-        on_all_children_bits(tcx, mir, move_data,
-                             move_path_index,
-                             |moi| callback(moi, DropFlagState::Present));
+        let lookup_result = move_data.rev_lookup.find(&lvalue);
+        on_lookup_result_bits(tcx, mir, move_data,
+                              lookup_result,
+                              |moi| callback(moi, DropFlagState::Present));
     }
 }
 
@@ -354,11 +365,10 @@ fn drop_flag_effects_for_location<'a, 'tcx, F>(
         debug!("moving out of path {:?}", move_data.move_paths[path]);
 
         // don't move out of non-Copy things
-        if let MovePathContent::Lvalue(ref lvalue) = move_data.move_paths[path].content {
-            let ty = lvalue.ty(mir, tcx).to_ty(tcx);
-            if !ty.moves_by_default(tcx, param_env, DUMMY_SP) {
-                continue;
-            }
+        let lvalue = &move_data.move_paths[path].lvalue;
+        let ty = lvalue.ty(mir, tcx).to_ty(tcx);
+        if !ty.moves_by_default(tcx, param_env, DUMMY_SP) {
+            continue;
         }
 
         on_all_children_bits(tcx, mir, move_data,
@@ -367,27 +377,28 @@ fn drop_flag_effects_for_location<'a, 'tcx, F>(
     }
 
     let block = &mir[loc.block];
-    match block.statements.get(loc.index) {
+    match block.statements.get(loc.statement_index) {
         Some(stmt) => match stmt.kind {
             repr::StatementKind::SetDiscriminant{ .. } => {
                 span_bug!(stmt.source_info.span, "SetDiscrimant should not exist during borrowck");
             }
             repr::StatementKind::Assign(ref lvalue, _) => {
                 debug!("drop_flag_effects: assignment {:?}", stmt);
-                 on_all_children_bits(tcx, mir, move_data,
-                                     move_data.rev_lookup.find(lvalue),
-                                     |moi| callback(moi, DropFlagState::Present))
+                 on_lookup_result_bits(tcx, mir, move_data,
+                                       move_data.rev_lookup.find(lvalue),
+                                       |moi| callback(moi, DropFlagState::Present))
             }
             repr::StatementKind::StorageLive(_) |
-            repr::StatementKind::StorageDead(_) => {}
+            repr::StatementKind::StorageDead(_) |
+            repr::StatementKind::Nop => {}
         },
         None => {
             debug!("drop_flag_effects: replace {:?}", block.terminator());
             match block.terminator().kind {
                 repr::TerminatorKind::DropAndReplace { ref location, .. } => {
-                    on_all_children_bits(tcx, mir, move_data,
-                                         move_data.rev_lookup.find(location),
-                                         |moi| callback(moi, DropFlagState::Present))
+                    on_lookup_result_bits(tcx, mir, move_data,
+                                          move_data.rev_lookup.find(location),
+                                          |moi| callback(moi, DropFlagState::Present))
                 }
                 _ => {
                     // other terminators do not contain move-ins

@@ -40,7 +40,7 @@
 #![feature(rustc_private)]
 #![feature(set_stdio)]
 #![feature(staged_api)]
-#![feature(question_mark)]
+#![cfg_attr(stage0, feature(question_mark))]
 #![feature(panic_unwind)]
 
 extern crate getopts;
@@ -1079,6 +1079,12 @@ fn get_concurrency() -> usize {
             cpus = 1;
         }
         cpus as usize
+    }
+
+    #[cfg(target_os = "haiku")]
+    fn num_cpus() -> usize {
+        // FIXME: implement
+        1
     }
 }
 

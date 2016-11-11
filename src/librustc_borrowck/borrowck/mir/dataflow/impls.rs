@@ -9,16 +9,15 @@
 // except according to those terms.
 
 use rustc::ty::TyCtxt;
-use rustc::mir::repr::{self, Mir};
+use rustc::mir::repr::{self, Mir, Location};
 use rustc_data_structures::indexed_vec::Idx;
 
-use super::super::gather_moves::{Location};
 use super::super::gather_moves::{MoveOutIndex, MovePathIndex};
 use super::super::MoveDataParamEnv;
 use super::super::DropFlagState;
 use super::super::drop_flag_effects_for_function_entry;
 use super::super::drop_flag_effects_for_location;
-use super::super::on_all_children_bits;
+use super::super::on_lookup_result_bits;
 
 use super::{BitDenotation, BlockSets, DataflowOperator};
 
@@ -252,7 +251,7 @@ impl<'a, 'tcx> BitDenotation for MaybeInitializedLvals<'a, 'tcx> {
     {
         drop_flag_effects_for_location(
             self.tcx, self.mir, ctxt,
-            Location { block: bb, index: idx },
+            Location { block: bb, statement_index: idx },
             |path, s| Self::update_bits(sets, path, s)
         )
     }
@@ -265,7 +264,7 @@ impl<'a, 'tcx> BitDenotation for MaybeInitializedLvals<'a, 'tcx> {
     {
         drop_flag_effects_for_location(
             self.tcx, self.mir, ctxt,
-            Location { block: bb, index: statements_len },
+            Location { block: bb, statement_index: statements_len },
             |path, s| Self::update_bits(sets, path, s)
         )
     }
@@ -278,10 +277,9 @@ impl<'a, 'tcx> BitDenotation for MaybeInitializedLvals<'a, 'tcx> {
                              dest_lval: &repr::Lvalue) {
         // when a call returns successfully, that means we need to set
         // the bits for that dest_lval to 1 (initialized).
-        let move_path_index = ctxt.move_data.rev_lookup.find(dest_lval);
-        on_all_children_bits(self.tcx, self.mir, &ctxt.move_data,
-                             move_path_index,
-                             |mpi| { in_out.add(&mpi); });
+        on_lookup_result_bits(self.tcx, self.mir, &ctxt.move_data,
+                              ctxt.move_data.rev_lookup.find(dest_lval),
+                              |mpi| { in_out.add(&mpi); });
     }
 }
 
@@ -314,7 +312,7 @@ impl<'a, 'tcx> BitDenotation for MaybeUninitializedLvals<'a, 'tcx> {
     {
         drop_flag_effects_for_location(
             self.tcx, self.mir, ctxt,
-            Location { block: bb, index: idx },
+            Location { block: bb, statement_index: idx },
             |path, s| Self::update_bits(sets, path, s)
         )
     }
@@ -327,7 +325,7 @@ impl<'a, 'tcx> BitDenotation for MaybeUninitializedLvals<'a, 'tcx> {
     {
         drop_flag_effects_for_location(
             self.tcx, self.mir, ctxt,
-            Location { block: bb, index: statements_len },
+            Location { block: bb, statement_index: statements_len },
             |path, s| Self::update_bits(sets, path, s)
         )
     }
@@ -339,11 +337,10 @@ impl<'a, 'tcx> BitDenotation for MaybeUninitializedLvals<'a, 'tcx> {
                              _dest_bb: repr::BasicBlock,
                              dest_lval: &repr::Lvalue) {
         // when a call returns successfully, that means we need to set
-        // the bits for that dest_lval to 1 (initialized).
-        let move_path_index = ctxt.move_data.rev_lookup.find(dest_lval);
-        on_all_children_bits(self.tcx, self.mir, &ctxt.move_data,
-                             move_path_index,
-                             |mpi| { in_out.remove(&mpi); });
+        // the bits for that dest_lval to 0 (initialized).
+        on_lookup_result_bits(self.tcx, self.mir, &ctxt.move_data,
+                              ctxt.move_data.rev_lookup.find(dest_lval),
+                              |mpi| { in_out.remove(&mpi); });
     }
 }
 
@@ -375,7 +372,7 @@ impl<'a, 'tcx> BitDenotation for DefinitelyInitializedLvals<'a, 'tcx> {
     {
         drop_flag_effects_for_location(
             self.tcx, self.mir, ctxt,
-            Location { block: bb, index: idx },
+            Location { block: bb, statement_index: idx },
             |path, s| Self::update_bits(sets, path, s)
         )
     }
@@ -388,7 +385,7 @@ impl<'a, 'tcx> BitDenotation for DefinitelyInitializedLvals<'a, 'tcx> {
     {
         drop_flag_effects_for_location(
             self.tcx, self.mir, ctxt,
-            Location { block: bb, index: statements_len },
+            Location { block: bb, statement_index: statements_len },
             |path, s| Self::update_bits(sets, path, s)
         )
     }
@@ -401,10 +398,9 @@ impl<'a, 'tcx> BitDenotation for DefinitelyInitializedLvals<'a, 'tcx> {
                              dest_lval: &repr::Lvalue) {
         // when a call returns successfully, that means we need to set
         // the bits for that dest_lval to 1 (initialized).
-        let move_path_index = ctxt.move_data.rev_lookup.find(dest_lval);
-        on_all_children_bits(self.tcx, self.mir, &ctxt.move_data,
-                             move_path_index,
-                             |mpi| { in_out.add(&mpi); });
+        on_lookup_result_bits(self.tcx, self.mir, &ctxt.move_data,
+                              ctxt.move_data.rev_lookup.find(dest_lval),
+                              |mpi| { in_out.add(&mpi); });
     }
 }
 
@@ -431,7 +427,7 @@ impl<'a, 'tcx> BitDenotation for MovingOutStatements<'a, 'tcx> {
         let path_map = &move_data.path_map;
         let rev_lookup = &move_data.rev_lookup;
 
-        let loc = Location { block: bb, index: idx };
+        let loc = Location { block: bb, statement_index: idx };
         debug!("stmt {:?} at loc {:?} moves out of move_indexes {:?}",
                stmt, loc, &loc_map[loc]);
         for move_index in &loc_map[loc] {
@@ -449,18 +445,18 @@ impl<'a, 'tcx> BitDenotation for MovingOutStatements<'a, 'tcx> {
                 // assigning into this `lvalue` kills all
                 // MoveOuts from it, and *also* all MoveOuts
                 // for children and associated fragment sets.
-                let move_path_index = rev_lookup.find(lvalue);
-                on_all_children_bits(tcx,
+                on_lookup_result_bits(tcx,
                                      mir,
                                      move_data,
-                                     move_path_index,
+                                     rev_lookup.find(lvalue),
                                      |mpi| for moi in &path_map[mpi] {
                                          assert!(moi.index() < bits_per_block);
                                          sets.kill_set.add(&moi);
                                      });
             }
             repr::StatementKind::StorageLive(_) |
-            repr::StatementKind::StorageDead(_) => {}
+            repr::StatementKind::StorageDead(_) |
+            repr::StatementKind::Nop => {}
         }
     }
 
@@ -473,7 +469,7 @@ impl<'a, 'tcx> BitDenotation for MovingOutStatements<'a, 'tcx> {
         let (mir, move_data) = (self.mir, &ctxt.move_data);
         let term = mir[bb].terminator();
         let loc_map = &move_data.loc_map;
-        let loc = Location { block: bb, index: statements_len };
+        let loc = Location { block: bb, statement_index: statements_len };
         debug!("terminator {:?} at loc {:?} moves out of move_indexes {:?}",
                term, loc, &loc_map[loc]);
         let bits_per_block = self.bits_per_block(ctxt);
@@ -490,18 +486,17 @@ impl<'a, 'tcx> BitDenotation for MovingOutStatements<'a, 'tcx> {
                              _dest_bb: repr::BasicBlock,
                              dest_lval: &repr::Lvalue) {
         let move_data = &ctxt.move_data;
-        let move_path_index = move_data.rev_lookup.find(dest_lval);
         let bits_per_block = self.bits_per_block(ctxt);
 
         let path_map = &move_data.path_map;
-        on_all_children_bits(self.tcx,
-                             self.mir,
-                             move_data,
-                             move_path_index,
-                             |mpi| for moi in &path_map[mpi] {
-                                 assert!(moi.index() < bits_per_block);
-                                 in_out.remove(&moi);
-                             });
+        on_lookup_result_bits(self.tcx,
+                              self.mir,
+                              move_data,
+                              move_data.rev_lookup.find(dest_lval),
+                              |mpi| for moi in &path_map[mpi] {
+                                  assert!(moi.index() < bits_per_block);
+                                  in_out.remove(&moi);
+                              });
     }
 }
 

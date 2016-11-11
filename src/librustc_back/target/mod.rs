@@ -56,6 +56,7 @@ mod apple_ios_base;
 mod bitrig_base;
 mod dragonfly_base;
 mod freebsd_base;
+mod haiku_base;
 mod linux_base;
 mod linux_musl_base;
 mod openbsd_base;
@@ -77,12 +78,12 @@ macro_rules! supported_targets {
             match target {
                 $(
                     $triple => {
-                        let mut t = try!($module::target());
+                        let mut t = $module::target()?;
                         t.options.is_builtin = true;
 
                         // round-trip through the JSON parser to ensure at
                         // run-time that the parser works correctly
-                        t = try!(Target::from_json(t.to_json()));
+                        t = Target::from_json(t.to_json())?;
                         debug!("Got builtin target: {:?}", t);
                         Ok(t)
                     },
@@ -128,10 +129,13 @@ supported_targets! {
     ("i686-unknown-linux-gnu", i686_unknown_linux_gnu),
     ("i586-unknown-linux-gnu", i586_unknown_linux_gnu),
     ("mips-unknown-linux-gnu", mips_unknown_linux_gnu),
+    ("mips64-unknown-linux-gnuabi64", mips64_unknown_linux_gnuabi64),
+    ("mips64el-unknown-linux-gnuabi64", mips64el_unknown_linux_gnuabi64),
     ("mipsel-unknown-linux-gnu", mipsel_unknown_linux_gnu),
     ("powerpc-unknown-linux-gnu", powerpc_unknown_linux_gnu),
     ("powerpc64-unknown-linux-gnu", powerpc64_unknown_linux_gnu),
     ("powerpc64le-unknown-linux-gnu", powerpc64le_unknown_linux_gnu),
+    ("s390x-unknown-linux-gnu", s390x_unknown_linux_gnu),
     ("arm-unknown-linux-gnueabi", arm_unknown_linux_gnueabi),
     ("arm-unknown-linux-gnueabihf", arm_unknown_linux_gnueabihf),
     ("arm-unknown-linux-musleabi", arm_unknown_linux_musleabi),
@@ -143,6 +147,8 @@ supported_targets! {
     ("i686-unknown-linux-musl", i686_unknown_linux_musl),
     ("mips-unknown-linux-musl", mips_unknown_linux_musl),
     ("mipsel-unknown-linux-musl", mipsel_unknown_linux_musl),
+    ("mips-unknown-linux-uclibc", mips_unknown_linux_uclibc),
+    ("mipsel-unknown-linux-uclibc", mipsel_unknown_linux_uclibc),
 
     ("i686-linux-android", i686_linux_android),
     ("arm-linux-androideabi", arm_linux_androideabi),
@@ -159,6 +165,9 @@ supported_targets! {
     ("x86_64-unknown-openbsd", x86_64_unknown_openbsd),
     ("x86_64-unknown-netbsd", x86_64_unknown_netbsd),
     ("x86_64-rumprun-netbsd", x86_64_rumprun_netbsd),
+
+    ("i686_unknown_haiku", i686_unknown_haiku),
+    ("x86_64_unknown_haiku", x86_64_unknown_haiku),
 
     ("x86_64-apple-darwin", x86_64_apple_darwin),
     ("i686-apple-darwin", i686_apple_darwin),
@@ -301,9 +310,6 @@ pub struct TargetOptions {
     pub allows_weak_linkage: bool,
     /// Whether the linker support rpaths or not. Defaults to false.
     pub has_rpath: bool,
-    /// Whether to disable linking to compiler-rt. Defaults to false, as LLVM
-    /// will emit references to the functions that compiler-rt provides.
-    pub no_compiler_rt: bool,
     /// Whether to disable linking to the default libraries, typically corresponds
     /// to `-nodefaultlibs`. Defaults to true.
     pub no_default_libraries: bool,
@@ -376,7 +382,6 @@ impl Default for TargetOptions {
             linker_is_gnu: false,
             allows_weak_linkage: true,
             has_rpath: false,
-            no_compiler_rt: false,
             no_default_libraries: true,
             position_independent_executables: false,
             pre_link_objects_exe: Vec::new(),
@@ -437,12 +442,12 @@ impl Target {
         };
 
         let mut base = Target {
-            llvm_target: try!(get_req_field("llvm-target")),
-            target_endian: try!(get_req_field("target-endian")),
-            target_pointer_width: try!(get_req_field("target-pointer-width")),
-            data_layout: try!(get_req_field("data-layout")),
-            arch: try!(get_req_field("arch")),
-            target_os: try!(get_req_field("os")),
+            llvm_target: get_req_field("llvm-target")?,
+            target_endian: get_req_field("target-endian")?,
+            target_pointer_width: get_req_field("target-pointer-width")?,
+            data_layout: get_req_field("data-layout")?,
+            arch: get_req_field("arch")?,
+            target_os: get_req_field("os")?,
             target_env: get_opt_field("env", ""),
             target_vendor: get_opt_field("vendor", "unknown"),
             options: Default::default(),
@@ -519,7 +524,6 @@ impl Target {
         key!(linker_is_gnu, bool);
         key!(allows_weak_linkage, bool);
         key!(has_rpath, bool);
-        key!(no_compiler_rt, bool);
         key!(no_default_libraries, bool);
         key!(position_independent_executables, bool);
         key!(archive_format);
@@ -662,7 +666,6 @@ impl ToJson for Target {
         target_option_val!(linker_is_gnu);
         target_option_val!(allows_weak_linkage);
         target_option_val!(has_rpath);
-        target_option_val!(no_compiler_rt);
         target_option_val!(no_default_libraries);
         target_option_val!(position_independent_executables);
         target_option_val!(archive_format);

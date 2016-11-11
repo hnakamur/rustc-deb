@@ -8,12 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use boxed::Box;
-use convert::Into;
 use error;
 use fmt;
-use marker::{Send, Sync};
-use option::Option::{self, Some, None};
 use result;
 use sys;
 
@@ -83,7 +79,7 @@ struct Custom {
 /// It is used with the [`io::Error`] type.
 ///
 /// [`io::Error`]: struct.Error.html
-#[derive(Copy, PartialEq, Eq, Clone, Debug)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[allow(deprecated)]
 pub enum ErrorKind {
@@ -165,7 +161,8 @@ pub enum ErrorKind {
     #[stable(feature = "read_exact", since = "1.6.0")]
     UnexpectedEof,
 
-    /// Any I/O error not part of this list.
+    /// A marker variant that tells the compiler that users of this enum cannot
+    /// match it exhaustively.
     #[unstable(feature = "io_error_internals",
                reason = "better expressed through extensible enums that this \
                          enum cannot be exhaustively matched against",
@@ -522,7 +519,6 @@ fn _assert_error_is_sync_send() {
 
 #[cfg(test)]
 mod test {
-    use prelude::v1::*;
     use super::{Error, ErrorKind};
     use error;
     use fmt;

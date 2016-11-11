@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use prelude::v1::*;
-
 use alloc::boxed::FnBox;
 use cmp;
 use ffi::CStr;
@@ -117,9 +115,12 @@ impl Thread {
                                      name.as_ptr() as *mut libc::c_void);
         }
     }
-    #[cfg(any(target_env = "newlib", target_os = "solaris", target_os = "emscripten"))]
+    #[cfg(any(target_env = "newlib",
+              target_os = "solaris",
+              target_os = "haiku",
+              target_os = "emscripten"))]
     pub fn set_name(_name: &CStr) {
-        // Newlib, Illumos and Emscripten have no way to set a thread name.
+        // Newlib, Illumos, Haiku, and Emscripten have no way to set a thread name.
     }
 
     pub fn sleep(dur: Duration) {
@@ -193,8 +194,6 @@ pub mod guard {
           target_os = "solaris"))]
 #[cfg_attr(test, allow(dead_code))]
 pub mod guard {
-    use prelude::v1::*;
-
     use libc;
     use libc::mmap;
     use libc::{PROT_NONE, MAP_PRIVATE, MAP_ANON, MAP_FAILED, MAP_FIXED};

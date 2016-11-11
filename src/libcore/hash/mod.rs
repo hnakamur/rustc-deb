@@ -71,16 +71,16 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use prelude::v1::*;
-
 use fmt;
 use marker;
 use mem;
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[allow(deprecated)]
 pub use self::sip::SipHasher;
 
 #[unstable(feature = "sip_hash_13", issue = "29754")]
+#[allow(deprecated)]
 pub use self::sip::{SipHasher13, SipHasher24};
 
 mod sip;
@@ -288,8 +288,6 @@ impl<H> Default for BuildHasherDefault<H> {
 //////////////////////////////////////////////////////////////////////////////
 
 mod impls {
-    use prelude::v1::*;
-
     use mem;
     use slice;
     use super::*;

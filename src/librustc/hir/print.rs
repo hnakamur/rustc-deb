@@ -523,6 +523,7 @@ impl<'a> State<'a> {
                         id: ast::DUMMY_NODE_ID,
                         predicates: hir::HirVec::new(),
                     },
+                    span: syntax_pos::DUMMY_SP,
                 };
                 self.print_ty_fn(f.abi, f.unsafety, &f.decl, None, &generics)?;
             }
@@ -751,7 +752,10 @@ impl<'a> State<'a> {
                 self.head(&visibility_qualified(&item.vis, "struct"))?;
                 self.print_struct(struct_def, generics, item.name, item.span, true)?;
             }
-
+            hir::ItemUnion(ref struct_def, ref generics) => {
+                self.head(&visibility_qualified(&item.vis, "union"))?;
+                self.print_struct(struct_def, generics, item.name, item.span, true)?;
+            }
             hir::ItemDefaultImpl(unsafety, ref trait_ref) => {
                 self.head("")?;
                 self.print_visibility(&item.vis)?;
@@ -1752,9 +1756,9 @@ impl<'a> State<'a> {
                         self.commasep(Inconsistent, &elts[ddpos..], |s, p| s.print_pat(&p))?;
                     }
                 } else {
-                    try!(self.commasep(Inconsistent, &elts[..], |s, p| s.print_pat(&p)));
+                    self.commasep(Inconsistent, &elts[..], |s, p| s.print_pat(&p))?;
                 }
-                try!(self.pclose());
+                self.pclose()?;
             }
             PatKind::Path(None, ref path) => {
                 self.print_path(path, true, 0)?;
@@ -2133,16 +2137,7 @@ impl<'a> State<'a> {
                     self.print_path(path, false, 0)?;
                     word(&mut self.s, "::{")?;
                 }
-                self.commasep(Inconsistent, &segments[..], |s, w| {
-                    match w.node {
-                        hir::PathListIdent { name, .. } => {
-                            s.print_name(name)
-                        }
-                        hir::PathListMod { .. } => {
-                            word(&mut s.s, "self")
-                        }
-                    }
-                })?;
+                self.commasep(Inconsistent, &segments[..], |s, w| s.print_name(w.node.name))?;
                 word(&mut self.s, "}")
             }
         }
@@ -2224,6 +2219,7 @@ impl<'a> State<'a> {
                 id: ast::DUMMY_NODE_ID,
                 predicates: hir::HirVec::new(),
             },
+            span: syntax_pos::DUMMY_SP,
         };
         self.print_fn(decl,
                       unsafety,

@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::cell;
 use std::rc::Rc;
 
 use super::{OverlapError, specializes};
@@ -122,19 +121,18 @@ impl<'a, 'gcx, 'tcx> Children {
                     if le == ge {
                         // overlap, but no specialization; error out
                         let trait_ref = impl_header.trait_ref.unwrap();
+                        let self_ty = trait_ref.self_ty();
                         Err(OverlapError {
                             with_impl: possible_sibling,
                             trait_desc: trait_ref.to_string(),
-                            self_desc: trait_ref.substs.self_ty().and_then(|ty| {
-                                // only report the Self type if it has at least
-                                // some outer concrete shell; otherwise, it's
-                                // not adding much information.
-                                if ty.has_concrete_skeleton() {
-                                    Some(ty.to_string())
-                                } else {
-                                    None
-                                }
-                            })
+                            // only report the Self type if it has at least
+                            // some outer concrete shell; otherwise, it's
+                            // not adding much information.
+                            self_desc: if self_ty.has_concrete_skeleton() {
+                                Some(self_ty.to_string())
+                            } else {
+                                None
+                            }
                         })
                     } else {
                         Ok((le, ge))
@@ -288,21 +286,10 @@ impl<'a, 'gcx, 'tcx> Node {
 
     /// Iterate over the items defined directly by the given (impl or trait) node.
     pub fn items(&self, tcx: TyCtxt<'a, 'gcx, 'tcx>) -> NodeItems<'a, 'gcx> {
-        match *self {
-            Node::Impl(impl_def_id) => {
-                NodeItems::Impl {
-                    tcx: tcx.global_tcx(),
-                    items: cell::Ref::map(tcx.impl_items.borrow(),
-                                          |impl_items| &impl_items[&impl_def_id]),
-                    idx: 0,
-                }
-            }
-            Node::Trait(trait_def_id) => {
-                NodeItems::Trait {
-                    items: tcx.trait_items(trait_def_id).clone(),
-                    idx: 0,
-                }
-            }
+        NodeItems {
+            tcx: tcx.global_tcx(),
+            items: tcx.impl_or_trait_items(self.def_id()),
+            idx: 0,
         }
     }
 
@@ -315,42 +302,23 @@ impl<'a, 'gcx, 'tcx> Node {
 }
 
 /// An iterator over the items defined within a trait or impl.
-pub enum NodeItems<'a, 'tcx: 'a> {
-    Impl {
-        tcx: TyCtxt<'a, 'tcx, 'tcx>,
-        items: cell::Ref<'a, Vec<ty::ImplOrTraitItemId>>,
-        idx: usize,
-    },
-    Trait {
-        items: Rc<Vec<ImplOrTraitItem<'tcx>>>,
-        idx: usize,
-    },
+pub struct NodeItems<'a, 'tcx: 'a> {
+    tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    items: Rc<Vec<DefId>>,
+    idx: usize
 }
 
 impl<'a, 'tcx> Iterator for NodeItems<'a, 'tcx> {
     type Item = ImplOrTraitItem<'tcx>;
     fn next(&mut self) -> Option<ImplOrTraitItem<'tcx>> {
-        match *self {
-            NodeItems::Impl { tcx, ref items, ref mut idx } => {
-                let items_table = tcx.impl_or_trait_items.borrow();
-                if *idx < items.len() {
-                    let item_def_id = items[*idx].def_id();
-                    let item = items_table[&item_def_id].clone();
-                    *idx += 1;
-                    Some(item)
-                } else {
-                    None
-                }
-            }
-            NodeItems::Trait { ref items, ref mut idx } => {
-                if *idx < items.len() {
-                    let item = items[*idx].clone();
-                    *idx += 1;
-                    Some(item)
-                } else {
-                    None
-                }
-            }
+        if self.idx < self.items.len() {
+            let item_def_id = self.items[self.idx];
+            let items_table = self.tcx.impl_or_trait_items.borrow();
+            let item = items_table[&item_def_id].clone();
+            self.idx += 1;
+            Some(item)
+        } else {
+            None
         }
     }
 }

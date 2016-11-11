@@ -28,11 +28,10 @@ extern crate rustc_serialize;
 extern crate toml;
 extern crate regex;
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File};
-use std::path::{PathBuf, Path};
+use std::path::{Component, PathBuf, Path};
 use std::process::Command;
 
 use build_helper::{run_silent, output};
@@ -46,7 +45,7 @@ use util::{exe, mtime, libdir, add_lib_path};
 /// * The error itself
 ///
 /// This is currently used judiciously throughout the build system rather than
-/// using a `Result` with `try!`, but this may change on day...
+/// using a `Result` with `try!`, but this may change one day...
 macro_rules! t {
     ($e:expr) => (match $e {
         Ok(e) => e,
@@ -131,7 +130,6 @@ pub struct Build {
     // Runtime state filled in later on
     cc: HashMap<String, (gcc::Tool, Option<PathBuf>)>,
     cxx: HashMap<String, gcc::Tool>,
-    compiler_rt_built: RefCell<HashMap<String, PathBuf>>,
 }
 
 /// The various "modes" of invoking Cargo.
@@ -198,7 +196,6 @@ impl Build {
             package_vers: String::new(),
             cc: HashMap::new(),
             cxx: HashMap::new(),
-            compiler_rt_built: RefCell::new(HashMap::new()),
             gdb_version: None,
             lldb_version: None,
             lldb_python_dir: None,
@@ -246,14 +243,18 @@ impl Build {
         // Almost all of these are simple one-liners that shell out to the
         // corresponding functionality in the extra modules, where more
         // documentation can be found.
-        for target in step::all(self) {
+        let steps = step::all(self);
+
+        self.verbose("bootstrap build plan:");
+        for step in &steps {
+            self.verbose(&format!("{:?}", step));
+        }
+
+        for target in steps {
             let doc_out = self.out.join(&target.target).join("doc");
             match target.src {
                 Llvm { _dummy } => {
                     native::llvm(self, target.target);
-                }
-                CompilerRt { _dummy } => {
-                    native::compiler_rt(self, target.target);
                 }
                 TestHelpers { _dummy } => {
                     native::test_helpers(self, target.target);
@@ -306,10 +307,6 @@ impl Build {
                 }
                 DocNomicon { stage } => {
                     doc::rustbook(self, stage, target.target, "nomicon",
-                                  &doc_out);
-                }
-                DocStyle { stage } => {
-                    doc::rustbook(self, stage, target.target, "style",
                                   &doc_out);
                 }
                 DocStandalone { stage } => {
@@ -394,8 +391,10 @@ impl Build {
                                        "mir-opt", "mir-opt");
                 }
                 CheckCodegen { compiler } => {
-                    check::compiletest(self, &compiler, target.target,
-                                       "codegen", "codegen");
+                    if self.config.codegen_tests {
+                        check::compiletest(self, &compiler, target.target,
+                                           "codegen", "codegen");
+                    }
                 }
                 CheckCodegenUnits { compiler } => {
                     check::compiletest(self, &compiler, target.target,
@@ -479,12 +478,32 @@ impl Build {
     /// This will detect if any submodules are out of date an run the necessary
     /// commands to sync them all with upstream.
     fn update_submodules(&self) {
+        struct Submodule<'a> {
+            path: &'a Path,
+            state: State,
+        }
+
+        enum State {
+            // The submodule may have staged/unstaged changes
+            MaybeDirty,
+            // Or could be initialized but never updated
+            NotInitialized,
+            // The submodule, itself, has extra commits but those changes haven't been commited to
+            // the (outer) git repository
+            OutOfSync,
+        }
+
         if !self.config.submodules {
             return
         }
         if fs::metadata(self.src.join(".git")).is_err() {
             return
         }
+        let git = || {
+            let mut cmd = Command::new("git");
+            cmd.current_dir(&self.src);
+            return cmd
+        };
         let git_submodule = || {
             let mut cmd = Command::new("git");
             cmd.current_dir(&self.src).arg("submodule");
@@ -496,19 +515,67 @@ impl Build {
         //        of detecting whether we need to run all the submodule commands
         //        below.
         let out = output(git_submodule().arg("status"));
-        if !out.lines().any(|l| l.starts_with("+") || l.starts_with("-")) {
-            return
+        let mut submodules = vec![];
+        for line in out.lines() {
+            // NOTE `git submodule status` output looks like this:
+            //
+            // -5066b7dcab7e700844b0e2ba71b8af9dc627a59b src/liblibc
+            // +b37ef24aa82d2be3a3cc0fe89bf82292f4ca181c src/compiler-rt (remotes/origin/..)
+            //  e058ca661692a8d01f8cf9d35939dfe3105ce968 src/jemalloc (3.6.0-533-ge058ca6)
+            //
+            // The first character can be '-', '+' or ' ' and denotes the `State` of the submodule
+            // Right next to this character is the SHA-1 of the submodule HEAD
+            // And after that comes the path to the submodule
+            let path = Path::new(line[1..].split(' ').skip(1).next().unwrap());
+            let state = if line.starts_with('-') {
+                State::NotInitialized
+            } else if line.starts_with('+') {
+                State::OutOfSync
+            } else if line.starts_with(' ') {
+                State::MaybeDirty
+            } else {
+                panic!("unexpected git submodule state: {:?}", line.chars().next());
+            };
+
+            submodules.push(Submodule { path: path, state: state })
         }
 
         self.run(git_submodule().arg("sync"));
-        self.run(git_submodule().arg("init"));
-        self.run(git_submodule().arg("update"));
-        self.run(git_submodule().arg("update").arg("--recursive"));
-        self.run(git_submodule().arg("status").arg("--recursive"));
-        self.run(git_submodule().arg("foreach").arg("--recursive")
-                                .arg("git").arg("clean").arg("-fdx"));
-        self.run(git_submodule().arg("foreach").arg("--recursive")
-                                .arg("git").arg("checkout").arg("."));
+
+        for submodule in submodules {
+            // If using llvm-root then don't touch the llvm submodule.
+            if submodule.path.components().any(|c| c == Component::Normal("llvm".as_ref())) &&
+                self.config.target_config.get(&self.config.build)
+                    .and_then(|c| c.llvm_config.as_ref()).is_some()
+            {
+                continue
+            }
+
+            if submodule.path.components().any(|c| c == Component::Normal("jemalloc".as_ref())) &&
+                !self.config.use_jemalloc
+            {
+                continue
+            }
+
+            match submodule.state {
+                State::MaybeDirty => {
+                    // drop staged changes
+                    self.run(git().arg("-C").arg(submodule.path).args(&["reset", "--hard"]));
+                    // drops unstaged changes
+                    self.run(git().arg("-C").arg(submodule.path).args(&["clean", "-fdx"]));
+                },
+                State::NotInitialized => {
+                    self.run(git_submodule().arg("init").arg(submodule.path));
+                    self.run(git_submodule().arg("update").arg(submodule.path));
+                },
+                State::OutOfSync => {
+                    // drops submodule commits that weren't reported to the (outer) git repository
+                    self.run(git_submodule().arg("update").arg(submodule.path));
+                    self.run(git().arg("-C").arg(submodule.path).args(&["reset", "--hard"]));
+                    self.run(git().arg("-C").arg(submodule.path).args(&["clean", "-fdx"]));
+                },
+            }
+        }
     }
 
     /// Clear out `dir` if `input` is newer.
@@ -519,6 +586,8 @@ impl Build {
         if mtime(&stamp) < mtime(input) {
             self.verbose(&format!("Dirty - {}", dir.display()));
             let _ = fs::remove_dir_all(dir);
+        } else if stamp.exists() {
+            return
         }
         t!(fs::create_dir_all(dir));
         t!(File::create(stamp));
@@ -542,6 +611,10 @@ impl Build {
              .arg(cmd)
              .arg("-j").arg(self.jobs().to_string())
              .arg("--target").arg(target);
+
+        // FIXME: Temporary fix for https://github.com/rust-lang/cargo/issues/3005
+        // Force cargo to output binaries with disambiguating hashes in the name
+        cargo.env("__CARGO_DEFAULT_LIB_METADATA", "1");
 
         let stage;
         if compiler.stage == 0 && self.local_rebuild {
@@ -574,7 +647,7 @@ impl Build {
              .env("RUSTDOC_REAL", self.rustdoc(compiler))
              .env("RUSTC_FLAGS", self.rustc_flags(target).join(" "));
 
-        self.add_bootstrap_key(compiler, &mut cargo);
+        self.add_bootstrap_key(&mut cargo);
 
         // Specify some various options for build scripts used throughout
         // the build.
@@ -769,11 +842,6 @@ impl Build {
         }
     }
 
-    /// Root output directory for compiler-rt compiled for `target`
-    fn compiler_rt_out(&self, target: &str) -> PathBuf {
-        self.out.join(target).join("compiler-rt")
-    }
-
     /// Root output directory for rust_test_helpers library compiled for
     /// `target`
     fn test_helpers_out(&self, target: &str) -> PathBuf {
@@ -794,16 +862,11 @@ impl Build {
     }
 
     /// Adds the compiler's bootstrap key to the environment of `cmd`.
-    fn add_bootstrap_key(&self, compiler: &Compiler, cmd: &mut Command) {
-        // In stage0 we're using a previously released stable compiler, so we
-        // use the stage0 bootstrap key. Otherwise we use our own build's
-        // bootstrap key.
-        let bootstrap_key = if compiler.is_snapshot(self) && !self.local_rebuild {
-            &self.bootstrap_key_stage0
-        } else {
-            &self.bootstrap_key
-        };
-        cmd.env("RUSTC_BOOTSTRAP_KEY", bootstrap_key);
+    fn add_bootstrap_key(&self, cmd: &mut Command) {
+        cmd.env("RUSTC_BOOTSTRAP", "1");
+        // FIXME: Transitionary measure to bootstrap using the old bootstrap logic.
+        // Remove this once the bootstrap compiler uses the new login in Issue #36548.
+        cmd.env("RUSTC_BOOTSTRAP_KEY", "5c6cf767");
     }
 
     /// Returns the compiler's libdir where it stores the dynamic libraries that
@@ -889,7 +952,11 @@ impl Build {
     /// Returns the path to the C++ compiler for the target specified, may panic
     /// if no C++ compiler was configured for the target.
     fn cxx(&self, target: &str) -> &Path {
-        self.cxx[target].path()
+        match self.cxx.get(target) {
+            Some(p) => p.path(),
+            None => panic!("\n\ntarget `{}` is not configured as a host,
+                            only as a target\n\n", target),
+        }
     }
 
     /// Returns flags to pass to the compiler to generate code for `target`.
@@ -906,6 +973,13 @@ impl Build {
             base.push(format!("-Clinker={}", self.cc(target).display()));
         }
         return base
+    }
+
+    /// Returns the "musl root" for this `target`, if defined
+    fn musl_root(&self, target: &str) -> Option<&Path> {
+        self.config.target_config[target].musl_root.as_ref()
+            .or(self.config.musl_root.as_ref())
+            .map(|p| &**p)
     }
 }
 

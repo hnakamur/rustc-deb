@@ -17,14 +17,13 @@
 
 use hir::def_id::DefId;
 use middle::lang_items::UnsizeTraitLangItem;
-use rustc::ty::subst::{self, Subst};
+use rustc::ty::subst::Subst;
 use rustc::ty::{self, TyCtxt, TypeFoldable};
 use rustc::traits::{self, Reveal};
-use rustc::ty::{ImplOrTraitItemId, ConstTraitItemId};
-use rustc::ty::{MethodTraitItemId, TypeTraitItemId, ParameterEnvironment};
-use rustc::ty::{Ty, TyBool, TyChar, TyEnum, TyError};
+use rustc::ty::{ParameterEnvironment};
+use rustc::ty::{Ty, TyBool, TyChar, TyError};
 use rustc::ty::{TyParam, TyRawPtr};
-use rustc::ty::{TyRef, TyStruct, TyTrait, TyNever, TyTuple};
+use rustc::ty::{TyRef, TyAdt, TyTrait, TyNever, TyTuple};
 use rustc::ty::{TyStr, TyArray, TySlice, TyFloat, TyInfer, TyInt};
 use rustc::ty::{TyUint, TyClosure, TyBox, TyFnDef, TyFnPtr};
 use rustc::ty::{TyProjection, TyAnon};
@@ -32,15 +31,14 @@ use rustc::ty::util::CopyImplementationError;
 use middle::free_region::FreeRegionMap;
 use CrateCtxt;
 use rustc::infer::{self, InferCtxt, TypeOrigin};
-use std::cell::RefCell;
-use std::rc::Rc;
 use syntax_pos::Span;
-use util::nodemap::{DefIdMap, FnvHashMap};
 use rustc::dep_graph::DepNode;
 use rustc::hir::map as hir_map;
 use rustc::hir::intravisit;
 use rustc::hir::{Item, ItemImpl};
 use rustc::hir;
+
+use std::rc::Rc;
 
 mod orphan;
 mod overlap;
@@ -49,7 +47,6 @@ mod unsafety;
 struct CoherenceChecker<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     crate_context: &'a CrateCtxt<'a, 'gcx>,
     inference_context: InferCtxt<'a, 'gcx, 'tcx>,
-    inherent_impls: RefCell<DefIdMap<Rc<RefCell<Vec<DefId>>>>>,
 }
 
 struct CoherenceCheckVisitor<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
@@ -69,13 +66,12 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
     // Returns the def ID of the base type, if there is one.
     fn get_base_type_def_id(&self, span: Span, ty: Ty<'tcx>) -> Option<DefId> {
         match ty.sty {
-            TyEnum(def, _) |
-            TyStruct(def, _) => {
+            TyAdt(def, _) => {
                 Some(def.did)
             }
 
             TyTrait(ref t) => {
-                Some(t.principal_def_id())
+                Some(t.principal.def_id())
             }
 
             TyBox(_) => {
@@ -85,7 +81,7 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
             TyBool | TyChar | TyInt(..) | TyUint(..) | TyFloat(..) |
             TyStr | TyArray(..) | TySlice(..) | TyFnDef(..) | TyFnPtr(_) |
             TyTuple(..) | TyParam(..) | TyError | TyNever |
-            TyRawPtr(_) | TyRef(_, _) | TyProjection(..) => {
+            TyRawPtr(_) | TyRef(..) | TyProjection(..) => {
                 None
             }
 
@@ -107,15 +103,6 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
         self.crate_context.tcx.visit_all_items_in_krate(
             DepNode::CoherenceCheckImpl,
             &mut CoherenceCheckVisitor { cc: self });
-
-        // Copy over the inherent impls we gathered up during the walk into
-        // the tcx.
-        let mut tcx_inherent_impls =
-            self.crate_context.tcx.inherent_impls.borrow_mut();
-        for (k, v) in self.inherent_impls.borrow().iter() {
-            tcx_inherent_impls.insert((*k).clone(),
-                                      Rc::new((*v.borrow()).clone()));
-        }
 
         // Populate the table of destructors. It might seem a bit strange to
         // do this here, but it's actually the most convenient place, since
@@ -170,18 +157,12 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
             }
         }
 
-        tcx.impl_items.borrow_mut().insert(impl_did, impl_items);
+        tcx.impl_or_trait_item_def_ids.borrow_mut().insert(impl_did, Rc::new(impl_items));
     }
 
     fn add_inherent_impl(&self, base_def_id: DefId, impl_def_id: DefId) {
-        if let Some(implementation_list) = self.inherent_impls.borrow().get(&base_def_id) {
-            implementation_list.borrow_mut().push(impl_def_id);
-            return;
-        }
-
-        self.inherent_impls.borrow_mut().insert(
-            base_def_id,
-            Rc::new(RefCell::new(vec!(impl_def_id))));
+        let tcx = self.crate_context.tcx;
+        tcx.inherent_impls.borrow_mut().push(base_def_id, impl_def_id);
     }
 
     fn add_trait_impl(&self, impl_trait_ref: ty::TraitRef<'gcx>, impl_def_id: DefId) {
@@ -192,22 +173,11 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
     }
 
     // Converts an implementation in the AST to a vector of items.
-    fn create_impl_from_item(&self, item: &Item) -> Vec<ImplOrTraitItemId> {
+    fn create_impl_from_item(&self, item: &Item) -> Vec<DefId> {
         match item.node {
-            ItemImpl(_, _, _, _, _, ref impl_items) => {
+            ItemImpl(.., ref impl_items) => {
                 impl_items.iter().map(|impl_item| {
-                    let impl_def_id = self.crate_context.tcx.map.local_def_id(impl_item.id);
-                    match impl_item.node {
-                        hir::ImplItemKind::Const(..) => {
-                            ConstTraitItemId(impl_def_id)
-                        }
-                        hir::ImplItemKind::Method(..) => {
-                            MethodTraitItemId(impl_def_id)
-                        }
-                        hir::ImplItemKind::Type(_) => {
-                            TypeTraitItemId(impl_def_id)
-                        }
-                    }
+                    self.crate_context.tcx.map.local_def_id(impl_item.id)
                 }).collect()
             }
             _ => {
@@ -228,7 +198,7 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
         tcx.populate_implementations_for_trait_if_necessary(drop_trait);
         let drop_trait = tcx.lookup_trait_def(drop_trait);
 
-        let impl_items = tcx.impl_items.borrow();
+        let impl_items = tcx.impl_or_trait_item_def_ids.borrow();
 
         drop_trait.for_each_impl(tcx, |impl_did| {
             let items = impl_items.get(&impl_did).unwrap();
@@ -240,9 +210,8 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
 
             let self_type = tcx.lookup_item_type(impl_did);
             match self_type.ty.sty {
-                ty::TyEnum(type_def, _) |
-                ty::TyStruct(type_def, _) => {
-                    type_def.set_destructor(method_def_id.def_id());
+                ty::TyAdt(type_def, _) => {
+                    type_def.set_destructor(method_def_id);
                 }
                 _ => {
                     // Destructors only work on nominal types.
@@ -250,7 +219,7 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                         match tcx.map.find(impl_node_id) {
                             Some(hir_map::NodeItem(item)) => {
                                 let span = match item.node {
-                                    ItemImpl(_, _, _, _, ref ty, _) => {
+                                    ItemImpl(.., ref ty, _) => {
                                         ty.span
                                     },
                                     _ => item.span
@@ -322,7 +291,7 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                 }
                 Err(CopyImplementationError::InfrigingVariant(name)) => {
                     let item = tcx.map.expect_item(impl_node_id);
-                    let span = if let ItemImpl(_, _, _, Some(ref tr), _, _) = item.node {
+                    let span = if let ItemImpl(.., Some(ref tr), _, _) = item.node {
                         tr.path.span
                     } else {
                         span
@@ -336,7 +305,7 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                 }
                 Err(CopyImplementationError::NotAnAdt) => {
                     let item = tcx.map.expect_item(impl_node_id);
-                    let span = if let ItemImpl(_, _, _, _, ref ty, _) = item.node {
+                    let span = if let ItemImpl(.., ref ty, _) = item.node {
                         ty.span
                     } else {
                         span
@@ -348,9 +317,11 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                         .emit();
                 }
                 Err(CopyImplementationError::HasDestructor) => {
-                    span_err!(tcx.sess, span, E0184,
+                    struct_span_err!(tcx.sess, span, E0184,
                               "the trait `Copy` may not be implemented for this type; \
-                               the type has a destructor");
+                               the type has a destructor")
+                        .span_label(span, &format!("Copy not allowed on types with destructors"))
+                        .emit();
                 }
             }
         });
@@ -386,7 +357,7 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
 
             let source = tcx.lookup_item_type(impl_did).ty;
             let trait_ref = self.crate_context.tcx.impl_trait_ref(impl_did).unwrap();
-            let target = *trait_ref.substs.types.get(subst::TypeSpace, 0);
+            let target = trait_ref.substs.type_at(1);
             debug!("check_implementations_of_coerce_unsized: {:?} -> {:?} (bound)",
                    source, target);
 
@@ -413,7 +384,7 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                     (&ty::TyBox(a), &ty::TyBox(b)) => (a, b, unsize_trait, None),
 
                     (&ty::TyRef(r_a, mt_a), &ty::TyRef(r_b, mt_b)) => {
-                        infcx.sub_regions(infer::RelateObjectBound(span), *r_b, *r_a);
+                        infcx.sub_regions(infer::RelateObjectBound(span), r_b, r_a);
                         check_mutbl(mt_a, mt_b, &|ty| tcx.mk_imm_ref(r_b, ty))
                     }
 
@@ -422,7 +393,8 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                         check_mutbl(mt_a, mt_b, &|ty| tcx.mk_imm_ptr(ty))
                     }
 
-                    (&ty::TyStruct(def_a, substs_a), &ty::TyStruct(def_b, substs_b)) => {
+                    (&ty::TyAdt(def_a, substs_a), &ty::TyAdt(def_b, substs_b))
+                            if def_a.is_struct() && def_b.is_struct() => {
                         if def_a != def_b {
                             let source_path = tcx.item_path_str(def_a.did);
                             let target_path = tcx.item_path_str(def_b.did);
@@ -458,13 +430,25 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                                        being coerced, none found");
                             return;
                         } else if diff_fields.len() > 1 {
-                            span_err!(tcx.sess, span, E0375,
-                                      "the trait `CoerceUnsized` may only be implemented \
-                                       for a coercion between structures with one field \
-                                       being coerced, but {} fields need coercions: {}",
-                                       diff_fields.len(), diff_fields.iter().map(|&(i, a, b)| {
-                                            format!("{} ({} to {})", fields[i].name, a, b)
-                                       }).collect::<Vec<_>>().join(", "));
+                            let item = tcx.map.expect_item(impl_node_id);
+                            let span = if let ItemImpl(.., Some(ref t), _, _) = item.node {
+                                t.path.span
+                            } else {
+                                tcx.map.span(impl_node_id)
+                            };
+
+                            let mut err = struct_span_err!(tcx.sess, span, E0375,
+                                      "implementing the trait `CoerceUnsized` \
+                                       requires multiple coercions");
+                            err.note("`CoerceUnsized` may only be implemented for \
+                                      a coercion between structures with one field being coerced");
+                            err.note(&format!("currently, {} fields need coercions: {}",
+                                             diff_fields.len(),
+                                             diff_fields.iter().map(|&(i, a, b)| {
+                                                format!("{} ({} to {})", fields[i].name, a, b)
+                                             }).collect::<Vec<_>>().join(", ") ));
+                            err.span_label(span, &format!("requires multiple coercions"));
+                            err.emit();
                             return;
                         }
 
@@ -486,7 +470,7 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                 // Register an obligation for `A: Trait<B>`.
                 let cause = traits::ObligationCause::misc(span, impl_node_id);
                 let predicate = tcx.predicate_for_trait_def(cause, trait_def_id, 0,
-                                                            source, vec![target]);
+                                                            source, &[target]);
                 fulfill_cx.register_predicate_obligation(&infcx, predicate);
 
                 // Check that all transitive obligations are satisfied.
@@ -540,7 +524,6 @@ pub fn check_coherence(ccx: &CrateCtxt) {
         CoherenceChecker {
             crate_context: ccx,
             inference_context: infcx,
-            inherent_impls: RefCell::new(FnvHashMap()),
         }.check();
     });
     unsafety::check(ccx.tcx);

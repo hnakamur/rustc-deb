@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(rustc_attrs)]
+#![feature(untagged_unions)]
 
 use std::cell::{Cell, RefCell};
 use std::panic;
@@ -74,7 +74,6 @@ impl<'a> Drop for Ptr<'a> {
     }
 }
 
-#[rustc_mir]
 fn dynamic_init(a: &Allocator, c: bool) {
     let _x;
     if c {
@@ -82,7 +81,6 @@ fn dynamic_init(a: &Allocator, c: bool) {
     }
 }
 
-#[rustc_mir]
 fn dynamic_drop(a: &Allocator, c: bool) {
     let x = a.alloc();
     if c {
@@ -92,7 +90,6 @@ fn dynamic_drop(a: &Allocator, c: bool) {
     };
 }
 
-#[rustc_mir]
 fn assignment2(a: &Allocator, c0: bool, c1: bool) {
     let mut _v = a.alloc();
     let mut _w = a.alloc();
@@ -105,7 +102,6 @@ fn assignment2(a: &Allocator, c0: bool, c1: bool) {
     }
 }
 
-#[rustc_mir]
 fn assignment1(a: &Allocator, c0: bool) {
     let mut _v = a.alloc();
     let mut _w = a.alloc();
@@ -113,6 +109,20 @@ fn assignment1(a: &Allocator, c0: bool) {
         drop(_v);
     }
     _v = _w;
+}
+
+#[allow(unions_with_drop_fields)]
+union Boxy<T> {
+    a: T,
+    b: T,
+}
+
+fn union1(a: &Allocator) {
+    unsafe {
+        let mut u = Boxy { a: a.alloc() };
+        u.b = a.alloc();
+        drop(u.a);
+    }
 }
 
 fn run_test<F>(mut f: F)
@@ -140,6 +150,13 @@ fn run_test<F>(mut f: F)
     }
 }
 
+fn run_test_nopanic<F>(mut f: F)
+    where F: FnMut(&Allocator)
+{
+    let first_alloc = Allocator::new(usize::MAX);
+    f(&first_alloc);
+}
+
 fn main() {
     run_test(|a| dynamic_init(a, false));
     run_test(|a| dynamic_init(a, true));
@@ -153,4 +170,6 @@ fn main() {
 
     run_test(|a| assignment1(a, false));
     run_test(|a| assignment1(a, true));
+
+    run_test_nopanic(|a| union1(a));
 }

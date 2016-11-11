@@ -147,8 +147,9 @@ impl<'a, 'gcx> CheckCrateVisitor<'a, 'gcx> {
         }
 
         let mode = match fk {
-            FnKind::ItemFn(_, _, _, hir::Constness::Const, _, _, _) => Mode::ConstFn,
-            FnKind::Method(_, m, _, _) => {
+            FnKind::ItemFn(_, _, _, hir::Constness::Const, ..)
+                => Mode::ConstFn,
+            FnKind::Method(_, m, ..) => {
                 if m.constness == hir::Constness::Const {
                     Mode::ConstFn
                 } else {
@@ -283,10 +284,10 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
                     Ok(Ordering::Less) |
                     Ok(Ordering::Equal) => {}
                     Ok(Ordering::Greater) => {
-                        span_err!(self.tcx.sess,
-                                  start.span,
-                                  E0030,
-                                  "lower range bound must be less than or equal to upper");
+                        struct_span_err!(self.tcx.sess, start.span, E0030,
+                            "lower range bound must be less than or equal to upper")
+                            .span_label(start.span, &format!("lower bound larger than upper bound"))
+                            .emit();
                     }
                     Err(ErrorReported) => {}
                 }
@@ -306,8 +307,8 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
                         hir::DeclItem(_) => continue,
                     }
                 }
-                hir::StmtExpr(_, _) => {}
-                hir::StmtSemi(_, _) => {}
+                hir::StmtExpr(..) => {}
+                hir::StmtSemi(..) => {}
             }
             self.add_qualif(ConstQualif::NOT_CONST);
         }
@@ -438,8 +439,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
 /// instead of producing errors.
 fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>, e: &hir::Expr, node_ty: Ty<'tcx>) {
     match node_ty.sty {
-        ty::TyStruct(def, _) |
-        ty::TyEnum(def, _) if def.has_dtor() => {
+        ty::TyAdt(def, _) if def.has_dtor() => {
             v.add_qualif(ConstQualif::NEEDS_DROP);
         }
         _ => {}
@@ -669,7 +669,7 @@ impl<'a, 'gcx, 'tcx> euv::Delegate<'tcx> for CheckCrateVisitor<'a, 'gcx> {
                 Categorization::StaticItem => {
                     break;
                 }
-                Categorization::Deref(ref cmt, _, _) |
+                Categorization::Deref(ref cmt, ..) |
                 Categorization::Downcast(ref cmt, _) |
                 Categorization::Interior(ref cmt, _) => cur = cmt,
 
@@ -683,7 +683,7 @@ impl<'a, 'gcx, 'tcx> euv::Delegate<'tcx> for CheckCrateVisitor<'a, 'gcx> {
               borrow_id: ast::NodeId,
               _borrow_span: Span,
               cmt: mc::cmt<'tcx>,
-              _loan_region: ty::Region,
+              _loan_region: &'tcx ty::Region,
               bk: ty::BorrowKind,
               loan_cause: euv::LoanCause) {
         // Kind of hacky, but we allow Unsafe coercions in constants.
@@ -714,7 +714,7 @@ impl<'a, 'gcx, 'tcx> euv::Delegate<'tcx> for CheckCrateVisitor<'a, 'gcx> {
                         // type of the expression.  `&mut [1]` has exactly the
                         // same representation as &mut 1.
                         match cmt.ty.sty {
-                            ty::TyArray(_, _) |
+                            ty::TyArray(..) |
                             ty::TySlice(_) => break,
                             _ => {}
                         }
@@ -725,7 +725,7 @@ impl<'a, 'gcx, 'tcx> euv::Delegate<'tcx> for CheckCrateVisitor<'a, 'gcx> {
                 Categorization::StaticItem => {
                     break;
                 }
-                Categorization::Deref(ref cmt, _, _) |
+                Categorization::Deref(ref cmt, ..) |
                 Categorization::Downcast(ref cmt, _) |
                 Categorization::Interior(ref cmt, _) => {
                     cur = cmt;

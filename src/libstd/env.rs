@@ -16,8 +16,6 @@
 
 #![stable(feature = "env", since = "1.0.0")]
 
-use prelude::v1::*;
-
 use error::Error;
 use ffi::{OsStr, OsString};
 use fmt;
@@ -85,7 +83,7 @@ pub struct VarsOs { inner: os_imp::Env }
 /// environment variables of the current process.
 ///
 /// The returned iterator contains a snapshot of the process's environment
-/// variables at the time of this invocation, modifications to environment
+/// variables at the time of this invocation. Modifications to environment
 /// variables afterwards will not be reflected in the returned iterator.
 ///
 /// # Panics
@@ -114,7 +112,7 @@ pub fn vars() -> Vars {
 /// environment variables of the current process.
 ///
 /// The returned iterator contains a snapshot of the process's environment
-/// variables at the time of this invocation, modifications to environment
+/// variables at the time of this invocation. Modifications to environment
 /// variables afterwards will not be reflected in the returned iterator.
 ///
 /// # Examples
@@ -661,8 +659,10 @@ pub mod consts {
     /// - arm
     /// - aarch64
     /// - mips
+    /// - mips64
     /// - powerpc
     /// - powerpc64
+    /// - s390x
     #[stable(feature = "env", since = "1.0.0")]
     pub const ARCH: &'static str = super::arch::ARCH;
 
@@ -903,6 +903,17 @@ mod os {
     pub const EXE_EXTENSION: &'static str = "js";
 }
 
+#[cfg(target_os = "haiku")]
+mod os {
+    pub const FAMILY: &'static str = "unix";
+    pub const OS: &'static str = "haiku";
+    pub const DLL_PREFIX: &'static str = "lib";
+    pub const DLL_SUFFIX: &'static str = ".so";
+    pub const DLL_EXTENSION: &'static str = "so";
+    pub const EXE_SUFFIX: &'static str = "";
+    pub const EXE_EXTENSION: &'static str = "";
+}
+
 #[cfg(target_arch = "x86")]
 mod arch {
     pub const ARCH: &'static str = "x86";
@@ -928,6 +939,11 @@ mod arch {
     pub const ARCH: &'static str = "mips";
 }
 
+#[cfg(target_arch = "mips64")]
+mod arch {
+    pub const ARCH: &'static str = "mips64";
+}
+
 #[cfg(target_arch = "powerpc")]
 mod arch {
     pub const ARCH: &'static str = "powerpc";
@@ -936,6 +952,11 @@ mod arch {
 #[cfg(target_arch = "powerpc64")]
 mod arch {
     pub const ARCH: &'static str = "powerpc64";
+}
+
+#[cfg(target_arch = "s390x")]
+mod arch {
+    pub const ARCH: &'static str = "s390x";
 }
 
 #[cfg(target_arch = "le32")]
@@ -950,7 +971,6 @@ mod arch {
 
 #[cfg(test)]
 mod tests {
-    use prelude::v1::*;
     use super::*;
 
     use iter::repeat;

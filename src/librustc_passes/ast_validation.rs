@@ -20,6 +20,7 @@ use rustc::lint;
 use rustc::session::Session;
 use syntax::ast::*;
 use syntax::attr;
+use syntax::codemap::Spanned;
 use syntax::parse::token::{self, keywords};
 use syntax::visit::{self, Visitor};
 use syntax_pos::Span;
@@ -52,8 +53,11 @@ impl<'a> AstValidator<'a> {
                                            span,
                                            E0449,
                                            "unnecessary visibility qualifier");
+            if vis == &Visibility::Public {
+                err.span_label(span, &format!("`pub` not needed here"));
+            }
             if let Some(note) = note {
-                err.span_note(span, note);
+                err.note(note);
             }
             err.emit();
         }
@@ -67,6 +71,18 @@ impl<'a> AstValidator<'a> {
                 PatKind::Ident(..) => report_err(arg.pat.span, true),
                 _ => report_err(arg.pat.span, false),
             }
+        }
+    }
+
+    fn check_trait_fn_not_const(&self, constness: Spanned<Constness>) {
+        match constness.node {
+            Constness::Const => {
+                struct_span_err!(self.session, constness.span, E0379,
+                                 "trait fns cannot be declared const")
+                    .span_label(constness.span, &format!("trait fns cannot be const"))
+                    .emit();
+            }
+            _ => {}
         }
     }
 }
@@ -85,10 +101,10 @@ impl<'a> Visitor for AstValidator<'a> {
 
     fn visit_expr(&mut self, expr: &Expr) {
         match expr.node {
-            ExprKind::While(_, _, Some(ident)) |
+            ExprKind::While(.., Some(ident)) |
             ExprKind::Loop(_, Some(ident)) |
-            ExprKind::WhileLet(_, _, _, Some(ident)) |
-            ExprKind::ForLoop(_, _, _, Some(ident)) |
+            ExprKind::WhileLet(.., Some(ident)) |
+            ExprKind::ForLoop(.., Some(ident)) |
             ExprKind::Break(Some(ident)) |
             ExprKind::Continue(Some(ident)) => {
                 self.check_label(ident.node, ident.span, expr.id);
@@ -142,13 +158,16 @@ impl<'a> Visitor for AstValidator<'a> {
                         .span_err(path.span, "type or lifetime parameters in import path");
                 }
             }
-            ItemKind::Impl(_, _, _, Some(..), _, ref impl_items) => {
+            ItemKind::Impl(.., Some(..), _, ref impl_items) => {
                 self.invalid_visibility(&item.vis, item.span, None);
                 for impl_item in impl_items {
                     self.invalid_visibility(&impl_item.vis, impl_item.span, None);
+                    if let ImplItemKind::Method(ref sig, _) = impl_item.node {
+                        self.check_trait_fn_not_const(sig.constness);
+                    }
                 }
             }
-            ItemKind::Impl(_, _, _, None, _, _) => {
+            ItemKind::Impl(.., None, _, _) => {
                 self.invalid_visibility(&item.vis,
                                         item.span,
                                         Some("place qualifiers on individual impl items instead"));
@@ -169,9 +188,26 @@ impl<'a> Visitor for AstValidator<'a> {
                     }
                 }
             }
+            ItemKind::Trait(.., ref trait_items) => {
+                for trait_item in trait_items {
+                    if let TraitItemKind::Method(ref sig, _) = trait_item.node {
+                        self.check_trait_fn_not_const(sig.constness);
+                    }
+                }
+            }
             ItemKind::Mod(_) => {
                 // Ensure that `path` attributes on modules are recorded as used (c.f. #35584).
                 attr::first_attr_value_str_by_name(&item.attrs, "path");
+            }
+            ItemKind::Union(ref vdata, _) => {
+                if !vdata.is_struct() {
+                    self.err_handler().span_err(item.span,
+                                                "tuple and unit unions are not permitted");
+                }
+                if vdata.fields().len() == 0 {
+                    self.err_handler().span_err(item.span,
+                                                "unions cannot have zero fields");
+                }
             }
             _ => {}
         }

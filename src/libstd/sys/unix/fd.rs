@@ -10,8 +10,6 @@
 
 #![unstable(reason = "not public", issue = "0", feature = "fd")]
 
-use prelude::v1::*;
-
 use io::{self, Read};
 use libc::{self, c_int, size_t, c_void};
 use mem;
@@ -61,14 +59,20 @@ impl FileDesc {
         Ok(ret as usize)
     }
 
-    #[cfg(not(any(target_env = "newlib", target_os = "solaris", target_os = "emscripten")))]
+    #[cfg(not(any(target_env = "newlib",
+                  target_os = "solaris",
+                  target_os = "emscripten",
+                  target_os = "haiku")))]
     pub fn set_cloexec(&self) -> io::Result<()> {
         unsafe {
             cvt(libc::ioctl(self.fd, libc::FIOCLEX))?;
             Ok(())
         }
     }
-    #[cfg(any(target_env = "newlib", target_os = "solaris", target_os = "emscripten"))]
+    #[cfg(any(target_env = "newlib",
+              target_os = "solaris",
+              target_os = "emscripten",
+              target_os = "haiku"))]
     pub fn set_cloexec(&self) -> io::Result<()> {
         unsafe {
             let previous = cvt(libc::fcntl(self.fd, libc::F_GETFD))?;
@@ -106,9 +110,9 @@ impl FileDesc {
         // resolve so we at least compile this.
         //
         // [1]: http://comments.gmane.org/gmane.linux.lib.musl.general/2963
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "haiku"))]
         use libc::F_DUPFD as F_DUPFD_CLOEXEC;
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(any(target_os = "android", target_os="haiku")))]
         use libc::F_DUPFD_CLOEXEC;
 
         let make_filedesc = |fd| {

@@ -38,21 +38,27 @@ fn main() {
     // is passed (a bit janky...)
     let target = args.windows(2).find(|w| &*w[0] == "--target")
                                 .and_then(|w| w[1].to_str());
+    let version = args.iter().find(|w| &**w == "-vV");
 
     // Build scripts always use the snapshot compiler which is guaranteed to be
     // able to produce an executable, whereas intermediate compilers may not
     // have the standard library built yet and may not be able to produce an
     // executable. Otherwise we just use the standard compiler we're
     // bootstrapping with.
-    let (rustc, libdir) = if target.is_none() {
+    //
+    // Also note that cargo will detect the version of the compiler to trigger
+    // a rebuild when the compiler changes. If this happens, we want to make
+    // sure to use the actual compiler instead of the snapshot compiler becase
+    // that's the one that's actually changing.
+    let (rustc, libdir) = if target.is_none() && version.is_none() {
         ("RUSTC_SNAPSHOT", "RUSTC_SNAPSHOT_LIBDIR")
     } else {
         ("RUSTC_REAL", "RUSTC_LIBDIR")
     };
-    let stage = env::var("RUSTC_STAGE").unwrap();
+    let stage = env::var("RUSTC_STAGE").expect("RUSTC_STAGE was not set");
 
-    let rustc = env::var_os(rustc).unwrap();
-    let libdir = env::var_os(libdir).unwrap();
+    let rustc = env::var_os(rustc).unwrap_or_else(|| panic!("{:?} was not set", rustc));
+    let libdir = env::var_os(libdir).unwrap_or_else(|| panic!("{:?} was not set", libdir));
     let mut dylib_path = bootstrap::util::dylib_path();
     dylib_path.insert(0, PathBuf::from(libdir));
 
@@ -65,7 +71,7 @@ fn main() {
     if let Some(target) = target {
         // The stage0 compiler has a special sysroot distinct from what we
         // actually downloaded, so we just always pass the `--sysroot` option.
-        cmd.arg("--sysroot").arg(env::var_os("RUSTC_SYSROOT").unwrap());
+        cmd.arg("--sysroot").arg(env::var_os("RUSTC_SYSROOT").expect("RUSTC_SYSROOT was not set"));
 
         // When we build Rust dylibs they're all intended for intermediate
         // usage, so make sure we pass the -Cprefer-dynamic flag instead of

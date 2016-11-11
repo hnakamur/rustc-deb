@@ -119,42 +119,64 @@
 //! `Cell<T>`.
 //!
 //! ```
+//! #![feature(core_intrinsics)]
+//! #![feature(shared)]
 //! use std::cell::Cell;
+//! use std::ptr::Shared;
+//! use std::intrinsics::abort;
+//! use std::intrinsics::assume;
 //!
-//! struct Rc<T> {
-//!     ptr: *mut RcBox<T>
+//! struct Rc<T: ?Sized> {
+//!     ptr: Shared<RcBox<T>>
 //! }
 //!
-//! struct RcBox<T> {
-//! # #[allow(dead_code)]
+//! struct RcBox<T: ?Sized> {
+//!     strong: Cell<usize>,
+//!     refcount: Cell<usize>,
 //!     value: T,
-//!     refcount: Cell<usize>
 //! }
 //!
-//! impl<T> Clone for Rc<T> {
+//! impl<T: ?Sized> Clone for Rc<T> {
 //!     fn clone(&self) -> Rc<T> {
-//!         unsafe {
-//!             (*self.ptr).refcount.set((*self.ptr).refcount.get() + 1);
-//!             Rc { ptr: self.ptr }
-//!         }
+//!         self.inc_strong();
+//!         Rc { ptr: self.ptr }
 //!     }
+//! }
+//!
+//! trait RcBoxPtr<T: ?Sized> {
+//!
+//!     fn inner(&self) -> &RcBox<T>;
+//!
+//!     fn strong(&self) -> usize {
+//!         self.inner().strong.get()
+//!     }
+//!
+//!     fn inc_strong(&self) {
+//!         self.inner()
+//!             .strong
+//!             .set(self.strong()
+//!                      .checked_add(1)
+//!                      .unwrap_or_else(|| unsafe { abort() }));
+//!     }
+//! }
+//!
+//! impl<T: ?Sized> RcBoxPtr<T> for Rc<T> {
+//!    fn inner(&self) -> &RcBox<T> {
+//!        unsafe {
+//!            assume(!(*(&self.ptr as *const _ as *const *const ())).is_null());
+//!            &(**self.ptr)
+//!        }
+//!    }
 //! }
 //! ```
 //!
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use clone::Clone;
-use cmp::{PartialEq, Eq, PartialOrd, Ord, Ordering};
-use convert::From;
-use default::Default;
+use cmp::Ordering;
 use fmt::{self, Debug, Display};
-use marker::{Copy, PhantomData, Send, Sync, Sized, Unsize};
-use ops::{Deref, DerefMut, Drop, FnOnce, CoerceUnsized};
-use option::Option;
-use option::Option::{None, Some};
-use result::Result;
-use result::Result::{Ok, Err};
+use marker::Unsize;
+use ops::{Deref, DerefMut, CoerceUnsized};
 
 /// A mutable memory location that admits only `Copy` data.
 ///
@@ -295,6 +317,7 @@ impl<T:Copy> Clone for Cell<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T:Default + Copy> Default for Cell<T> {
+    /// Creates a `Cell<T>`, with the `Default` value for T.
     #[inline]
     fn default() -> Cell<T> {
         Cell::new(Default::default())
@@ -355,6 +378,9 @@ impl<T: Copy> From<T> for Cell<T> {
     }
 }
 
+#[unstable(feature = "coerce_unsized", issue = "27732")]
+impl<T: CoerceUnsized<U>, U> CoerceUnsized<Cell<U>> for Cell<T> {}
+
 /// A mutable memory location with dynamically checked borrow rules
 ///
 /// See the [module-level documentation](index.html) for more.
@@ -377,40 +403,40 @@ pub enum BorrowState {
 }
 
 /// An error returned by [`RefCell::try_borrow`](struct.RefCell.html#method.try_borrow).
-#[unstable(feature = "try_borrow", issue = "35070")]
-pub struct BorrowError<'a, T: 'a + ?Sized> {
-    marker: PhantomData<&'a RefCell<T>>,
+#[stable(feature = "try_borrow", since = "1.13.0")]
+pub struct BorrowError {
+    _private: (),
 }
 
-#[unstable(feature = "try_borrow", issue = "35070")]
-impl<'a, T: ?Sized> Debug for BorrowError<'a, T> {
+#[stable(feature = "try_borrow", since = "1.13.0")]
+impl Debug for BorrowError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("BorrowError").finish()
     }
 }
 
-#[unstable(feature = "try_borrow", issue = "35070")]
-impl<'a, T: ?Sized> Display for BorrowError<'a, T> {
+#[stable(feature = "try_borrow", since = "1.13.0")]
+impl Display for BorrowError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         Display::fmt("already mutably borrowed", f)
     }
 }
 
 /// An error returned by [`RefCell::try_borrow_mut`](struct.RefCell.html#method.try_borrow_mut).
-#[unstable(feature = "try_borrow", issue = "35070")]
-pub struct BorrowMutError<'a, T: 'a + ?Sized> {
-    marker: PhantomData<&'a RefCell<T>>,
+#[stable(feature = "try_borrow", since = "1.13.0")]
+pub struct BorrowMutError {
+    _private: (),
 }
 
-#[unstable(feature = "try_borrow", issue = "35070")]
-impl<'a, T: ?Sized> Debug for BorrowMutError<'a, T> {
+#[stable(feature = "try_borrow", since = "1.13.0")]
+impl Debug for BorrowMutError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("BorrowMutError").finish()
     }
 }
 
-#[unstable(feature = "try_borrow", issue = "35070")]
-impl<'a, T: ?Sized> Display for BorrowMutError<'a, T> {
+#[stable(feature = "try_borrow", since = "1.13.0")]
+impl Display for BorrowMutError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         Display::fmt("already borrowed", f)
     }
@@ -547,8 +573,6 @@ impl<T: ?Sized> RefCell<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(try_borrow)]
-    ///
     /// use std::cell::RefCell;
     ///
     /// let c = RefCell::new(5);
@@ -563,15 +587,15 @@ impl<T: ?Sized> RefCell<T> {
     ///     assert!(c.try_borrow().is_ok());
     /// }
     /// ```
-    #[unstable(feature = "try_borrow", issue = "35070")]
+    #[stable(feature = "try_borrow", since = "1.13.0")]
     #[inline]
-    pub fn try_borrow(&self) -> Result<Ref<T>, BorrowError<T>> {
+    pub fn try_borrow(&self) -> Result<Ref<T>, BorrowError> {
         match BorrowRef::new(&self.borrow) {
             Some(b) => Ok(Ref {
                 value: unsafe { &*self.value.get() },
                 borrow: b,
             }),
-            None => Err(BorrowError { marker: PhantomData }),
+            None => Err(BorrowError { _private: () }),
         }
     }
 
@@ -628,8 +652,6 @@ impl<T: ?Sized> RefCell<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(try_borrow)]
-    ///
     /// use std::cell::RefCell;
     ///
     /// let c = RefCell::new(5);
@@ -641,15 +663,15 @@ impl<T: ?Sized> RefCell<T> {
     ///
     /// assert!(c.try_borrow_mut().is_ok());
     /// ```
-    #[unstable(feature = "try_borrow", issue = "35070")]
+    #[stable(feature = "try_borrow", since = "1.13.0")]
     #[inline]
-    pub fn try_borrow_mut(&self) -> Result<RefMut<T>, BorrowMutError<T>> {
+    pub fn try_borrow_mut(&self) -> Result<RefMut<T>, BorrowMutError> {
         match BorrowRefMut::new(&self.borrow) {
             Some(b) => Ok(RefMut {
                 value: unsafe { &mut *self.value.get() },
                 borrow: b,
             }),
-            None => Err(BorrowMutError { marker: PhantomData }),
+            None => Err(BorrowMutError { _private: () }),
         }
     }
 
@@ -733,6 +755,7 @@ impl<T: Clone> Clone for RefCell<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T:Default> Default for RefCell<T> {
+    /// Creates a `RefCell<T>`, with the `Default` value for T.
     #[inline]
     fn default() -> RefCell<T> {
         RefCell::new(Default::default())
@@ -792,6 +815,9 @@ impl<T> From<T> for RefCell<T> {
         RefCell::new(t)
     }
 }
+
+#[unstable(feature = "coerce_unsized", issue = "27732")]
+impl<T: CoerceUnsized<U>, U> CoerceUnsized<RefCell<U>> for RefCell<T> {}
 
 struct BorrowRef<'b> {
     borrow: &'b Cell<BorrowFlag>,
@@ -1111,6 +1137,7 @@ impl<T: ?Sized> UnsafeCell<T> {
 
 #[stable(feature = "unsafe_cell_default", since = "1.9.0")]
 impl<T: Default> Default for UnsafeCell<T> {
+    /// Creates an `UnsafeCell`, with the `Default` value for T.
     fn default() -> UnsafeCell<T> {
         UnsafeCell::new(Default::default())
     }
@@ -1121,4 +1148,14 @@ impl<T> From<T> for UnsafeCell<T> {
     fn from(t: T) -> UnsafeCell<T> {
         UnsafeCell::new(t)
     }
+}
+
+#[unstable(feature = "coerce_unsized", issue = "27732")]
+impl<T: CoerceUnsized<U>, U> CoerceUnsized<UnsafeCell<U>> for UnsafeCell<T> {}
+
+#[allow(unused)]
+fn assert_coerce_unsized(a: UnsafeCell<&i32>, b: Cell<&i32>, c: RefCell<&i32>) {
+    let _: UnsafeCell<&Send> = a;
+    let _: Cell<&Send> = b;
+    let _: RefCell<&Send> = c;
 }

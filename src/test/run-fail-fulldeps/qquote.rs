@@ -25,11 +25,11 @@ use syntax_pos::DUMMY_SP;
 
 fn main() {
     let ps = syntax::parse::ParseSess::new();
-    let mut loader = syntax::ext::base::DummyMacroLoader;
+    let mut resolver = syntax::ext::base::DummyResolver;
     let mut cx = syntax::ext::base::ExtCtxt::new(
         &ps, vec![],
         syntax::ext::expand::ExpansionConfig::default("qquote".to_string()),
-        &mut loader);
+        &mut resolver);
     cx.bt_push(syntax::codemap::ExpnInfo {
         call_site: DUMMY_SP,
         callee: syntax::codemap::NameAndSpan {
@@ -40,8 +40,10 @@ fn main() {
     });
     let cx = &mut cx;
 
+    println!("{}", pprust::expr_to_string(&*quote_expr!(&cx, 23)));
     assert_eq!(pprust::expr_to_string(&*quote_expr!(&cx, 23)), "23");
 
     let expr = quote_expr!(&cx, let x isize = 20;);
+    println!("{}", pprust::expr_to_string(&*expr));
     assert_eq!(pprust::expr_to_string(&*expr), "let x isize = 20;");
 }

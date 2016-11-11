@@ -17,7 +17,6 @@ use rustc::hir::def_id::DefId;
 use rustc::traits;
 use rustc::mir::mir_map::MirMap;
 use rustc::mir::repr as mir;
-use adt;
 use base;
 use builder::Builder;
 use common::BuilderRef_res;
@@ -30,7 +29,7 @@ use monomorphize::Instance;
 use partitioning::CodegenUnit;
 use trans_item::TransItem;
 use type_::{Type, TypeNames};
-use rustc::ty::subst::{Substs, VecPerParamSpace};
+use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty, TyCtxt};
 use session::config::NoDebugInfo;
 use session::Session;
@@ -53,9 +52,7 @@ pub struct Stats {
     pub n_glues_created: Cell<usize>,
     pub n_null_glues: Cell<usize>,
     pub n_real_glues: Cell<usize>,
-    pub n_fallback_instantiations: Cell<usize>,
     pub n_fns: Cell<usize>,
-    pub n_monos: Cell<usize>,
     pub n_inlines: Cell<usize>,
     pub n_closures: Cell<usize>,
     pub n_llvm_insns: Cell<usize>,
@@ -79,7 +76,6 @@ pub struct SharedCrateContext<'a, 'tcx: 'a> {
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     stats: Stats,
     check_overflow: bool,
-    check_drop_flag_for_sanity: bool,
     mir_map: &'a MirMap<'tcx>,
     mir_cache: RefCell<DepTrackingMap<MirCache<'tcx>>>,
 
@@ -87,6 +83,7 @@ pub struct SharedCrateContext<'a, 'tcx: 'a> {
 
     translation_items: RefCell<FnvHashSet<TransItem<'tcx>>>,
     trait_cache: RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>>,
+    project_cache: RefCell<DepTrackingMap<ProjectionCache<'tcx>>>,
 }
 
 /// The local portion of a `CrateContext`.  There is one `LocalCrateContext`
@@ -104,7 +101,6 @@ pub struct LocalCrateContext<'tcx> {
     drop_glues: RefCell<FnvHashMap<DropGlueKind<'tcx>, (ValueRef, FnType)>>,
     /// Cache instances of monomorphic and polymorphic items
     instances: RefCell<FnvHashMap<Instance<'tcx>, ValueRef>>,
-    monomorphizing: RefCell<DefIdMap<usize>>,
     /// Cache generated vtables
     vtables: RefCell<FnvHashMap<ty::PolyTraitRef<'tcx>, ValueRef>>,
     /// Cache of constant strings,
@@ -145,7 +141,6 @@ pub struct LocalCrateContext<'tcx> {
 
     lltypes: RefCell<FnvHashMap<Ty<'tcx>, Type>>,
     llsizingtypes: RefCell<FnvHashMap<Ty<'tcx>, Type>>,
-    adt_reprs: RefCell<FnvHashMap<Ty<'tcx>, Rc<adt::Repr<'tcx>>>>,
     type_hashcodes: RefCell<FnvHashMap<Ty<'tcx>, String>>,
     int_type: Type,
     opaque_vec_type: Type,
@@ -196,6 +191,42 @@ impl<'tcx> DepTrackingMapConfig for MirCache<'tcx> {
     type Value = Rc<mir::Mir<'tcx>>;
     fn to_dep_node(key: &DefId) -> DepNode<DefId> {
         DepNode::Mir(*key)
+    }
+}
+
+// # Global Cache
+
+pub struct ProjectionCache<'gcx> {
+    data: PhantomData<&'gcx ()>
+}
+
+impl<'gcx> DepTrackingMapConfig for ProjectionCache<'gcx> {
+    type Key = Ty<'gcx>;
+    type Value = Ty<'gcx>;
+    fn to_dep_node(key: &Self::Key) -> DepNode<DefId> {
+        // Ideally, we'd just put `key` into the dep-node, but we
+        // can't put full types in there. So just collect up all the
+        // def-ids of structs/enums as well as any traits that we
+        // project out of. It doesn't matter so much what we do here,
+        // except that if we are too coarse, we'll create overly
+        // coarse edges between impls and the trans. For example, if
+        // we just used the def-id of things we are projecting out of,
+        // then the key for `<Foo as SomeTrait>::T` and `<Bar as
+        // SomeTrait>::T` would both share a dep-node
+        // (`TraitSelect(SomeTrait)`), and hence the impls for both
+        // `Foo` and `Bar` would be considered inputs. So a change to
+        // `Bar` would affect things that just normalized `Foo`.
+        // Anyway, this heuristic is not ideal, but better than
+        // nothing.
+        let def_ids: Vec<DefId> =
+            key.walk()
+               .filter_map(|t| match t.sty {
+                   ty::TyAdt(adt_def, _) => Some(adt_def.did),
+                   ty::TyProjection(ref proj) => Some(proj.trait_ref.def_id),
+                   _ => None,
+               })
+               .collect();
+        DepNode::TraitSelect(def_ids)
     }
 }
 
@@ -424,8 +455,7 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
                symbol_hasher: Sha256,
                link_meta: LinkMeta,
                reachable: NodeSet,
-               check_overflow: bool,
-               check_drop_flag_for_sanity: bool)
+               check_overflow: bool)
                -> SharedCrateContext<'b, 'tcx> {
         let (metadata_llcx, metadata_llmod) = unsafe {
             create_context_and_module(&tcx.sess, "metadata")
@@ -490,9 +520,7 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
                 n_glues_created: Cell::new(0),
                 n_null_glues: Cell::new(0),
                 n_real_glues: Cell::new(0),
-                n_fallback_instantiations: Cell::new(0),
                 n_fns: Cell::new(0),
-                n_monos: Cell::new(0),
                 n_inlines: Cell::new(0),
                 n_closures: Cell::new(0),
                 n_llvm_insns: Cell::new(0),
@@ -500,10 +528,10 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
                 fn_stats: RefCell::new(Vec::new()),
             },
             check_overflow: check_overflow,
-            check_drop_flag_for_sanity: check_drop_flag_for_sanity,
             use_dll_storage_attrs: use_dll_storage_attrs,
             translation_items: RefCell::new(FnvHashSet()),
             trait_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
+            project_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
         }
     }
 
@@ -525,6 +553,10 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
 
     pub fn trait_cache(&self) -> &RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>> {
         &self.trait_cache
+    }
+
+    pub fn project_cache(&self) -> &RefCell<DepTrackingMap<ProjectionCache<'tcx>>> {
+        &self.project_cache
     }
 
     pub fn link_meta<'a>(&'a self) -> &'a LinkMeta {
@@ -571,16 +603,11 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
     /// Given the def-id of some item that has no type parameters, make
     /// a suitable "empty substs" for it.
     pub fn empty_substs_for_def_id(&self, item_def_id: DefId) -> &'tcx Substs<'tcx> {
-        let scheme = self.tcx().lookup_item_type(item_def_id);
-        self.empty_substs_for_scheme(&scheme)
-    }
-
-    pub fn empty_substs_for_scheme(&self, scheme: &ty::TypeScheme<'tcx>)
-                                   -> &'tcx Substs<'tcx> {
-        assert!(scheme.generics.types.is_empty());
-        self.tcx().mk_substs(
-            Substs::new(VecPerParamSpace::empty(),
-                        scheme.generics.regions.map(|_| ty::ReErased)))
+        Substs::for_item(self.tcx(), item_def_id,
+                         |_, _| self.tcx().mk_region(ty::ReErased),
+                         |_, _| {
+            bug!("empty_substs_for_def_id: {:?} has type parameters", item_def_id)
+        })
     }
 
     pub fn symbol_hasher(&self) -> &RefCell<Sha256> {
@@ -636,7 +663,6 @@ impl<'tcx> LocalCrateContext<'tcx> {
                 fn_pointer_shims: RefCell::new(FnvHashMap()),
                 drop_glues: RefCell::new(FnvHashMap()),
                 instances: RefCell::new(FnvHashMap()),
-                monomorphizing: RefCell::new(DefIdMap()),
                 vtables: RefCell::new(FnvHashMap()),
                 const_cstr_cache: RefCell::new(FnvHashMap()),
                 const_unsized: RefCell::new(FnvHashMap()),
@@ -649,7 +675,6 @@ impl<'tcx> LocalCrateContext<'tcx> {
                 statics_to_rauw: RefCell::new(Vec::new()),
                 lltypes: RefCell::new(FnvHashMap()),
                 llsizingtypes: RefCell::new(FnvHashMap()),
-                adt_reprs: RefCell::new(FnvHashMap()),
                 type_hashcodes: RefCell::new(FnvHashMap()),
                 int_type: Type::from_ref(ptr::null_mut()),
                 opaque_vec_type: Type::from_ref(ptr::null_mut()),
@@ -840,10 +865,6 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         &self.local().instances
     }
 
-    pub fn monomorphizing<'a>(&'a self) -> &'a RefCell<DefIdMap<usize>> {
-        &self.local().monomorphizing
-    }
-
     pub fn vtables<'a>(&'a self) -> &'a RefCell<FnvHashMap<ty::PolyTraitRef<'tcx>, ValueRef>> {
         &self.local().vtables
     }
@@ -892,10 +913,6 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
 
     pub fn llsizingtypes<'a>(&'a self) -> &'a RefCell<FnvHashMap<Ty<'tcx>, Type>> {
         &self.local().llsizingtypes
-    }
-
-    pub fn adt_reprs<'a>(&'a self) -> &'a RefCell<FnvHashMap<Ty<'tcx>, Rc<adt::Repr<'tcx>>>> {
-        &self.local().adt_reprs
     }
 
     pub fn symbol_hasher<'a>(&'a self) -> &'a RefCell<Sha256> {
@@ -967,15 +984,20 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         TypeOfDepthLock(self.local())
     }
 
-    pub fn check_overflow(&self) -> bool {
-        self.shared.check_overflow
+    pub fn layout_of(&self, ty: Ty<'tcx>) -> &'tcx ty::layout::Layout {
+        self.tcx().infer_ctxt(None, None, traits::Reveal::All).enter(|infcx| {
+            ty.layout(&infcx).unwrap_or_else(|e| {
+                match e {
+                    ty::layout::LayoutError::SizeOverflow(_) =>
+                        self.sess().fatal(&e.to_string()),
+                    _ => bug!("failed to get layout for `{}`: {}", ty, e)
+                }
+            })
+        })
     }
 
-    pub fn check_drop_flag_for_sanity(&self) -> bool {
-        // This controls whether we emit a conditional llvm.debugtrap
-        // guarded on whether the dropflag is one of its (two) valid
-        // values.
-        self.shared.check_drop_flag_for_sanity
+    pub fn check_overflow(&self) -> bool {
+        self.shared.check_overflow
     }
 
     pub fn use_dll_storage_attrs(&self) -> bool {
@@ -998,11 +1020,6 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
     /// a suitable "empty substs" for it.
     pub fn empty_substs_for_def_id(&self, item_def_id: DefId) -> &'tcx Substs<'tcx> {
         self.shared().empty_substs_for_def_id(item_def_id)
-    }
-
-    pub fn empty_substs_for_scheme(&self, scheme: &ty::TypeScheme<'tcx>)
-                                   -> &'tcx Substs<'tcx> {
-        self.shared().empty_substs_for_scheme(scheme)
     }
 }
 

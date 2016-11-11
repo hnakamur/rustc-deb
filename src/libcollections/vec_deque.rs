@@ -20,10 +20,11 @@
 
 use core::cmp::Ordering;
 use core::fmt;
-use core::iter::{repeat, FromIterator};
+use core::iter::{repeat, FromIterator, FusedIterator};
 use core::mem;
 use core::ops::{Index, IndexMut};
 use core::ptr;
+use core::ptr::Shared;
 use core::slice;
 
 use core::hash::{Hash, Hasher};
@@ -83,6 +84,7 @@ impl<T> Drop for VecDeque<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Default for VecDeque<T> {
+    /// Creates an empty `VecDeque<T>`.
     #[inline]
     fn default() -> VecDeque<T> {
         VecDeque::new()
@@ -724,18 +726,18 @@ impl<T> VecDeque<T> {
     /// ```
     /// use std::collections::VecDeque;
     ///
-    /// let mut vector: VecDeque<u32> = VecDeque::new();
+    /// let mut vector = VecDeque::new();
     ///
     /// vector.push_back(0);
     /// vector.push_back(1);
     /// vector.push_back(2);
     ///
-    /// assert_eq!(vector.as_slices(), (&[0u32, 1, 2] as &[u32], &[] as &[u32]));
+    /// assert_eq!(vector.as_slices(), (&[0, 1, 2][..], &[][..]));
     ///
     /// vector.push_front(10);
     /// vector.push_front(9);
     ///
-    /// assert_eq!(vector.as_slices(), (&[9u32, 10] as &[u32], &[0u32, 1, 2] as &[u32]));
+    /// assert_eq!(vector.as_slices(), (&[9, 10][..], &[0, 1, 2][..]));
     /// ```
     #[inline]
     #[stable(feature = "deque_extras_15", since = "1.5.0")]
@@ -762,7 +764,7 @@ impl<T> VecDeque<T> {
     /// ```
     /// use std::collections::VecDeque;
     ///
-    /// let mut vector: VecDeque<u32> = VecDeque::new();
+    /// let mut vector = VecDeque::new();
     ///
     /// vector.push_back(0);
     /// vector.push_back(1);
@@ -772,7 +774,7 @@ impl<T> VecDeque<T> {
     ///
     /// vector.as_mut_slices().0[0] = 42;
     /// vector.as_mut_slices().1[0] = 24;
-    /// assert_eq!(vector.as_slices(), (&[42u32, 10] as &[u32], &[24u32, 1] as &[u32]));
+    /// assert_eq!(vector.as_slices(), (&[42, 10][..], &[24, 1][..]));
     /// ```
     #[inline]
     #[stable(feature = "deque_extras_15", since = "1.5.0")]
@@ -903,7 +905,7 @@ impl<T> VecDeque<T> {
         self.head = drain_tail;
 
         Drain {
-            deque: self as *mut _,
+            deque: unsafe { Shared::new(self as *mut _) },
             after_tail: drain_head,
             after_head: head,
             iter: Iter {
@@ -1890,6 +1892,10 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T> FusedIterator for Iter<'a, T> {}
+
+
 /// `VecDeque` mutable iterator.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct IterMut<'a, T: 'a> {
@@ -1942,6 +1948,9 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T> FusedIterator for IterMut<'a, T> {}
+
 /// A by-value VecDeque iterator
 #[derive(Clone)]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1976,13 +1985,16 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ExactSizeIterator for IntoIter<T> {}
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<T> FusedIterator for IntoIter<T> {}
+
 /// A draining VecDeque iterator
 #[stable(feature = "drain", since = "1.6.0")]
 pub struct Drain<'a, T: 'a> {
     after_tail: usize,
     after_head: usize,
     iter: Iter<'a, T>,
-    deque: *mut VecDeque<T>,
+    deque: Shared<VecDeque<T>>,
 }
 
 #[stable(feature = "drain", since = "1.6.0")]
@@ -1995,7 +2007,7 @@ impl<'a, T: 'a> Drop for Drain<'a, T> {
     fn drop(&mut self) {
         for _ in self.by_ref() {}
 
-        let source_deque = unsafe { &mut *self.deque };
+        let source_deque = unsafe { &mut **self.deque };
 
         // T = source_deque_tail; H = source_deque_head; t = drain_tail; h = drain_head
         //
@@ -2064,6 +2076,9 @@ impl<'a, T: 'a> DoubleEndedIterator for Drain<'a, T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T: 'a> ExactSizeIterator for Drain<'a, T> {}
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T: 'a> FusedIterator for Drain<'a, T> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<A: PartialEq> PartialEq for VecDeque<A> {
@@ -2318,9 +2333,6 @@ impl<T> From<VecDeque<T>> for Vec<T> {
 
 #[cfg(test)]
 mod tests {
-    use core::iter::Iterator;
-    use core::option::Option::Some;
-
     use test;
 
     use super::VecDeque;

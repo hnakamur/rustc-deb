@@ -126,7 +126,7 @@ impl<'a, 'ast: 'a> CheckItemRecursionVisitor<'a, 'ast> {
             idstack: Vec::new(),
         }
     }
-    fn with_item_id_pushed<F>(&mut self, id: ast::NodeId, f: F)
+    fn with_item_id_pushed<F>(&mut self, id: ast::NodeId, f: F, span: Span)
         where F: Fn(&mut Self)
     {
         if self.idstack.iter().any(|&x| x == id) {
@@ -143,14 +143,16 @@ impl<'a, 'ast: 'a> CheckItemRecursionVisitor<'a, 'ast> {
             });
             if any_static {
                 if !self.sess.features.borrow().static_recursion {
-                    emit_feature_err(&self.sess.parse_sess.span_diagnostic,
+                    emit_feature_err(&self.sess.parse_sess,
                                      "static_recursion",
                                      *self.root_span,
                                      GateIssue::Language,
                                      "recursive static");
                 }
             } else {
-                span_err!(self.sess, *self.root_span, E0265, "recursive constant");
+                struct_span_err!(self.sess, span, E0265, "recursive constant")
+                    .span_label(span, &format!("recursion not allowed in constant"))
+                    .emit();
             }
             return;
         }
@@ -203,7 +205,7 @@ impl<'a, 'ast: 'a> CheckItemRecursionVisitor<'a, 'ast> {
 
 impl<'a, 'ast: 'a> Visitor<'ast> for CheckItemRecursionVisitor<'a, 'ast> {
     fn visit_item(&mut self, it: &'ast hir::Item) {
-        self.with_item_id_pushed(it.id, |v| intravisit::walk_item(v, it));
+        self.with_item_id_pushed(it.id, |v| intravisit::walk_item(v, it), it.span);
     }
 
     fn visit_enum_def(&mut self,
@@ -233,16 +235,16 @@ impl<'a, 'ast: 'a> Visitor<'ast> for CheckItemRecursionVisitor<'a, 'ast> {
         // If `maybe_expr` is `None`, that's because no discriminant is
         // specified that affects this variant. Thus, no risk of recursion.
         if let Some(expr) = maybe_expr {
-            self.with_item_id_pushed(expr.id, |v| intravisit::walk_expr(v, expr));
+            self.with_item_id_pushed(expr.id, |v| intravisit::walk_expr(v, expr), expr.span);
         }
     }
 
     fn visit_trait_item(&mut self, ti: &'ast hir::TraitItem) {
-        self.with_item_id_pushed(ti.id, |v| intravisit::walk_trait_item(v, ti));
+        self.with_item_id_pushed(ti.id, |v| intravisit::walk_trait_item(v, ti), ti.span);
     }
 
     fn visit_impl_item(&mut self, ii: &'ast hir::ImplItem) {
-        self.with_item_id_pushed(ii.id, |v| intravisit::walk_impl_item(v, ii));
+        self.with_item_id_pushed(ii.id, |v| intravisit::walk_impl_item(v, ii), ii.span);
     }
 
     fn visit_expr(&mut self, e: &'ast hir::Expr) {
@@ -270,15 +272,13 @@ impl<'a, 'ast: 'a> Visitor<'ast> for CheckItemRecursionVisitor<'a, 'ast> {
                     // affect the specific variant used, but we need to check
                     // the whole enum definition to see what expression that
                     // might be (if any).
-                    Some(Def::Variant(enum_id, variant_id)) => {
-                        if let Some(enum_node_id) = self.ast_map.as_local_node_id(enum_id) {
-                            if let hir::ItemEnum(ref enum_def, ref generics) = self.ast_map
-                                .expect_item(enum_node_id)
-                                .node {
+                    Some(Def::Variant(variant_id)) => {
+                        if let Some(variant_id) = self.ast_map.as_local_node_id(variant_id) {
+                            let variant = self.ast_map.expect_variant(variant_id);
+                            let enum_id = self.ast_map.get_parent(variant_id);
+                            let enum_item = self.ast_map.expect_item(enum_id);
+                            if let hir::ItemEnum(ref enum_def, ref generics) = enum_item.node {
                                 self.populate_enum_discriminants(enum_def);
-                                let enum_id = self.ast_map.as_local_node_id(enum_id).unwrap();
-                                let variant_id = self.ast_map.as_local_node_id(variant_id).unwrap();
-                                let variant = self.ast_map.expect_variant(variant_id);
                                 self.visit_variant(variant, generics, enum_id);
                             } else {
                                 span_bug!(e.span,

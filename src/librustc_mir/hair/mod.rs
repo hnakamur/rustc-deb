@@ -196,7 +196,7 @@ pub enum ExprKind<'tcx> {
         id: DefId,
     },
     Borrow {
-        region: Region,
+        region: &'tcx Region,
         borrow_kind: BorrowKind,
         arg: ExprRef<'tcx>,
     },
@@ -287,7 +287,7 @@ pub enum PatternKind<'tcx> {
     Binding {
         mutability: Mutability,
         name: ast::Name,
-        mode: BindingMode,
+        mode: BindingMode<'tcx>,
         var: ast::NodeId,
         ty: Ty<'tcx>,
         subpattern: Option<Pattern<'tcx>>,
@@ -335,9 +335,9 @@ pub enum PatternKind<'tcx> {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub enum BindingMode {
+pub enum BindingMode<'tcx> {
     ByValue,
-    ByRef(Region, BorrowKind),
+    ByRef(&'tcx Region, BorrowKind),
 }
 
 #[derive(Clone, Debug)]

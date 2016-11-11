@@ -67,6 +67,12 @@ pub fn walk_shallow<'tcx>(ty: Ty<'tcx>) -> IntoIter<Ty<'tcx>> {
     stack.into_iter()
 }
 
+// We push types on the stack in reverse order so as to
+// maintain a pre-order traversal. As of the time of this
+// writing, the fact that the traversal is pre-order is not
+// known to be significant to any code, but it seems like the
+// natural order one would expect (basically, the order of the
+// types as they are written).
 fn push_subtypes<'tcx>(stack: &mut Vec<Ty<'tcx>>, parent_ty: Ty<'tcx>) {
     match parent_ty.sty {
         ty::TyBool | ty::TyChar | ty::TyInt(_) | ty::TyUint(_) | ty::TyFloat(_) |
@@ -79,28 +85,26 @@ fn push_subtypes<'tcx>(stack: &mut Vec<Ty<'tcx>>, parent_ty: Ty<'tcx>) {
             stack.push(mt.ty);
         }
         ty::TyProjection(ref data) => {
-            push_reversed(stack, data.trait_ref.substs.types.as_slice());
+            stack.extend(data.trait_ref.substs.types().rev());
         }
-        ty::TyTrait(box ty::TraitTy { ref principal, ref bounds }) => {
-            push_reversed(stack, principal.substs().types.as_slice());
-            push_reversed(stack, &bounds.projection_bounds.iter().map(|pred| {
+        ty::TyTrait(ref obj) => {
+            stack.extend(obj.principal.input_types().rev());
+            stack.extend(obj.projection_bounds.iter().map(|pred| {
                 pred.0.ty
-            }).collect::<Vec<_>>());
+            }).rev());
         }
-        ty::TyEnum(_, ref substs) |
-        ty::TyStruct(_, ref substs) |
-        ty::TyAnon(_, ref substs) => {
-            push_reversed(stack, substs.types.as_slice());
+        ty::TyAdt(_, substs) | ty::TyAnon(_, substs) => {
+            stack.extend(substs.types().rev());
         }
         ty::TyClosure(_, ref substs) => {
-            push_reversed(stack, substs.func_substs.types.as_slice());
-            push_reversed(stack, &substs.upvar_tys);
+            stack.extend(substs.func_substs.types().rev());
+            stack.extend(substs.upvar_tys.iter().cloned().rev());
         }
-        ty::TyTuple(ref ts) => {
-            push_reversed(stack, ts);
+        ty::TyTuple(ts) => {
+            stack.extend(ts.iter().cloned().rev());
         }
         ty::TyFnDef(_, substs, ref ft) => {
-            push_reversed(stack, substs.types.as_slice());
+            stack.extend(substs.types().rev());
             push_sig_subtypes(stack, &ft.sig);
         }
         ty::TyFnPtr(ref ft) => {
@@ -111,17 +115,5 @@ fn push_subtypes<'tcx>(stack: &mut Vec<Ty<'tcx>>, parent_ty: Ty<'tcx>) {
 
 fn push_sig_subtypes<'tcx>(stack: &mut Vec<Ty<'tcx>>, sig: &ty::PolyFnSig<'tcx>) {
     stack.push(sig.0.output);
-    push_reversed(stack, &sig.0.inputs);
-}
-
-fn push_reversed<'tcx>(stack: &mut Vec<Ty<'tcx>>, tys: &[Ty<'tcx>]) {
-    // We push slices on the stack in reverse order so as to
-    // maintain a pre-order traversal. As of the time of this
-    // writing, the fact that the traversal is pre-order is not
-    // known to be significant to any code, but it seems like the
-    // natural order one would expect (basically, the order of the
-    // types as they are written).
-    for &ty in tys.iter().rev() {
-        stack.push(ty);
-    }
+    stack.extend(sig.0.inputs.iter().cloned().rev());
 }

@@ -24,7 +24,19 @@ pub fn check(_path: &Path, _bad: &mut bool) {}
 #[cfg(unix)]
 pub fn check(path: &Path, bad: &mut bool) {
     use std::fs;
+    use std::io::Read;
+    use std::process::{Command, Stdio};
     use std::os::unix::prelude::*;
+
+    if let Ok(mut file) = fs::File::open("/proc/version") {
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).unwrap();
+        // Probably on Windows Linux Subsystem, all files will be marked as
+        // executable, so skip checking.
+        if contents.contains("Microsoft") {
+            return;
+        }
+    }
 
     super::walk(path,
                 &mut |path| super::filter_dirs(path) || path.ends_with("src/etc"),
@@ -37,8 +49,22 @@ pub fn check(path: &Path, bad: &mut bool) {
 
         let metadata = t!(fs::symlink_metadata(&file), &file);
         if metadata.mode() & 0o111 != 0 {
-            println!("binary checked into source: {}", file.display());
-            *bad = true;
+            let rel_path = file.strip_prefix(path).unwrap();
+            let git_friendly_path = rel_path.to_str().unwrap().replace("\\", "/");
+            let ret_code = Command::new("git")
+                                        .arg("ls-files")
+                                        .arg(&git_friendly_path)
+                                        .current_dir(path)
+                                        .stdout(Stdio::null())
+                                        .stderr(Stdio::null())
+                                        .status()
+                                        .unwrap_or_else(|e| {
+                                            panic!("could not run git ls-files: {}", e);
+                                        });
+            if ret_code.success() {
+                println!("binary checked into source: {}", file.display());
+                *bad = true;
+            }
         }
     })
 }
