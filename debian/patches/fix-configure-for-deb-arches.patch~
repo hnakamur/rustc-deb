@@ -10,11 +10,9 @@ Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
-Index: rustc.git/configure
-===================================================================
---- rustc.git.orig/configure
-+++ rustc.git/configure
-@@ -508,8 +508,19 @@ case $CFG_CPUTYPE in
+--- a/configure
++++ b/configure
+@@ -497,8 +497,19 @@
          ;;
  
      armv7l)
