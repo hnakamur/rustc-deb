@@ -3,7 +3,6 @@ rustc (1.13.0+dfsg1-1) unstable; urgency=medium
   * New upstream release
 
   [ Ximin Luo ]
-  * WIP, do not release. See TODO in d/control and d/rules.
   * Use Debian system jquery instead of upstream's embedded copy.
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 11 Nov 2016 13:35:23 +0100
