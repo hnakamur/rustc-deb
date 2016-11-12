@@ -1,6 +1,7 @@
 rustc (1.13.0+dfsg1-1) unstable; urgency=medium
 
-  * New upstream release
+  [ Sylvestre Ledru ]
+  * New upstream release.
 
   [ Ximin Luo ]
   * Use Debian system jquery instead of upstream's embedded copy.
