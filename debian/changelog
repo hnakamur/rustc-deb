@@ -1,4 +1,4 @@
-rustc (1.13.0+dfsg1-2) UNRELEASED; urgency=high
+rustc (1.13.0+dfsg1-2) unstable; urgency=high
 
   * Skip macro-stepping test on arm64, until
     https://github.com/rust-lang/rust/issues/37225 is resolved.
