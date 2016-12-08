@@ -29,8 +29,8 @@ for f in *; do
 	if test -f "${fb}_${verprefix}"*; then mv "${fb}_${verprefix}"* "$f"; fi
 done )
 case "$1" in
-"1.13."*|"1.14."*)
-	dquilt delete nodoc-for-build-arch.patch
+"1.14."*|"1.15."*)
+	dquilt delete ignore-stdcall-test-on-arm64.patch
 	;;
 esac
 }

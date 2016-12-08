@@ -11,15 +11,20 @@ Forwarded: not-needed
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/librustc_llvm/build.rs
 +++ b/src/librustc_llvm/build.rs
-@@ -123,50 +123,10 @@
-        .cpp_link_stdlib(None) // we handle this below
-        .compile("librustllvm.a");
+@@ -157,55 +157,10 @@
+ 
+     let (llvm_kind, llvm_link_arg) = detect_llvm_link(&llvm_config);
  
 -    // Link in all LLVM libraries, if we're uwring the "wrong" llvm-config then
 -    // we don't pick up system libs because unfortunately they're for the host
 -    // of llvm-config, not the target that we're attempting to link.
 -    let mut cmd = Command::new(&llvm_config);
 -    cmd.arg("--libs");
+-
+-    if let Some(link_arg) = llvm_link_arg {
+-        cmd.arg(link_arg);
+-    }
+-
 -    if !is_crossed {
 -        cmd.arg("--system-libs");
 -    }
@@ -40,7 +45,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -            // that off
 -            lib.trim_right_matches(".lib")
 -        } else {
--            continue
+-            continue;
 -        };
 -
 -        // Don't need or want this library, but LLVM's CMake build system
@@ -49,11 +54,11 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -        // library and it otherwise may just pull in extra dependencies on
 -        // libedit which we don't want
 -        if name == "LLVMLineEditor" {
--            continue
+-            continue;
 -        }
 -
 -        let kind = if name.starts_with("LLVM") {
--            "static"
+-            llvm_kind
 -        } else {
 -            "dylib"
 -        };
@@ -68,7 +73,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
      //
 --- a/src/etc/mklldeps.py
 +++ b/src/etc/mklldeps.py
-@@ -56,38 +56,12 @@
+@@ -56,38 +56,13 @@
  
  f.write("\n")
  
@@ -108,6 +113,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 +# Link in Debian full LLVM shared library.
 +# TODO: not sure what to do in the cross-compiling case.
 +f.write("#[link(name = \"LLVM-3.9\")]\n")
++
  
  # LLVM ldflags
  out = run([llvm_config, '--ldflags'])
