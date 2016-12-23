@@ -16,7 +16,7 @@ use self::EnumDiscriminantInfo::*;
 use super::utils::{debug_context, DIB, span_start, bytes_to_bits, size_and_align_of,
                    get_namespace_and_span_for_item, create_DIArray, is_node_local_to_unit};
 use super::namespace::mangled_name_of_item;
-use super::type_names::{compute_debuginfo_type_name, push_debuginfo_type_name};
+use super::type_names::compute_debuginfo_type_name;
 use super::{CrateDebugContext};
 use context::SharedCrateContext;
 use session::Session;
@@ -24,9 +24,13 @@ use session::Session;
 use llvm::{self, ValueRef};
 use llvm::debuginfo::{DIType, DIFile, DIScope, DIDescriptor, DICompositeType, DILexicalBlock};
 
+use rustc::hir::def::CtorKind;
 use rustc::hir::def_id::DefId;
+use rustc::ty::fold::TypeVisitor;
 use rustc::ty::subst::Substs;
+use rustc::ty::util::TypeIdHasher;
 use rustc::hir;
+use rustc_data_structures::blake2b::Blake2bHasher;
 use {type_of, machine, monomorphize};
 use common::CrateContext;
 use type_::Type;
@@ -37,6 +41,7 @@ use util::common::path2cstr;
 
 use libc::{c_uint, c_longlong};
 use std::ffi::CString;
+use std::fmt::Write;
 use std::path::Path;
 use std::ptr;
 use std::rc::Rc;
@@ -44,6 +49,7 @@ use syntax::util::interner::Interner;
 use syntax::ast;
 use syntax::parse::token;
 use syntax_pos::{self, Span};
+
 
 // From DWARF 5.
 // See http://www.dwarfstd.org/ShowIssue.php?issue=140129.1
@@ -127,7 +133,7 @@ impl<'tcx> TypeMap<'tcx> {
 
     // Get the string representation of a UniqueTypeId. This method will fail if
     // the id is unknown.
-    fn get_unique_type_id_as_string(&self, unique_type_id: UniqueTypeId) -> Rc<String> {
+    fn get_unique_type_id_as_string(&self, unique_type_id: UniqueTypeId) -> Rc<str> {
         let UniqueTypeId(interner_key) = unique_type_id;
         self.unique_id_interner.get(interner_key)
     }
@@ -137,221 +143,33 @@ impl<'tcx> TypeMap<'tcx> {
     // ID will be generated and stored for later lookup.
     fn get_unique_type_id_of_type<'a>(&mut self, cx: &CrateContext<'a, 'tcx>,
                                       type_: Ty<'tcx>) -> UniqueTypeId {
-
-        // basic type             -> {:name of the type:}
-        // tuple                  -> {tuple_(:param-uid:)*}
-        // struct                 -> {struct_:svh: / :node-id:_<(:param-uid:),*> }
-        // enum                   -> {enum_:svh: / :node-id:_<(:param-uid:),*> }
-        // enum variant           -> {variant_:variant-name:_:enum-uid:}
-        // reference (&)          -> {& :pointee-uid:}
-        // mut reference (&mut)   -> {&mut :pointee-uid:}
-        // ptr (*)                -> {* :pointee-uid:}
-        // mut ptr (*mut)         -> {*mut :pointee-uid:}
-        // unique ptr (box)       -> {box :pointee-uid:}
-        // @-ptr (@)              -> {@ :pointee-uid:}
-        // sized vec ([T; x])     -> {[:size:] :element-uid:}
-        // unsized vec ([T])      -> {[] :element-uid:}
-        // trait (T)              -> {trait_:svh: / :node-id:_<(:param-uid:),*> }
-        // closure                -> {<unsafe_> <once_> :store-sigil: |(:param-uid:),* <,_...>| -> \
-        //                             :return-type-uid: : (:bounds:)*}
-        // function               -> {<unsafe_> <abi_> fn( (:param-uid:)* <,_...> ) -> \
-        //                             :return-type-uid:}
-
+        // Let's see if we already have something in the cache
         match self.type_to_unique_id.get(&type_).cloned() {
             Some(unique_type_id) => return unique_type_id,
             None => { /* generate one */}
         };
 
-        let mut unique_type_id = String::with_capacity(256);
-        unique_type_id.push('{');
+        // The hasher we are using to generate the UniqueTypeId. We want
+        // something that provides more than the 64 bits of the DefaultHasher.
+        const TYPE_ID_HASH_LENGTH: usize = 20;
 
-        match type_.sty {
-            ty::TyNever    |
-            ty::TyBool     |
-            ty::TyChar     |
-            ty::TyStr      |
-            ty::TyInt(_)   |
-            ty::TyUint(_)  |
-            ty::TyFloat(_) => {
-                push_debuginfo_type_name(cx, type_, false, &mut unique_type_id);
-            },
-            ty::TyAdt(def, substs) => {
-                unique_type_id.push_str(&(String::from(def.descr()) + " "));
-                from_def_id_and_substs(self, cx, def.did, substs, &mut unique_type_id);
-            }
-            ty::TyTuple(component_types) if component_types.is_empty() => {
-                push_debuginfo_type_name(cx, type_, false, &mut unique_type_id);
-            },
-            ty::TyTuple(component_types) => {
-                unique_type_id.push_str("tuple ");
-                for &component_type in component_types {
-                    let component_type_id =
-                        self.get_unique_type_id_of_type(cx, component_type);
-                    let component_type_id =
-                        self.get_unique_type_id_as_string(component_type_id);
-                    unique_type_id.push_str(&component_type_id[..]);
-                }
-            },
-            ty::TyBox(inner_type) => {
-                unique_type_id.push_str("box ");
-                let inner_type_id = self.get_unique_type_id_of_type(cx, inner_type);
-                let inner_type_id = self.get_unique_type_id_as_string(inner_type_id);
-                unique_type_id.push_str(&inner_type_id[..]);
-            },
-            ty::TyRawPtr(ty::TypeAndMut { ty: inner_type, mutbl } ) => {
-                unique_type_id.push('*');
-                if mutbl == hir::MutMutable {
-                    unique_type_id.push_str("mut");
-                }
+        let mut type_id_hasher = TypeIdHasher::new(cx.tcx(),
+                                                   Blake2bHasher::new(TYPE_ID_HASH_LENGTH, &[]));
+        type_id_hasher.visit_ty(type_);
+        let mut hash_state = type_id_hasher.into_inner();
+        let hash: &[u8] = hash_state.finalize();
+        debug_assert!(hash.len() == TYPE_ID_HASH_LENGTH);
 
-                let inner_type_id = self.get_unique_type_id_of_type(cx, inner_type);
-                let inner_type_id = self.get_unique_type_id_as_string(inner_type_id);
-                unique_type_id.push_str(&inner_type_id[..]);
-            },
-            ty::TyRef(_, ty::TypeAndMut { ty: inner_type, mutbl }) => {
-                unique_type_id.push('&');
-                if mutbl == hir::MutMutable {
-                    unique_type_id.push_str("mut");
-                }
+        let mut unique_type_id = String::with_capacity(TYPE_ID_HASH_LENGTH * 2);
 
-                let inner_type_id = self.get_unique_type_id_of_type(cx, inner_type);
-                let inner_type_id = self.get_unique_type_id_as_string(inner_type_id);
-                unique_type_id.push_str(&inner_type_id[..]);
-            },
-            ty::TyArray(inner_type, len) => {
-                unique_type_id.push_str(&format!("[{}]", len));
+        for byte in hash.into_iter() {
+            write!(&mut unique_type_id, "{:x}", byte).unwrap();
+        }
 
-                let inner_type_id = self.get_unique_type_id_of_type(cx, inner_type);
-                let inner_type_id = self.get_unique_type_id_as_string(inner_type_id);
-                unique_type_id.push_str(&inner_type_id[..]);
-            },
-            ty::TySlice(inner_type) => {
-                unique_type_id.push_str("[]");
-
-                let inner_type_id = self.get_unique_type_id_of_type(cx, inner_type);
-                let inner_type_id = self.get_unique_type_id_as_string(inner_type_id);
-                unique_type_id.push_str(&inner_type_id[..]);
-            },
-            ty::TyTrait(ref trait_data) => {
-                unique_type_id.push_str("trait ");
-
-                let principal = cx.tcx().erase_late_bound_regions_and_normalize(
-                    &trait_data.principal);
-
-                from_def_id_and_substs(self,
-                                       cx,
-                                       principal.def_id,
-                                       principal.substs,
-                                       &mut unique_type_id);
-            },
-            ty::TyFnDef(.., &ty::BareFnTy{ unsafety, abi, ref sig } ) |
-            ty::TyFnPtr(&ty::BareFnTy{ unsafety, abi, ref sig } ) => {
-                if unsafety == hir::Unsafety::Unsafe {
-                    unique_type_id.push_str("unsafe ");
-                }
-
-                unique_type_id.push_str(abi.name());
-
-                unique_type_id.push_str(" fn(");
-
-                let sig = cx.tcx().erase_late_bound_regions_and_normalize(sig);
-
-                for &parameter_type in &sig.inputs {
-                    let parameter_type_id =
-                        self.get_unique_type_id_of_type(cx, parameter_type);
-                    let parameter_type_id =
-                        self.get_unique_type_id_as_string(parameter_type_id);
-                    unique_type_id.push_str(&parameter_type_id[..]);
-                    unique_type_id.push(',');
-                }
-
-                if sig.variadic {
-                    unique_type_id.push_str("...");
-                }
-
-                unique_type_id.push_str(")->");
-                let return_type_id = self.get_unique_type_id_of_type(cx, sig.output);
-                let return_type_id = self.get_unique_type_id_as_string(return_type_id);
-                unique_type_id.push_str(&return_type_id[..]);
-            },
-            ty::TyClosure(_, substs) if substs.upvar_tys.is_empty() => {
-                push_debuginfo_type_name(cx, type_, false, &mut unique_type_id);
-            },
-            ty::TyClosure(_, substs) => {
-                unique_type_id.push_str("closure ");
-                for upvar_type in substs.upvar_tys {
-                    let upvar_type_id =
-                        self.get_unique_type_id_of_type(cx, upvar_type);
-                    let upvar_type_id =
-                        self.get_unique_type_id_as_string(upvar_type_id);
-                    unique_type_id.push_str(&upvar_type_id[..]);
-                }
-            },
-            _ => {
-                bug!("get_unique_type_id_of_type() - unexpected type: {:?}",
-                     type_)
-            }
-        };
-
-        unique_type_id.push('}');
-
-        // Trim to size before storing permanently
-        unique_type_id.shrink_to_fit();
-
-        let key = self.unique_id_interner.intern(unique_type_id);
+        let key = self.unique_id_interner.intern(&unique_type_id);
         self.type_to_unique_id.insert(type_, UniqueTypeId(key));
 
         return UniqueTypeId(key);
-
-        fn from_def_id_and_substs<'a, 'tcx>(type_map: &mut TypeMap<'tcx>,
-                                            cx: &CrateContext<'a, 'tcx>,
-                                            def_id: DefId,
-                                            substs: &Substs<'tcx>,
-                                            output: &mut String) {
-            // First, find out the 'real' def_id of the type. Items inlined from
-            // other crates have to be mapped back to their source.
-            let def_id = if let Some(node_id) = cx.tcx().map.as_local_node_id(def_id) {
-                if cx.tcx().map.is_inlined_node_id(node_id) {
-                    // The given def_id identifies the inlined copy of a
-                    // type definition, let's take the source of the copy.
-                    cx.defid_for_inlined_node(node_id).unwrap()
-                } else {
-                    def_id
-                }
-            } else {
-                def_id
-            };
-
-            // Get the crate name/disambiguator as first part of the identifier.
-            let crate_name = if def_id.is_local() {
-                cx.tcx().crate_name.clone()
-            } else {
-                cx.sess().cstore.original_crate_name(def_id.krate)
-            };
-            let crate_disambiguator = cx.tcx().crate_disambiguator(def_id.krate);
-
-            output.push_str(&crate_name[..]);
-            output.push_str("/");
-            output.push_str(&crate_disambiguator[..]);
-            output.push_str("/");
-            // Add the def-index as the second part
-            output.push_str(&format!("{:x}", def_id.index.as_usize()));
-
-            if substs.types().next().is_some() {
-                output.push('<');
-
-                for type_parameter in substs.types() {
-                    let param_type_id =
-                        type_map.get_unique_type_id_of_type(cx, type_parameter);
-                    let param_type_id =
-                        type_map.get_unique_type_id_as_string(param_type_id);
-                    output.push_str(&param_type_id[..]);
-                    output.push(',');
-                }
-
-                output.push('>');
-            }
-        }
     }
 
     // Get the UniqueTypeId for an enum variant. Enum variants are not really
@@ -366,7 +184,7 @@ impl<'tcx> TypeMap<'tcx> {
         let enum_variant_type_id = format!("{}::{}",
                                            &self.get_unique_type_id_as_string(enum_type_id),
                                            variant_name);
-        let interner_key = self.unique_id_interner.intern(enum_variant_type_id);
+        let interner_key = self.unique_id_interner.intern(&enum_variant_type_id);
         UniqueTypeId(interner_key)
     }
 }
@@ -1076,10 +894,6 @@ struct StructMemberDescriptionFactory<'tcx> {
 impl<'tcx> StructMemberDescriptionFactory<'tcx> {
     fn create_member_descriptions<'a>(&self, cx: &CrateContext<'a, 'tcx>)
                                       -> Vec<MemberDescription> {
-        if self.variant.kind == ty::VariantKind::Unit {
-            return Vec::new();
-        }
-
         let field_size = if self.is_simd {
             let fty = monomorphize::field_ty(cx.tcx(),
                                              self.substs,
@@ -1093,7 +907,7 @@ impl<'tcx> StructMemberDescriptionFactory<'tcx> {
         };
 
         self.variant.fields.iter().enumerate().map(|(i, f)| {
-            let name = if self.variant.kind == ty::VariantKind::Tuple {
+            let name = if self.variant.ctor_kind == CtorKind::Fn {
                 format!("__{}", i)
             } else {
                 f.name.to_string()
@@ -1387,12 +1201,12 @@ impl<'tcx> EnumMemberDescriptionFactory<'tcx> {
                 // For the metadata of the wrapper struct, we need to create a
                 // MemberDescription of the struct's single field.
                 let sole_struct_member_description = MemberDescription {
-                    name: match non_null_variant.kind {
-                        ty::VariantKind::Tuple => "__0".to_string(),
-                        ty::VariantKind::Struct => {
+                    name: match non_null_variant.ctor_kind {
+                        CtorKind::Fn => "__0".to_string(),
+                        CtorKind::Fictive => {
                             non_null_variant.fields[0].name.to_string()
                         }
-                        ty::VariantKind::Unit => bug!()
+                        CtorKind::Const => bug!()
                     },
                     llvm_type: non_null_llvm_type,
                     type_metadata: non_null_type_metadata,
@@ -1579,16 +1393,16 @@ fn describe_enum_variant<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                                            containing_scope);
 
     // Get the argument names from the enum variant info
-    let mut arg_names: Vec<_> = match variant.kind {
-        ty::VariantKind::Unit => vec![],
-        ty::VariantKind::Tuple => {
+    let mut arg_names: Vec<_> = match variant.ctor_kind {
+        CtorKind::Const => vec![],
+        CtorKind::Fn => {
             variant.fields
                    .iter()
                    .enumerate()
                    .map(|(i, _)| format!("__{}", i))
                    .collect()
         }
-        ty::VariantKind::Struct => {
+        CtorKind::Fictive => {
             variant.fields
                    .iter()
                    .map(|f| f.name.to_string())
@@ -1930,15 +1744,17 @@ pub fn create_global_var_metadata(cx: &CrateContext,
         return;
     }
 
+    let tcx = cx.tcx();
+
     // Don't create debuginfo for globals inlined from other crates. The other
     // crate should already contain debuginfo for it. More importantly, the
     // global might not even exist in un-inlined form anywhere which would lead
     // to a linker errors.
-    if cx.tcx().map.is_inlined_node_id(node_id) {
+    if tcx.map.is_inlined_node_id(node_id) {
         return;
     }
 
-    let node_def_id = cx.tcx().map.local_def_id(node_id);
+    let node_def_id = tcx.map.local_def_id(node_id);
     let (var_scope, span) = get_namespace_and_span_for_item(cx, node_def_id);
 
     let (file_metadata, line_number) = if span != syntax_pos::DUMMY_SP {
@@ -1949,9 +1765,9 @@ pub fn create_global_var_metadata(cx: &CrateContext,
     };
 
     let is_local_to_unit = is_node_local_to_unit(cx, node_id);
-    let variable_type = cx.tcx().node_id_to_type(node_id);
+    let variable_type = tcx.erase_regions(&tcx.tables().node_id_to_type(node_id));
     let type_metadata = type_metadata(cx, variable_type, span);
-    let var_name = cx.tcx().item_name(node_def_id).to_string();
+    let var_name = tcx.item_name(node_def_id).to_string();
     let linkage_name = mangled_name_of_item(cx, node_def_id, "");
 
     let var_name = CString::new(var_name).unwrap();

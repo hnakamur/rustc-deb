@@ -22,6 +22,7 @@ use std::fs;
 use std::path::{Path};
 
 use IncrementalHashesMap;
+use ich::Fingerprint;
 use super::data::*;
 use super::directory::*;
 use super::dirty_clean;
@@ -30,8 +31,6 @@ use super::fs::*;
 use super::file_format;
 
 pub type DirtyNodes = FnvHashSet<DepNode<DefPathIndex>>;
-
-type CleanEdges = Vec<(DepNode<DefId>, DepNode<DefId>)>;
 
 /// If we are in incremental mode, and a previous dep-graph exists,
 /// then load up those nodes/edges that are still valid into the
@@ -315,7 +314,7 @@ fn delete_dirty_work_product(tcx: TyCtxt,
 
 fn load_prev_metadata_hashes(tcx: TyCtxt,
                              retraced: &RetracedDefIdDirectory,
-                             output: &mut FnvHashMap<DefId, u64>) {
+                             output: &mut FnvHashMap<DefId, Fingerprint>) {
     if !tcx.sess.opts.debugging_opts.query_dep_graph {
         return
     }

@@ -25,7 +25,7 @@ use std::process::Command;
 use build_helper::output;
 use filetime::FileTime;
 
-use util::{exe, staticlib, libdir, mtime, is_dylib, copy};
+use util::{exe, libdir, mtime, is_dylib, copy};
 use {Build, Compiler, Mode};
 
 /// Build the standard library.
@@ -40,20 +40,6 @@ pub fn std<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
     let libdir = build.sysroot_libdir(compiler, target);
     let _ = fs::remove_dir_all(&libdir);
     t!(fs::create_dir_all(&libdir));
-    // FIXME(stage0) remove this `if` after the next snapshot
-    // The stage0 compiler still passes the `-lcompiler-rt` flag to the linker but now `bootstrap`
-    // never builds a `libcopmiler-rt.a`! We'll fill the hole by simply copying stage0's
-    // `libcompiler-rt.a` to where the stage1's one is expected (though we could as well just use
-    // an empty `.a` archive). Note that the symbols of that stage0 `libcompiler-rt.a` won't make
-    // it to the final binary because now `libcore.rlib` also contains the symbols that
-    // `libcompiler-rt.a` provides. Since that rlib appears first in the linker arguments, its
-    // symbols are used instead of `libcompiler-rt.a`'s.
-    if compiler.stage == 0 {
-        let rtlib = &staticlib("compiler-rt", target);
-        let src = build.rustc.parent().unwrap().parent().unwrap().join("lib").join("rustlib")
-            .join(target).join("lib").join(rtlib);
-        copy(&src, &libdir.join(rtlib));
-    }
 
     // Some platforms have startup objects that may be required to produce the
     // libstd dynamic library, for example.
@@ -78,8 +64,8 @@ pub fn std<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
     }
 
     build.run(&mut cargo);
-    update_mtime(&libstd_stamp(build, compiler, target));
-    std_link(build, target, compiler, compiler.host);
+    update_mtime(&libstd_stamp(build, &compiler, target));
+    std_link(build, target, compiler.stage, compiler.host);
 }
 
 /// Link all libstd rlibs/dylibs into the sysroot location.
@@ -88,11 +74,12 @@ pub fn std<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
 /// by `compiler` into `host`'s sysroot.
 pub fn std_link(build: &Build,
                 target: &str,
-                compiler: &Compiler,
+                stage: u32,
                 host: &str) {
+    let compiler = Compiler::new(stage, &build.config.build);
     let target_compiler = Compiler::new(compiler.stage, host);
     let libdir = build.sysroot_libdir(&target_compiler, target);
-    let out_dir = build.cargo_out(compiler, Mode::Libstd, target);
+    let out_dir = build.cargo_out(&compiler, Mode::Libstd, target);
 
     // If we're linking one compiler host's output into another, then we weren't
     // called from the `std` method above. In that case we clean out what's
@@ -104,16 +91,16 @@ pub fn std_link(build: &Build,
     add_to_sysroot(&out_dir, &libdir);
 
     if target.contains("musl") && !target.contains("mips") {
-        copy_musl_third_party_objects(build, &libdir);
+        copy_musl_third_party_objects(build, target, &libdir);
     }
 }
 
 /// Copies the crt(1,i,n).o startup objects
 ///
 /// Only required for musl targets that statically link to libc
-fn copy_musl_third_party_objects(build: &Build, into: &Path) {
+fn copy_musl_third_party_objects(build: &Build, target: &str, into: &Path) {
     for &obj in &["crt1.o", "crti.o", "crtn.o"] {
-        copy(&build.config.musl_root.as_ref().unwrap().join("lib").join(obj), &into.join(obj));
+        copy(&build.musl_root(target).unwrap().join("lib").join(obj), &into.join(obj));
     }
 }
 
@@ -160,7 +147,7 @@ pub fn test<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
          .arg(build.src.join("src/rustc/test_shim/Cargo.toml"));
     build.run(&mut cargo);
     update_mtime(&libtest_stamp(build, compiler, target));
-    test_link(build, target, compiler, compiler.host);
+    test_link(build, target, compiler.stage, compiler.host);
 }
 
 /// Link all libtest rlibs/dylibs into the sysroot location.
@@ -169,11 +156,12 @@ pub fn test<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
 /// by `compiler` into `host`'s sysroot.
 pub fn test_link(build: &Build,
                  target: &str,
-                 compiler: &Compiler,
+                 stage: u32,
                  host: &str) {
+    let compiler = Compiler::new(stage, &build.config.build);
     let target_compiler = Compiler::new(compiler.stage, host);
     let libdir = build.sysroot_libdir(&target_compiler, target);
-    let out_dir = build.cargo_out(compiler, Mode::Libtest, target);
+    let out_dir = build.cargo_out(&compiler, Mode::Libtest, target);
     add_to_sysroot(&out_dir, &libdir);
 }
 
@@ -232,7 +220,7 @@ pub fn rustc<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
     }
     build.run(&mut cargo);
 
-    rustc_link(build, target, compiler, compiler.host);
+    rustc_link(build, target, compiler.stage, compiler.host);
 }
 
 /// Link all librustc rlibs/dylibs into the sysroot location.
@@ -241,11 +229,12 @@ pub fn rustc<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
 /// by `compiler` into `host`'s sysroot.
 pub fn rustc_link(build: &Build,
                   target: &str,
-                  compiler: &Compiler,
+                  stage: u32,
                   host: &str) {
+    let compiler = Compiler::new(stage, &build.config.build);
     let target_compiler = Compiler::new(compiler.stage, host);
     let libdir = build.sysroot_libdir(&target_compiler, target);
-    let out_dir = build.cargo_out(compiler, Mode::Librustc, target);
+    let out_dir = build.cargo_out(&compiler, Mode::Librustc, target);
     add_to_sysroot(&out_dir, &libdir);
 }
 
@@ -273,7 +262,10 @@ fn compiler_file(compiler: &Path, file: &str) -> PathBuf {
 /// must have been previously produced by the `stage - 1` build.config.build
 /// compiler.
 pub fn assemble_rustc(build: &Build, stage: u32, host: &str) {
-    assert!(stage > 0, "the stage0 compiler isn't assembled, it's downloaded");
+    // nothing to do in stage0
+    if stage == 0 {
+        return
+    }
     // The compiler that we're assembling
     let target_compiler = Compiler::new(stage, host);
 

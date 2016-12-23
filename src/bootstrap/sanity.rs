@@ -40,17 +40,23 @@ pub fn check(build: &mut Build) {
             panic!("PATH contains invalid character '\"'");
         }
     }
+    let have_cmd = |cmd: &OsStr| {
+        for path in env::split_paths(&path).map(|p| p.join(cmd)) {
+            if fs::metadata(&path).is_ok() ||
+               fs::metadata(path.with_extension("exe")).is_ok() {
+                return Some(path);
+            }
+        }
+        return None;
+    };
+
     let mut need_cmd = |cmd: &OsStr| {
         if !checked.insert(cmd.to_owned()) {
             return
         }
-        for path in env::split_paths(&path).map(|p| p.join(cmd)) {
-            if fs::metadata(&path).is_ok() ||
-               fs::metadata(path.with_extension("exe")).is_ok() {
-                return
-            }
+        if have_cmd(cmd).is_none() {
+            panic!("\n\ncouldn't find required command: {:?}\n\n", cmd);
         }
-        panic!("\n\ncouldn't find required command: {:?}\n\n", cmd);
     };
 
     // If we've got a git directory we're gona need git to update
@@ -75,15 +81,33 @@ pub fn check(build: &mut Build) {
 
     need_cmd("python".as_ref());
 
-    // If a manual nodejs was added to the config,
-    // of if a nodejs install is detected through config, use it.
+    // Look for the nodejs command, needed for emscripten testing
+    if let Some(node) = have_cmd("node".as_ref()) {
+        build.config.nodejs = Some(node);
+    } else if let Some(node) = have_cmd("nodejs".as_ref()) {
+        build.config.nodejs = Some(node);
+    }
+
     if let Some(ref s) = build.config.nodejs {
         need_cmd(s.as_ref());
+    }
+
+    if let Some(ref gdb) = build.config.gdb {
+        need_cmd(gdb.as_ref());
+    } else {
+        build.config.gdb = have_cmd("gdb".as_ref());
     }
 
     // We're gonna build some custom C code here and there, host triples
     // also build some C++ shims for LLVM so we need a C++ compiler.
     for target in build.config.target.iter() {
+        // On emscripten we don't actually need the C compiler to just
+        // build the target artifacts, only for testing. For the sake
+        // of easier bot configuration, just skip detection.
+        if target.contains("emscripten") {
+            continue;
+        }
+
         need_cmd(build.cc(target).as_ref());
         if let Some(ar) = build.ar(target) {
             need_cmd(ar.as_ref());
@@ -93,6 +117,14 @@ pub fn check(build: &mut Build) {
         need_cmd(build.cxx(host).as_ref());
     }
 
+    // The msvc hosts don't use jemalloc, turn it off globally to
+    // avoid packaging the dummy liballoc_jemalloc on that platform.
+    for host in build.config.host.iter() {
+        if host.contains("msvc") {
+            build.config.use_jemalloc = false;
+        }
+    }
+
     // Externally configured LLVM requires FileCheck to exist
     let filecheck = build.llvm_filecheck(&build.config.build);
     if !filecheck.starts_with(&build.out) && !filecheck.exists() && build.config.codegen_tests {
@@ -100,15 +132,6 @@ pub fn check(build: &mut Build) {
     }
 
     for target in build.config.target.iter() {
-        // Either can't build or don't want to run jemalloc on these targets
-        if target.contains("rumprun") ||
-           target.contains("bitrig") ||
-           target.contains("openbsd") ||
-           target.contains("msvc") ||
-           target.contains("emscripten") {
-            build.config.use_jemalloc = false;
-        }
-
         // Can't compile for iOS unless we're on OSX
         if target.contains("apple-ios") &&
            !build.config.build.contains("apple-darwin") {
@@ -129,8 +152,8 @@ pub fn check(build: &mut Build) {
                     }
                 }
                 None => {
-                    panic!("when targeting MUSL either the build.musl-root \
-                            option or the target.$TARGET.musl-root one must \
+                    panic!("when targeting MUSL either the rust.musl-root \
+                            option or the target.$TARGET.musl-root option must \
                             be specified in config.toml")
                 }
             }
@@ -181,7 +204,6 @@ $ pacman -R cmake && pacman -S mingw-w64-x86_64-cmake
                    .to_string()
         })
     };
-    build.gdb_version = run(Command::new("gdb").arg("--version")).ok();
     build.lldb_version = run(Command::new("lldb").arg("--version")).ok();
     if build.lldb_version.is_some() {
         build.lldb_python_dir = run(Command::new("lldb").arg("-P")).ok();

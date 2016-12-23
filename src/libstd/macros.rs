@@ -112,12 +112,14 @@ macro_rules! print {
 /// # Examples
 ///
 /// ```
+/// println!();
 /// println!("hello there!");
 /// println!("format {} arguments", "some");
 /// ```
 #[macro_export]
 #[stable(feature = "rust1", since = "1.0.0")]
 macro_rules! println {
+    () => (print!("\n"));
     ($fmt:expr) => (print!(concat!($fmt, "\n")));
     ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
 }
@@ -284,7 +286,7 @@ pub mod builtin {
     /// // fn concat_idents!(new, fun, name) { } // not usable in this way!
     /// # }
     /// ```
-    #[unstable(feature = "concat_idents", issue = "29599")]
+    #[unstable(feature = "concat_idents_macro", issue = "29599")]
     #[macro_export]
     macro_rules! concat_idents {
         ($($e:ident),*) => ({ /* compiler built-in */ })
@@ -379,9 +381,11 @@ pub mod builtin {
 
     /// Includes a utf8-encoded file as a string.
     ///
+    /// The file is located relative to the current file. (similarly to how
+    /// modules are found)
+    ///
     /// This macro will yield an expression of type `&'static str` which is the
-    /// contents of the filename specified. The file is located relative to the
-    /// current file (similarly to how modules are found),
+    /// contents of the file.
     ///
     /// # Examples
     ///
@@ -394,9 +398,11 @@ pub mod builtin {
 
     /// Includes a file as a reference to a byte array.
     ///
+    /// The file is located relative to the current file. (similarly to how
+    /// modules are found)
+    ///
     /// This macro will yield an expression of type `&'static [u8; N]` which is
-    /// the contents of the filename specified. The file is located relative to
-    /// the current file (similarly to how modules are found),
+    /// the contents of the file.
     ///
     /// # Examples
     ///
@@ -450,9 +456,17 @@ pub mod builtin {
     #[macro_export]
     macro_rules! cfg { ($($cfg:tt)*) => ({ /* compiler built-in */ }) }
 
-    /// Parse the current given file as an expression.
+    /// Parse a file as an expression or an item according to the context.
     ///
-    /// This is generally a bad idea, because it's going to behave unhygienically.
+    /// The file is located relative to the current file. (similarly to how
+    /// modules are found)
+    ///
+    /// Using this macro is often a bad idea, because if the file is
+    /// parsed as an expression, it is going to be placed in the
+    /// surrounding code unhygenically. This could result in variables
+    /// or functions being different from what the file expected if
+    /// there are variables or functions that have the same name in
+    /// the current file.
     ///
     /// # Examples
     ///

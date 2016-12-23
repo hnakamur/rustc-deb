@@ -17,7 +17,7 @@
       html_root_url = "https://doc.rust-lang.org/nightly/")]
 #![cfg_attr(not(stage0), deny(warnings))]
 
-#![feature(dotdot_in_tuple_patterns)]
+#![cfg_attr(stage0, feature(dotdot_in_tuple_patterns))]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
@@ -28,7 +28,7 @@ extern crate syntax_pos;
 
 use rustc::dep_graph::DepNode;
 use rustc::hir::{self, PatKind};
-use rustc::hir::def::{self, Def};
+use rustc::hir::def::{self, Def, CtorKind};
 use rustc::hir::def_id::DefId;
 use rustc::hir::intravisit::{self, Visitor};
 use rustc::hir::pat_util::EnumerateAndAdjustIterator;
@@ -286,7 +286,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for EmbargoVisitor<'a, 'tcx> {
         if self.prev_level.is_some() {
             if let Some(exports) = self.export_map.get(&id) {
                 for export in exports {
-                    if let Some(node_id) = self.tcx.map.as_local_node_id(export.def_id) {
+                    if let Some(node_id) = self.tcx.map.as_local_node_id(export.def.def_id()) {
                         self.update(node_id, Some(AccessLevel::Exported));
                     }
                 }
@@ -430,11 +430,11 @@ impl<'a, 'tcx, 'v> Visitor<'v> for PrivacyVisitor<'a, 'tcx> {
         match expr.node {
             hir::ExprMethodCall(..) => {
                 let method_call = ty::MethodCall::expr(expr.id);
-                let method = self.tcx.tables.borrow().method_map[&method_call];
+                let method = self.tcx.tables().method_map[&method_call];
                 self.check_method(expr.span, method.def_id);
             }
             hir::ExprStruct(_, ref expr_fields, _) => {
-                let adt = self.tcx.expr_ty(expr).ty_adt_def().unwrap();
+                let adt = self.tcx.tables().expr_ty(expr).ty_adt_def().unwrap();
                 let variant = adt.variant_of_def(self.tcx.expect_def(expr.id));
                 // RFC 736: ensure all unmentioned fields are visible.
                 // Rather than computing the set of unmentioned fields
@@ -454,36 +454,25 @@ impl<'a, 'tcx, 'v> Visitor<'v> for PrivacyVisitor<'a, 'tcx> {
                 }
             }
             hir::ExprPath(..) => {
-                if let Def::Struct(..) = self.tcx.expect_def(expr.id) {
-                    let expr_ty = self.tcx.expr_ty(expr);
-                    let def = match expr_ty.sty {
-                        ty::TyFnDef(.., &ty::BareFnTy { sig: ty::Binder(ty::FnSig {
-                            output: ty, ..
-                        }), ..}) => ty,
-                        _ => expr_ty
-                    }.ty_adt_def().unwrap();
-
-                    let private_indexes : Vec<_> = def.struct_variant().fields.iter().enumerate()
-                        .filter(|&(_,f)| {
-                            !f.vis.is_accessible_from(self.curitem, &self.tcx.map)
-                    }).map(|(n,&_)|n).collect();
+                if let def @ Def::StructCtor(_, CtorKind::Fn) = self.tcx.expect_def(expr.id) {
+                    let adt_def = self.tcx.expect_variant_def(def);
+                    let private_indexes = adt_def.fields.iter().enumerate().filter(|&(_, field)| {
+                        !field.vis.is_accessible_from(self.curitem, &self.tcx.map)
+                    }).map(|(i, _)| i).collect::<Vec<_>>();
 
                     if !private_indexes.is_empty() {
-
                         let mut error = struct_span_err!(self.tcx.sess, expr.span, E0450,
                                                          "cannot invoke tuple struct constructor \
-                                                         with private fields");
+                                                          with private fields");
                         error.span_label(expr.span,
                                          &format!("cannot construct with a private field"));
 
-                        if let Some(def_id) = self.tcx.map.as_local_node_id(def.did) {
-                            if let Some(hir::map::NodeItem(node)) = self.tcx.map.find(def_id) {
-                                if let hir::Item_::ItemStruct(ref tuple_data, _) = node.node {
-
-                                    for i in private_indexes {
-                                        error.span_label(tuple_data.fields()[i].span,
-                                                         &format!("private field declared here"));
-                                    }
+                        if let Some(node_id) = self.tcx.map.as_local_node_id(adt_def.did) {
+                            let node = self.tcx.map.find(node_id);
+                            if let Some(hir::map::NodeStructCtor(vdata)) = node {
+                                for i in private_indexes {
+                                    error.span_label(vdata.fields()[i].span,
+                                                     &format!("private field declared here"));
                                 }
                             }
                         }
@@ -506,14 +495,14 @@ impl<'a, 'tcx, 'v> Visitor<'v> for PrivacyVisitor<'a, 'tcx> {
 
         match pattern.node {
             PatKind::Struct(_, ref fields, _) => {
-                let adt = self.tcx.pat_ty(pattern).ty_adt_def().unwrap();
+                let adt = self.tcx.tables().pat_ty(pattern).ty_adt_def().unwrap();
                 let variant = adt.variant_of_def(self.tcx.expect_def(pattern.id));
                 for field in fields {
                     self.check_field(field.span, adt, variant.field_named(field.node.name));
                 }
             }
             PatKind::TupleStruct(_, ref fields, ddpos) => {
-                match self.tcx.pat_ty(pattern).sty {
+                match self.tcx.tables().pat_ty(pattern).sty {
                     // enum fields have no privacy at this time
                     ty::TyAdt(def, _) if !def.is_enum() => {
                         let expected_len = def.struct_variant().fields.len();
@@ -870,9 +859,6 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ObsoleteVisiblePrivateTypesVisitor<'a, 'tcx> 
     // expression/block context can't possibly contain exported things.
     // (Making them no-ops stops us from traversing the whole AST without
     // having to be super careful about our `walk_...` calls above.)
-    // FIXME(#29524): Unfortunately this ^^^ is not true, blocks can contain
-    // exported items (e.g. impls) and actual code in rustc itself breaks
-    // if we don't traverse blocks in `EmbargoVisitor`
     fn visit_block(&mut self, _: &hir::Block) {}
     fn visit_expr(&mut self, _: &hir::Expr) {}
 }

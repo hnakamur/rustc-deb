@@ -22,7 +22,7 @@
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
 
-#![feature(dotdot_in_tuple_patterns)]
+#![cfg_attr(stage0, feature(dotdot_in_tuple_patterns))]
 #![feature(rustc_private)]
 #![feature(staged_api)]
 #![feature(rustc_diagnostic_macros)]
@@ -31,11 +31,13 @@
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 
+extern crate arena;
 #[macro_use] extern crate syntax;
 #[macro_use] extern crate log;
 #[macro_use] extern crate rustc;
 extern crate rustc_back;
 extern crate rustc_const_math;
+extern crate rustc_data_structures;
 extern crate rustc_errors;
 extern crate graphviz;
 extern crate syntax_pos;
@@ -46,7 +48,9 @@ extern crate serialize as rustc_serialize; // used by deriving
 pub mod diagnostics;
 
 mod eval;
+mod _match;
 pub mod check_match;
+pub mod pattern;
 
 pub use eval::*;
 

@@ -29,23 +29,21 @@ use hir::map::definitions::{Definitions, DefKey};
 use hir::svh::Svh;
 use middle::lang_items;
 use ty::{self, Ty, TyCtxt};
-use mir::repr::Mir;
-use mir::mir_map::MirMap;
+use mir::Mir;
 use session::Session;
-use session::config::PanicStrategy;
 use session::search_paths::PathKind;
 use util::nodemap::{NodeSet, DefIdMap};
 use std::path::PathBuf;
-use std::rc::Rc;
 use syntax::ast;
 use syntax::attr;
-use syntax::ext::base::MultiItemModifier;
+use syntax::ext::base::SyntaxExtension;
 use syntax::ptr::P;
 use syntax::parse::token::InternedString;
 use syntax_pos::Span;
 use rustc_back::target::Target;
 use hir;
 use hir::intravisit::Visitor;
+use rustc_back::PanicStrategy;
 
 pub use self::NativeLibraryKind::{NativeStatic, NativeFramework, NativeUnknown};
 
@@ -166,7 +164,6 @@ pub trait CrateStore<'tcx> {
     fn is_const_fn(&self, did: DefId) -> bool;
     fn is_defaulted_trait(&self, did: DefId) -> bool;
     fn is_default_impl(&self, impl_did: DefId) -> bool;
-    fn is_extern_item<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, did: DefId) -> bool;
     fn is_foreign_item(&self, did: DefId) -> bool;
     fn is_statically_included_foreign_item(&self, id: ast::NodeId) -> bool;
 
@@ -201,8 +198,6 @@ pub trait CrateStore<'tcx> {
                              -> Option<DefIndex>;
     fn def_key(&self, def: DefId) -> hir_map::DefKey;
     fn relative_def_path(&self, def: DefId) -> Option<hir_map::DefPath>;
-    fn variant_kind(&self, def_id: DefId) -> Option<ty::VariantKind>;
-    fn struct_ctor_def_id(&self, struct_def_id: DefId) -> Option<DefId>;
     fn struct_field_names(&self, def: DefId) -> Vec<ast::Name>;
     fn item_children(&self, did: DefId) -> Vec<def::Export>;
 
@@ -212,8 +207,7 @@ pub trait CrateStore<'tcx> {
     fn local_node_for_inlined_defid(&'tcx self, def_id: DefId) -> Option<ast::NodeId>;
     fn defid_for_inlined_node(&'tcx self, node_id: ast::NodeId) -> Option<DefId>;
 
-    fn maybe_get_item_mir<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId)
-                              -> Option<Mir<'tcx>>;
+    fn get_item_mir<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId) -> Mir<'tcx>;
     fn is_item_mir_available(&self, def: DefId) -> bool;
 
     // This is basically a 1-based range of ints, which is a little
@@ -231,8 +225,7 @@ pub trait CrateStore<'tcx> {
     fn encode_metadata<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
                            reexports: &def::ExportMap,
                            link_meta: &LinkMeta,
-                           reachable: &NodeSet,
-                           mir_map: &MirMap<'tcx>) -> Vec<u8>;
+                           reachable: &NodeSet) -> Vec<u8>;
     fn metadata_encoding_version(&self) -> &[u8];
 }
 
@@ -337,8 +330,6 @@ impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
     fn is_const_fn(&self, did: DefId) -> bool { bug!("is_const_fn") }
     fn is_defaulted_trait(&self, did: DefId) -> bool { bug!("is_defaulted_trait") }
     fn is_default_impl(&self, impl_did: DefId) -> bool { bug!("is_default_impl") }
-    fn is_extern_item<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, did: DefId) -> bool
-        { bug!("is_extern_item") }
     fn is_foreign_item(&self, did: DefId) -> bool { bug!("is_foreign_item") }
     fn is_statically_included_foreign_item(&self, id: ast::NodeId) -> bool { false }
 
@@ -378,9 +369,6 @@ impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
     fn relative_def_path(&self, def: DefId) -> Option<hir_map::DefPath> {
         bug!("relative_def_path")
     }
-    fn variant_kind(&self, def_id: DefId) -> Option<ty::VariantKind> { bug!("variant_kind") }
-    fn struct_ctor_def_id(&self, struct_def_id: DefId) -> Option<DefId>
-        { bug!("struct_ctor_def_id") }
     fn struct_field_names(&self, def: DefId) -> Vec<ast::Name> { bug!("struct_field_names") }
     fn item_children(&self, did: DefId) -> Vec<def::Export> { bug!("item_children") }
 
@@ -396,8 +384,8 @@ impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
         bug!("defid_for_inlined_node")
     }
 
-    fn maybe_get_item_mir<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId)
-                              -> Option<Mir<'tcx>> { bug!("maybe_get_item_mir") }
+    fn get_item_mir<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId)
+                        -> Mir<'tcx> { bug!("get_item_mir") }
     fn is_item_mir_available(&self, def: DefId) -> bool {
         bug!("is_item_mir_available")
     }
@@ -418,18 +406,26 @@ impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
     fn encode_metadata<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
                            reexports: &def::ExportMap,
                            link_meta: &LinkMeta,
-                           reachable: &NodeSet,
-                           mir_map: &MirMap<'tcx>) -> Vec<u8> { vec![] }
+                           reachable: &NodeSet) -> Vec<u8> { vec![] }
     fn metadata_encoding_version(&self) -> &[u8] { bug!("metadata_encoding_version") }
 }
 
-pub enum LoadedMacro {
-    Def(ast::MacroDef),
-    CustomDerive(String, Rc<MultiItemModifier>),
+pub enum LoadedMacros {
+    MacroRules(Vec<ast::MacroDef>),
+    ProcMacros(Vec<(ast::Name, SyntaxExtension)>),
+}
+
+impl LoadedMacros {
+    pub fn is_proc_macros(&self) -> bool {
+        match *self {
+            LoadedMacros::ProcMacros(_) => true,
+            _ => false,
+        }
+    }
 }
 
 pub trait CrateLoader {
-    fn load_macros(&mut self, extern_crate: &ast::Item, allows_macros: bool) -> Vec<LoadedMacro>;
-    fn process_item(&mut self, item: &ast::Item, defs: &Definitions);
+    fn process_item(&mut self, item: &ast::Item, defs: &Definitions, load_macros: bool)
+                    -> Option<LoadedMacros>;
     fn postprocess(&mut self, krate: &ast::Crate);
 }

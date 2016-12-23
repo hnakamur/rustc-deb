@@ -126,7 +126,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
                 self.add_ast_node(pat.id, &[pats_exit])
             }
 
-            PatKind::Vec(ref pre, ref vec, ref post) => {
+            PatKind::Slice(ref pre, ref vec, ref post) => {
                 let pre_exit = self.pats_all(pre.iter(), pred);
                 let vec_exit = self.pats_all(vec.iter(), pre_exit);
                 let post_exit = self.pats_all(post.iter(), vec_exit);
@@ -298,7 +298,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
                 self.add_unreachable_node()
             }
 
-            hir::ExprVec(ref elems) => {
+            hir::ExprArray(ref elems) => {
                 self.straightline(expr, pred, elems.iter().map(|e| &**e))
             }
 
@@ -311,11 +311,11 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
             }
 
             hir::ExprIndex(ref l, ref r) |
-            hir::ExprBinary(_, ref l, ref r) if self.tcx.is_method_call(expr.id) => {
+            hir::ExprBinary(_, ref l, ref r) if self.tcx.tables().is_method_call(expr.id) => {
                 self.call(expr, pred, &l, Some(&**r).into_iter())
             }
 
-            hir::ExprUnary(_, ref e) if self.tcx.is_method_call(expr.id) => {
+            hir::ExprUnary(_, ref e) if self.tcx.tables().is_method_call(expr.id) => {
                 self.call(expr, pred, &e, None::<hir::Expr>.iter())
             }
 
@@ -372,9 +372,9 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
             func_or_rcvr: &hir::Expr,
             args: I) -> CFGIndex {
         let method_call = ty::MethodCall::expr(call_expr.id);
-        let fn_ty = match self.tcx.tables.borrow().method_map.get(&method_call) {
+        let fn_ty = match self.tcx.tables().method_map.get(&method_call) {
             Some(method) => method.ty,
-            None => self.tcx.expr_ty_adjusted(func_or_rcvr)
+            None => self.tcx.tables().expr_ty_adjusted(func_or_rcvr)
         };
 
         let func_or_rcvr_exit = self.expr(func_or_rcvr, pred);
@@ -536,7 +536,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
     fn add_contained_edge(&mut self,
                           source: CFGIndex,
                           target: CFGIndex) {
-        let data = CFGEdgeData {exiting_scopes: vec!() };
+        let data = CFGEdgeData {exiting_scopes: vec![] };
         self.graph.add_edge(source, target, data);
     }
 
@@ -545,7 +545,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
                         from_index: CFGIndex,
                         to_loop: LoopScope,
                         to_index: CFGIndex) {
-        let mut data = CFGEdgeData {exiting_scopes: vec!() };
+        let mut data = CFGEdgeData {exiting_scopes: vec![] };
         let mut scope = self.tcx.region_maps.node_extent(from_expr.id);
         let target_scope = self.tcx.region_maps.node_extent(to_loop.loop_id);
         while scope != target_scope {
@@ -559,7 +559,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
                           _from_expr: &hir::Expr,
                           from_index: CFGIndex) {
         let mut data = CFGEdgeData {
-            exiting_scopes: vec!(),
+            exiting_scopes: vec![],
         };
         for &LoopScope { loop_id: id, .. } in self.loop_scopes.iter().rev() {
             data.exiting_scopes.push(id);

@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// no-pretty-expanded unnecessary unsafe block generated
-
 #![deny(warnings)]
 #![allow(unused_must_use)]
 #![allow(unused_features)]
@@ -239,7 +237,7 @@ fn test_write() {
 // can do with them just yet (to test the output)
 fn test_print() {
     print!("hi");
-    print!("{:?}", vec!(0u8));
+    print!("{:?}", vec![0u8]);
     println!("hello");
     println!("this is a {}", "test");
     println!("{foo}", foo="bar");

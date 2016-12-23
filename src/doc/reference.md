@@ -2479,8 +2479,6 @@ The currently implemented features of the reference compiler are:
 * - `abi_vectorcall` - Allows the usage of the vectorcall calling convention
                              (e.g. `extern "vectorcall" func fn_();`)
 
-* - `dotdot_in_tuple_patterns` - Allows `..` in tuple (struct) patterns.
-
 * - `abi_sysv64` - Allows the usage of the system V AMD64 calling convention
                              (e.g. `extern "sysv64" func fn_();`)
 
@@ -2860,8 +2858,8 @@ assert_eq!(x, y);
 
 ### Unary operator expressions
 
-Rust defines the following unary operators. They are all written as prefix operators,
-before the expression they apply to.
+Rust defines the following unary operators. With the exception of `?`, they are
+all written as prefix operators, before the expression they apply to.
 
 * `-`
   : Negation. Signed integer types and floating-point types support negation. It
@@ -2890,6 +2888,10 @@ before the expression they apply to.
     If the `&` or `&mut` operators are applied to an rvalue, a
     temporary value is created; the lifetime of this temporary value
     is defined by [syntactic rules](#temporary-lifetimes).
+* `?`
+  : Propagating errors if applied to `Err(_)` and unwrapping if
+    applied to `Ok(_)`. Only works on the `Result<T, E>` type,
+    and written in postfix notation.
 
 ### Binary operator expressions
 
@@ -3109,10 +3111,12 @@ the lambda expression captures its environment by reference, effectively
 borrowing pointers to all outer variables mentioned inside the function.
 Alternately, the compiler may infer that a lambda expression should copy or
 move values (depending on their type) from the environment into the lambda
-expression's captured environment.
+expression's captured environment. A lambda can be forced to capture its
+environment by moving values by prefixing it with the `move` keyword.
 
 In this example, we define a function `ten_times` that takes a higher-order
-function argument, and we then call it with a lambda expression as an argument:
+function argument, and we then call it with a lambda expression as an argument,
+followed by a lambda expression that moves values from its environment.
 
 ```
 fn ten_times<F>(f: F) where F: Fn(i32) {
@@ -3122,6 +3126,9 @@ fn ten_times<F>(f: F) where F: Fn(i32) {
 }
 
 ten_times(|j| println!("hello, {}", j));
+
+let word = "konnichiwa".to_owned();
+ten_times(move |j| println!("{}, {}", word, j));
 ```
 
 ### Infinite loops
@@ -3751,6 +3758,21 @@ to an implicit type parameter representing the "implementing" type. In an impl,
 it is an alias for the implementing type. For example, in:
 
 ```
+pub trait From<T> {
+    fn from(T) -> Self;
+}
+
+impl From<i32> for String {
+    fn from(x: i32) -> Self {
+        x.to_string()
+    }
+}
+```
+
+The notation `Self` in the impl refers to the implementing type: `String`. In another 
+example:
+
+```
 trait Printable {
     fn make_string(&self) -> String;
 }
@@ -3958,6 +3980,16 @@ the top-level type for the implementation of the called method. If no such metho
 found, `.deref()` is called and the compiler continues to search for the method
 implementation in the returned type `U`.
 
+## The `Send` trait
+
+The `Send` trait indicates that a value of this type is safe to send from one
+thread to another.
+
+## The `Sync` trait
+
+The `Sync` trait indicates that a value of this type is safe to share between
+multiple threads.
+
 # Memory model
 
 A Rust program's memory consists of a static set of *items* and a *heap*.
@@ -4008,9 +4040,9 @@ Methods that take either `self` or `Box<Self>` can optionally place them in a
 mutable variable by prefixing them with `mut` (similar to regular arguments):
 
 ```
-trait Changer {
-    fn change(mut self) -> Self;
-    fn modify(mut self: Box<Self>) -> Box<Self>;
+trait Changer: Sized {
+    fn change(mut self) {}
+    fn modify(mut self: Box<Self>) {}
 }
 ```
 
@@ -4062,6 +4094,12 @@ be ignored in favor of only building the artifacts specified by command line.
   windows. This format is recommended for use in situations such as linking
   Rust code into an existing non-Rust application because it will not have
   dynamic dependencies on other Rust code.
+
+* `--crate-type=cdylib`, `#[crate_type = "cdylib"]` - A dynamic system
+  library will be produced.  This is used when compiling Rust code as
+  a dynamic library to be loaded from another language.  This output type will
+  create `*.so` files on Linux, `*.dylib` files on OSX, and `*.dll` files on
+  Windows.
 
 * `--crate-type=rlib`, `#[crate_type = "rlib"]` - A "Rust library" file will be
   produced. This is used as an intermediate artifact and can be thought of as a

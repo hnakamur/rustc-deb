@@ -116,7 +116,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ReachableContext<'a, 'tcx> {
             }
             hir::ExprMethodCall(..) => {
                 let method_call = ty::MethodCall::expr(expr.id);
-                let def_id = self.tcx.tables.borrow().method_map[&method_call].def_id;
+                let def_id = self.tcx.tables().method_map[&method_call].def_id;
 
                 // Mark the trait item (and, possibly, its default impl) as reachable
                 // Or mark inherent impl item as reachable
@@ -139,7 +139,7 @@ impl<'a, 'tcx> ReachableContext<'a, 'tcx> {
     fn new(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> ReachableContext<'a, 'tcx> {
         let any_library = tcx.sess.crate_types.borrow().iter().any(|ty| {
             *ty == config::CrateTypeRlib || *ty == config::CrateTypeDylib ||
-            *ty == config::CrateTypeRustcMacro
+            *ty == config::CrateTypeProcMacro
         });
         ReachableContext {
             tcx: tcx,

@@ -1267,7 +1267,7 @@ impl error::Error for TryRecvError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "emscripten")))]
 mod tests {
     use env;
     use super::*;
@@ -1939,9 +1939,16 @@ mod tests {
         // wait for the child thread to exit before we exit
         rx2.recv().unwrap();
     }
+
+    #[test]
+    fn issue_32114() {
+        let (tx, _) = channel();
+        let _ = tx.send(123);
+        assert_eq!(tx.send(123), Err(SendError(123)));
+    }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "emscripten")))]
 mod sync_tests {
     use env;
     use thread;

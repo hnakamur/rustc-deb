@@ -9,13 +9,13 @@
 // except according to those terms.
 
 use hir::def_id::DefId;
-use ty::subst::{self, Subst, Substs};
 use hir::map::definitions::DefPathData;
+use ty::subst::{self, Subst};
 use ty::{BrAnon, BrEnv, BrFresh, BrNamed};
 use ty::{TyBool, TyChar, TyAdt};
 use ty::{TyError, TyStr, TyArray, TySlice, TyFloat, TyFnDef, TyFnPtr};
 use ty::{TyParam, TyRawPtr, TyRef, TyNever, TyTuple};
-use ty::TyClosure;
+use ty::{TyClosure, TyProjection, TyAnon};
 use ty::{TyBox, TyTrait, TyInt, TyUint, TyInfer};
 use ty::{self, Ty, TyCtxt, TypeFoldable};
 use ty::fold::{TypeFolder, TypeVisitor};
@@ -447,32 +447,9 @@ impl<'tcx, 'container> fmt::Debug for ty::AdtDefData<'tcx, 'container> {
     }
 }
 
-impl<'tcx> fmt::Debug for ty::adjustment::AutoAdjustment<'tcx> {
+impl<'tcx> fmt::Debug for ty::adjustment::Adjustment<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            ty::adjustment::AdjustNeverToAny(ref target) => {
-                write!(f, "AdjustNeverToAny({:?})", target)
-            }
-            ty::adjustment::AdjustReifyFnPointer => {
-                write!(f, "AdjustReifyFnPointer")
-            }
-            ty::adjustment::AdjustUnsafeFnPointer => {
-                write!(f, "AdjustUnsafeFnPointer")
-            }
-            ty::adjustment::AdjustMutToConstPointer => {
-                write!(f, "AdjustMutToConstPointer")
-            }
-            ty::adjustment::AdjustDerefRef(ref data) => {
-                write!(f, "{:?}", data)
-            }
-        }
-    }
-}
-
-impl<'tcx> fmt::Debug for ty::adjustment::AutoDerefRef<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "AutoDerefRef({}, unsize={:?}, {:?})",
-               self.autoderefs, self.unsize, self.autoref)
+        write!(f, "{:?} -> {}", self.kind, self.target)
     }
 }
 
@@ -908,14 +885,14 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
                 })
             }
             TyTrait(ref data) => write!(f, "{}", data),
-            ty::TyProjection(ref data) => write!(f, "{}", data),
-            ty::TyAnon(def_id, substs) => {
+            TyProjection(ref data) => write!(f, "{}", data),
+            TyAnon(def_id, substs) => {
                 ty::tls::with(|tcx| {
                     // Grab the "TraitA + TraitB" from `impl TraitA + TraitB`,
                     // by looking up the projections associated with the def_id.
                     let item_predicates = tcx.lookup_predicates(def_id);
                     let substs = tcx.lift(&substs).unwrap_or_else(|| {
-                        Substs::empty(tcx)
+                        tcx.intern_substs(&[])
                     });
                     let bounds = item_predicates.instantiate(tcx, substs);
 

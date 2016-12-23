@@ -76,6 +76,12 @@
 # library and facade crates.
 #compiler-docs = false
 
+# Indicate whether submodules are managed and updated automatically.
+#submodules = true
+
+# The path to (or name of) the GDB executable to use
+#gdb = "gdb"
+
 # =============================================================================
 # Options for compiling Rust code itself
 # =============================================================================
@@ -95,6 +101,9 @@
 
 # Whether or not debuginfo is emitted
 #debuginfo = false
+
+# Whether or not line number debug information is emitted
+#debuginfo-lines = false
 
 # Whether or not jemalloc is built and enabled
 #use-jemalloc = true

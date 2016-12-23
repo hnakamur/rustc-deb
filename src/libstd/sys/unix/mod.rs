@@ -26,21 +26,27 @@ use libc;
 #[cfg(target_os = "openbsd")]   pub use os::openbsd as platform;
 #[cfg(target_os = "solaris")]   pub use os::solaris as platform;
 #[cfg(target_os = "emscripten")] pub use os::emscripten as platform;
+#[cfg(target_os = "fuchsia")]   pub use os::fuchsia as platform;
 
 #[macro_use]
 pub mod weak;
 
+pub mod args;
 pub mod android;
 #[cfg(any(not(cargobuild), feature = "backtrace"))]
 pub mod backtrace;
 pub mod condvar;
+pub mod env;
 pub mod ext;
+pub mod fast_thread_local;
 pub mod fd;
 pub mod fs;
+pub mod memchr;
 pub mod mutex;
 pub mod net;
 pub mod os;
 pub mod os_str;
+pub mod path;
 pub mod pipe;
 pub mod process;
 pub mod rand;
@@ -79,16 +85,16 @@ pub fn init() {
         unsafe {
             libc::write(libc::STDERR_FILENO,
                         msg.as_ptr() as *const libc::c_void,
-                        msg.len() as libc::size_t);
+                        msg.len());
             intrinsics::abort();
         }
     }
 
-    #[cfg(not(any(target_os = "nacl", target_os = "emscripten")))]
+    #[cfg(not(any(target_os = "nacl", target_os = "emscripten", target_os="fuchsia")))]
     unsafe fn reset_sigpipe() {
         assert!(signal(libc::SIGPIPE, libc::SIG_IGN) != !0);
     }
-    #[cfg(any(target_os = "nacl", target_os = "emscripten"))]
+    #[cfg(any(target_os = "nacl", target_os = "emscripten", target_os="fuchsia"))]
     unsafe fn reset_sigpipe() {}
 }
 
@@ -156,4 +162,15 @@ pub fn cvt_r<T, F>(mut f: F) -> io::Result<T>
             other => return other,
         }
     }
+}
+
+// On Unix-like platforms, libc::abort will unregister signal handlers
+// including the SIGABRT handler, preventing the abort from being blocked, and
+// fclose streams, with the side effect of flushing them so libc bufferred
+// output will be printed.  Additionally the shell will generally print a more
+// understandable error message like "Abort trap" rather than "Illegal
+// instruction" that intrinsics::abort would cause, as intrinsics::abort is
+// implemented as an illegal instruction.
+pub unsafe fn abort_internal() -> ! {
+    ::libc::abort()
 }

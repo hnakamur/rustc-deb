@@ -41,7 +41,7 @@ use hir;
 
 pub use lint::context::{LateContext, EarlyContext, LintContext, LintStore,
                         raw_emit_lint, check_crate, check_ast_crate, gather_attrs,
-                        raw_struct_lint, FutureIncompatibleInfo};
+                        raw_struct_lint, FutureIncompatibleInfo, EarlyLint, IntoEarlyLint};
 
 /// Specification of a single lint.
 #[derive(Copy, Clone, Debug)]
@@ -314,5 +314,4 @@ pub enum LintSource {
 pub type LevelSource = (Level, LintSource);
 
 pub mod builtin;
-
 mod context;

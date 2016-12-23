@@ -150,7 +150,7 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
                 self.check_variances_for_type_defn(item, ast_generics);
             }
             hir::ItemEnum(ref enum_def, ref ast_generics) => {
-                self.check_type_defn(item, false, |fcx| {
+                self.check_type_defn(item, true, |fcx| {
                     fcx.enum_variants(enum_def)
                 });
 
@@ -416,7 +416,7 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
                     }
                 }
                 None => {
-                    let self_ty = fcx.tcx.node_id_to_type(item.id);
+                    let self_ty = fcx.tcx.tables().node_id_to_type(item.id);
                     let self_ty = fcx.instantiate_type_scheme(item.span, free_substs, &self_ty);
                     fcx.register_wf_obligation(self_ty, ast_self_ty.span, this.code.clone());
                 }
@@ -519,7 +519,7 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
                                      item: &hir::Item,
                                      ast_generics: &hir::Generics)
     {
-        let ty = self.tcx().node_id_to_type(item.id);
+        let ty = self.tcx().tables().node_id_to_type(item.id);
         if self.tcx().has_error_field(ty) {
             return;
         }
@@ -649,7 +649,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         let fields =
             struct_def.fields().iter()
             .map(|field| {
-                let field_ty = self.tcx.node_id_to_type(field.id);
+                let field_ty = self.tcx.tables().node_id_to_type(field.id);
                 let field_ty = self.instantiate_type_scheme(field.span,
                                                             &self.parameter_environment
                                                                  .free_substs,

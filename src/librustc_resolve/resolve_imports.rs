@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use self::Determinacy::*;
 use self::ImportDirectiveSubclass::*;
 
 use Module;
@@ -25,7 +24,8 @@ use rustc::ty;
 use rustc::lint::builtin::PRIVATE_IN_PUBLIC;
 use rustc::hir::def::*;
 
-use syntax::ast::{NodeId, Name};
+use syntax::ast::{Ident, NodeId, Name};
+use syntax::ext::base::Determinacy::{self, Determined, Undetermined};
 use syntax::util::lev_distance::find_best_match_for_name;
 use syntax_pos::Span;
 
@@ -35,12 +35,6 @@ impl<'a> Resolver<'a> {
     pub fn resolve_imports(&mut self) {
         ImportResolver { resolver: self }.resolve_imports();
     }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum Determinacy {
-    Determined,
-    Undetermined,
 }
 
 /// Contains data for specific types of import directives.
@@ -75,7 +69,7 @@ impl<'a> ImportDirectiveSubclass<'a> {
 pub struct ImportDirective<'a> {
     pub id: NodeId,
     parent: Module<'a>,
-    module_path: Vec<Name>,
+    module_path: Vec<Ident>,
     imported_module: Cell<Option<Module<'a>>>, // the resolution of `module_path`
     subclass: ImportDirectiveSubclass<'a>,
     span: Span,
@@ -258,7 +252,7 @@ impl<'a> Resolver<'a> {
 
     // Add an import directive to the current module.
     pub fn add_import_directive(&mut self,
-                                module_path: Vec<Name>,
+                                module_path: Vec<Ident>,
                                 subclass: ImportDirectiveSubclass<'a>,
                                 span: Span,
                                 id: NodeId,
@@ -684,9 +678,8 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
         };
 
         match (value_result, type_result) {
-            // With `#![feature(item_like_imports)]`, all namespaces
-            // must be re-exported with extra visibility for an error to occur.
-            (Ok(value_binding), Ok(type_binding)) if self.new_import_semantics => {
+            // All namespaces must be re-exported with extra visibility for an error to occur.
+            (Ok(value_binding), Ok(type_binding)) => {
                 let vis = directive.vis.get();
                 if !value_binding.pseudo_vis().is_at_least(vis, self) &&
                    !type_binding.pseudo_vis().is_at_least(vis, self) {
@@ -799,7 +792,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                (binding.is_import() || binding.is_extern_crate()) {
                 let def = binding.def();
                 if def != Def::Err {
-                    reexports.push(Export { name: name, def_id: def.def_id() });
+                    reexports.push(Export { name: name, def: def });
                 }
             }
 
@@ -823,7 +816,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
     }
 }
 
-fn import_path_to_string(names: &[Name], subclass: &ImportDirectiveSubclass) -> String {
+fn import_path_to_string(names: &[Ident], subclass: &ImportDirectiveSubclass) -> String {
     if names.is_empty() {
         import_directive_subclass_to_string(subclass)
     } else {

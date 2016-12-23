@@ -20,14 +20,13 @@ use rustc::middle::region::{self, CodeExtent};
 use rustc::middle::region::CodeExtentData;
 use rustc::middle::resolve_lifetime;
 use rustc::middle::stability;
-use rustc::ty::subst::{Kind, Subst, Substs};
+use rustc::ty::subst::{Kind, Subst};
 use rustc::traits::Reveal;
 use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
 use rustc::infer::{self, InferOk, InferResult, TypeOrigin};
 use rustc_metadata::cstore::CStore;
 use rustc::hir::map as hir_map;
 use rustc::session::{self, config};
-use std::iter;
 use std::rc::Rc;
 use syntax::ast;
 use syntax::abi::Abi;
@@ -41,7 +40,7 @@ use syntax_pos::DUMMY_SP;
 
 use rustc::hir;
 
-struct Env<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
+struct Env<'a, 'gcx: 'a + 'tcx, 'tcx: 'a> {
     infcx: &'a infer::InferCtxt<'a, 'gcx, 'tcx>,
 }
 
@@ -87,8 +86,7 @@ impl Emitter for ExpectErrorEmitter {
 
 fn errors(msgs: &[&str]) -> (Box<Emitter + Send>, usize) {
     let v = msgs.iter().map(|m| m.to_string()).collect();
-    (box ExpectErrorEmitter { messages: v } as Box<Emitter + Send>,
-     msgs.len())
+    (box ExpectErrorEmitter { messages: v } as Box<Emitter + Send>, msgs.len())
 }
 
 fn test_env<F>(source_string: &str,
@@ -104,19 +102,28 @@ fn test_env<F>(source_string: &str,
     let dep_graph = DepGraph::new(false);
     let _ignore = dep_graph.in_ignore();
     let cstore = Rc::new(CStore::new(&dep_graph));
-    let sess = session::build_session_(options, &dep_graph, None, diagnostic_handler,
-                                       Rc::new(CodeMap::new()), cstore.clone());
+    let sess = session::build_session_(options,
+                                       &dep_graph,
+                                       None,
+                                       diagnostic_handler,
+                                       Rc::new(CodeMap::new()),
+                                       cstore.clone());
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
-    let krate_config = Vec::new();
     let input = config::Input::Str {
         name: driver::anon_src(),
         input: source_string.to_string(),
     };
-    let krate = driver::phase_1_parse_input(&sess, krate_config, &input).unwrap();
+    let krate = driver::phase_1_parse_input(&sess, &input).unwrap();
     let driver::ExpansionResult { defs, resolutions, mut hir_forest, .. } = {
-        driver::phase_2_configure_and_expand(
-            &sess, &cstore, krate, None, "test", None, MakeGlobMap::No, |_| Ok(()),
-        ).expect("phase 2 aborted")
+        driver::phase_2_configure_and_expand(&sess,
+                                             &cstore,
+                                             krate,
+                                             None,
+                                             "test",
+                                             None,
+                                             MakeGlobMap::No,
+                                             |_| Ok(()))
+            .expect("phase 2 aborted")
     };
     let _ignore = dep_graph.in_ignore();
 
@@ -169,14 +176,22 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
 
         let node = ast::NodeId::from_u32;
         let dscope = self.infcx
-                         .tcx
-                         .region_maps
-                         .intern_code_extent(CodeExtentData::DestructionScope(node(1)),
-                                             region::ROOT_CODE_EXTENT);
+            .tcx
+            .region_maps
+            .intern_code_extent(CodeExtentData::DestructionScope(node(1)),
+                                region::ROOT_CODE_EXTENT);
         self.create_region_hierarchy(&RH {
-            id: node(1),
-            sub: &[RH { id: node(10), sub: &[] }, RH { id: node(11), sub: &[] }],
-        }, dscope);
+                                         id: node(1),
+                                         sub: &[RH {
+                                                    id: node(10),
+                                                    sub: &[],
+                                                },
+                                                RH {
+                                                    id: node(11),
+                                                    sub: &[],
+                                                }],
+                                     },
+                                     dscope);
     }
 
     #[allow(dead_code)] // this seems like it could be useful, even if we don't use it now
@@ -215,22 +230,16 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
                 hir::ItemStatic(..) |
                 hir::ItemFn(..) |
                 hir::ItemForeignMod(..) |
-                hir::ItemTy(..) => {
-                    None
-                }
+                hir::ItemTy(..) => None,
 
                 hir::ItemEnum(..) |
                 hir::ItemStruct(..) |
                 hir::ItemUnion(..) |
                 hir::ItemTrait(..) |
                 hir::ItemImpl(..) |
-                hir::ItemDefaultImpl(..) => {
-                    None
-                }
+                hir::ItemDefaultImpl(..) => None,
 
-                hir::ItemMod(ref m) => {
-                    search_mod(this, m, idx, names)
-                }
+                hir::ItemMod(ref m) => search_mod(this, m, idx, names),
             };
         }
     }
@@ -275,7 +284,7 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
     }
 
     pub fn t_pair(&self, ty1: Ty<'tcx>, ty2: Ty<'tcx>) -> Ty<'tcx> {
-        self.infcx.tcx.mk_tup(vec![ty1, ty2])
+        self.infcx.tcx.intern_tup(&[ty1, ty2])
     }
 
     pub fn t_param(&self, index: u32) -> Ty<'tcx> {
@@ -283,10 +292,7 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
         self.infcx.tcx.mk_param(index, token::intern(&name[..]))
     }
 
-    pub fn re_early_bound(&self,
-                          index: u32,
-                          name: &'static str)
-                          -> &'tcx ty::Region {
+    pub fn re_early_bound(&self, index: u32, name: &'static str) -> &'tcx ty::Region {
         let name = token::intern(name);
         self.infcx.tcx.mk_region(ty::ReEarlyBound(ty::EarlyBoundRegion {
             index: index,
@@ -294,7 +300,9 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
         }))
     }
 
-    pub fn re_late_bound_with_debruijn(&self, id: u32, debruijn: ty::DebruijnIndex)
+    pub fn re_late_bound_with_debruijn(&self,
+                                       id: u32,
+                                       debruijn: ty::DebruijnIndex)
                                        -> &'tcx ty::Region {
         self.infcx.tcx.mk_region(ty::ReLateBound(debruijn, ty::BrAnon(id)))
     }
@@ -396,9 +404,7 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
 
                 self.assert_eq(t, t_lub);
             }
-            Err(ref e) => {
-                panic!("unexpected error in LUB: {}", e)
-            }
+            Err(ref e) => panic!("unexpected error in LUB: {}", e),
         }
     }
 
@@ -406,9 +412,7 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
     pub fn check_glb(&self, t1: Ty<'tcx>, t2: Ty<'tcx>, t_glb: Ty<'tcx>) {
         debug!("check_glb(t1={}, t2={}, t_glb={})", t1, t2, t_glb);
         match self.glb(t1, t2) {
-            Err(e) => {
-                panic!("unexpected error computing LUB: {:?}", e)
-            }
+            Err(e) => panic!("unexpected error computing LUB: {:?}", e),
             Ok(InferOk { obligations, value: t }) => {
                 // FIXME(#32730) once obligations are being propagated, assert the right thing.
                 assert!(obligations.is_empty());
@@ -679,7 +683,7 @@ fn subst_ty_renumber_bound() {
             env.t_fn(&[t_param], env.t_nil())
         };
 
-        let substs = Substs::new(env.infcx.tcx, iter::once(Kind::from(t_rptr_bound1)));
+        let substs = env.infcx.tcx.intern_substs(&[Kind::from(t_rptr_bound1)]);
         let t_substituted = t_source.subst(env.infcx.tcx, substs);
 
         // t_expected = fn(&'a isize)
@@ -714,7 +718,7 @@ fn subst_ty_renumber_some_bounds() {
             env.t_pair(t_param, env.t_fn(&[t_param], env.t_nil()))
         };
 
-        let substs = Substs::new(env.infcx.tcx, iter::once(Kind::from(t_rptr_bound1)));
+        let substs = env.infcx.tcx.intern_substs(&[Kind::from(t_rptr_bound1)]);
         let t_substituted = t_source.subst(env.infcx.tcx, substs);
 
         // t_expected = (&'a isize, fn(&'a isize))
@@ -776,7 +780,7 @@ fn subst_region_renumber_region() {
             env.t_fn(&[env.t_rptr(re_early)], env.t_nil())
         };
 
-        let substs = Substs::new(env.infcx.tcx, iter::once(Kind::from(re_bound1)));
+        let substs = env.infcx.tcx.intern_substs(&[Kind::from(re_bound1)]);
         let t_substituted = t_source.subst(env.infcx.tcx, substs);
 
         // t_expected = fn(&'a isize)
@@ -803,8 +807,8 @@ fn walk_ty() {
         let tcx = env.infcx.tcx;
         let int_ty = tcx.types.isize;
         let uint_ty = tcx.types.usize;
-        let tup1_ty = tcx.mk_tup(vec![int_ty, uint_ty, int_ty, uint_ty]);
-        let tup2_ty = tcx.mk_tup(vec![tup1_ty, tup1_ty, uint_ty]);
+        let tup1_ty = tcx.intern_tup(&[int_ty, uint_ty, int_ty, uint_ty]);
+        let tup2_ty = tcx.intern_tup(&[tup1_ty, tup1_ty, uint_ty]);
         let uniq_ty = tcx.mk_box(tup2_ty);
         let walked: Vec<_> = uniq_ty.walk().collect();
         assert_eq!(walked,
@@ -819,8 +823,8 @@ fn walk_ty_skip_subtree() {
         let tcx = env.infcx.tcx;
         let int_ty = tcx.types.isize;
         let uint_ty = tcx.types.usize;
-        let tup1_ty = tcx.mk_tup(vec![int_ty, uint_ty, int_ty, uint_ty]);
-        let tup2_ty = tcx.mk_tup(vec![tup1_ty, tup1_ty, uint_ty]);
+        let tup1_ty = tcx.intern_tup(&[int_ty, uint_ty, int_ty, uint_ty]);
+        let tup2_ty = tcx.intern_tup(&[tup1_ty, tup1_ty, uint_ty]);
         let uniq_ty = tcx.mk_box(tup2_ty);
 
         // types we expect to see (in order), plus a boolean saying

@@ -344,6 +344,22 @@ class RustBuild(object):
             ostype += 'eabihf'
         elif cputype == 'aarch64':
             cputype = 'aarch64'
+        elif cputype == 'mips':
+            if sys.byteorder == 'big':
+                cputype = 'mips'
+            elif sys.byteorder == 'little':
+                cputype = 'mipsel'
+            else:
+                raise ValueError('unknown byteorder: ' + sys.byteorder)
+        elif cputype == 'mips64':
+            if sys.byteorder == 'big':
+                cputype = 'mips64'
+            elif sys.byteorder == 'little':
+                cputype = 'mips64el'
+            else:
+                raise ValueError('unknown byteorder: ' + sys.byteorder)
+            # only the n64 ABI is supported, indicate it
+            ostype += 'abi64'
         elif cputype in {'powerpc', 'ppc', 'ppc64'}:
             cputype = 'powerpc'
         elif cputype in {'amd64', 'x86_64', 'x86-64', 'x64'}:
@@ -399,12 +415,10 @@ def main():
 
     # Run the bootstrap
     args = [os.path.join(rb.build_dir, "bootstrap/debug/bootstrap")]
-    args.append('--src')
-    args.append(rb.rust_root)
-    args.append('--build')
-    args.append(rb.build)
     args.extend(sys.argv[1:])
     env = os.environ.copy()
+    env["BUILD"] = rb.build
+    env["SRC"] = rb.rust_root
     env["BOOTSTRAP_PARENT_ID"] = str(os.getpid())
     rb.run(args, env)
 

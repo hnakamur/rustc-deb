@@ -92,6 +92,7 @@ pub trait Linker {
     fn whole_archives(&mut self);
     fn no_whole_archives(&mut self);
     fn export_symbols(&mut self, tmpdir: &Path, crate_type: CrateType);
+    fn subsystem(&mut self, subsystem: &str);
 }
 
 pub struct GnuLinker<'a> {
@@ -245,7 +246,7 @@ impl<'a> Linker for GnuLinker<'a> {
         // have far more public symbols than we actually want to export, so we
         // hide them all here.
         if crate_type == CrateType::CrateTypeDylib ||
-           crate_type == CrateType::CrateTypeRustcMacro {
+           crate_type == CrateType::CrateTypeProcMacro {
             return
         }
 
@@ -293,6 +294,10 @@ impl<'a> Linker for GnuLinker<'a> {
         }
 
         self.cmd.arg(arg);
+    }
+
+    fn subsystem(&mut self, subsystem: &str) {
+        self.cmd.arg(&format!("-Wl,--subsystem,{}", subsystem));
     }
 }
 
@@ -441,6 +446,30 @@ impl<'a> Linker for MsvcLinker<'a> {
         arg.push(path);
         self.cmd.arg(&arg);
     }
+
+    fn subsystem(&mut self, subsystem: &str) {
+        // Note that previous passes of the compiler validated this subsystem,
+        // so we just blindly pass it to the linker.
+        self.cmd.arg(&format!("/SUBSYSTEM:{}", subsystem));
+
+        // Windows has two subsystems we're interested in right now, the console
+        // and windows subsystems. These both implicitly have different entry
+        // points (starting symbols). The console entry point starts with
+        // `mainCRTStartup` and the windows entry point starts with
+        // `WinMainCRTStartup`. These entry points, defined in system libraries,
+        // will then later probe for either `main` or `WinMain`, respectively to
+        // start the application.
+        //
+        // In Rust we just always generate a `main` function so we want control
+        // to always start there, so we force the entry point on the windows
+        // subsystem to be `mainCRTStartup` to get everything booted up
+        // correctly.
+        //
+        // For more information see RFC #1665
+        if subsystem == "windows" {
+            self.cmd.arg("/ENTRY:mainCRTStartup");
+        }
+    }
 }
 
 fn exported_symbols(scx: &SharedCrateContext,
@@ -450,7 +479,7 @@ fn exported_symbols(scx: &SharedCrateContext,
     // See explanation in GnuLinker::export_symbols, for
     // why we don't ever need dylib symbols on non-MSVC.
     if crate_type == CrateType::CrateTypeDylib ||
-       crate_type == CrateType::CrateTypeRustcMacro {
+       crate_type == CrateType::CrateTypeProcMacro {
         if !scx.sess().target.target.options.is_like_msvc {
             return vec![];
         }

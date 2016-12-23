@@ -14,9 +14,10 @@
 
 use core::cmp::Ordering;
 use core::hash::{Hash, Hasher};
-use core::ops::Deref;
+use core::ops::{Add, AddAssign, Deref};
 
 use fmt;
+use string::String;
 
 use self::Cow::*;
 
@@ -86,16 +87,29 @@ impl<T> ToOwned for T where T: Clone {
 /// ```
 /// use std::borrow::Cow;
 ///
-/// # #[allow(dead_code)]
 /// fn abs_all(input: &mut Cow<[i32]>) {
 ///     for i in 0..input.len() {
 ///         let v = input[i];
 ///         if v < 0 {
-///             // clones into a vector the first time (if not already owned)
+///             // Clones into a vector if not already owned.
 ///             input.to_mut()[i] = -v;
 ///         }
 ///     }
 /// }
+///
+/// // No clone occurs because `input` doesn't need to be mutated.
+/// let slice = [0, 1, 2];
+/// let mut input = Cow::from(&slice[..]);
+/// abs_all(&mut input);
+///
+/// // Clone occurs because `input` needs to be mutated.
+/// let slice = [-1, 0, 1];
+/// let mut input = Cow::from(&slice[..]);
+/// abs_all(&mut input);
+///
+/// // No clone occurs because `input` is already owned.
+/// let mut input = Cow::from(vec![-1, 0, 1]);
+/// abs_all(&mut input);
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub enum Cow<'a, B: ?Sized + 'a>
@@ -146,7 +160,10 @@ impl<'a, B: ?Sized> Cow<'a, B> where B: ToOwned {
         match *self {
             Borrowed(borrowed) => {
                 *self = Owned(borrowed.to_owned());
-                self.to_mut()
+                match *self {
+                    Borrowed(..) => unreachable!(),
+                    Owned(ref mut owned) => owned,
+                }
             }
             Owned(ref mut owned) => owned,
         }
@@ -268,5 +285,63 @@ impl<'a, B: ?Sized> Hash for Cow<'a, B> where B: Hash + ToOwned {
 impl<'a, T: ?Sized + ToOwned> AsRef<T> for Cow<'a, T> {
     fn as_ref(&self) -> &T {
         self
+    }
+}
+
+#[stable(feature = "cow_add", since = "1.14.0")]
+impl<'a> Add<&'a str> for Cow<'a, str> {
+    type Output = Cow<'a, str>;
+
+    #[inline]
+    fn add(mut self, rhs: &'a str) -> Self::Output {
+        self += rhs;
+        self
+    }
+}
+
+#[stable(feature = "cow_add", since = "1.14.0")]
+impl<'a> Add<Cow<'a, str>> for Cow<'a, str> {
+    type Output = Cow<'a, str>;
+
+    #[inline]
+    fn add(mut self, rhs: Cow<'a, str>) -> Self::Output {
+        self += rhs;
+        self
+    }
+}
+
+#[stable(feature = "cow_add", since = "1.14.0")]
+impl<'a> AddAssign<&'a str> for Cow<'a, str> {
+    fn add_assign(&mut self, rhs: &'a str) {
+        if self.is_empty() {
+            *self = Cow::Borrowed(rhs)
+        } else if rhs.is_empty() {
+            return;
+        } else {
+            if let Cow::Borrowed(lhs) = *self {
+                let mut s = String::with_capacity(lhs.len() + rhs.len());
+                s.push_str(lhs);
+                *self = Cow::Owned(s);
+            }
+            self.to_mut().push_str(rhs);
+        }
+    }
+}
+
+#[stable(feature = "cow_add", since = "1.14.0")]
+impl<'a> AddAssign<Cow<'a, str>> for Cow<'a, str> {
+    fn add_assign(&mut self, rhs: Cow<'a, str>) {
+        if self.is_empty() {
+            *self = rhs
+        } else if rhs.is_empty() {
+            return;
+        } else {
+            if let Cow::Borrowed(lhs) = *self {
+                let mut s = String::with_capacity(lhs.len() + rhs.len());
+                s.push_str(lhs);
+                *self = Cow::Owned(s);
+            }
+            self.to_mut().push_str(&rhs);
+        }
     }
 }

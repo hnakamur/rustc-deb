@@ -19,6 +19,7 @@ pub use self::DebugInfoLevel::*;
 use session::{early_error, early_warn, Session};
 use session::search_paths::SearchPaths;
 
+use rustc_back::PanicStrategy;
 use rustc_back::target::Target;
 use lint;
 use middle::cstore;
@@ -288,6 +289,11 @@ top_level_options!(
         alt_std_name: Option<String> [TRACKED],
         // Indicates how the compiler should treat unstable features
         unstable_features: UnstableFeatures [TRACKED],
+
+        // Indicates whether this run of the compiler is actually rustdoc. This
+        // is currently just a hack and will be removed eventually, so please
+        // try to not rely on this too much.
+        actually_rustdoc: bool [TRACKED],
     }
 );
 
@@ -440,6 +446,7 @@ pub fn basic_options() -> Options {
         libs: Vec::new(),
         unstable_features: UnstableFeatures::Disallow,
         debug_assertions: true,
+        actually_rustdoc: false,
     }
 }
 
@@ -475,7 +482,7 @@ pub enum CrateType {
     CrateTypeRlib,
     CrateTypeStaticlib,
     CrateTypeCdylib,
-    CrateTypeRustcMacro,
+    CrateTypeProcMacro,
 }
 
 #[derive(Clone, Hash)]
@@ -489,21 +496,6 @@ impl Passes {
         match *self {
             SomePasses(ref v) => v.is_empty(),
             AllPasses => false,
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Hash, RustcEncodable, RustcDecodable)]
-pub enum PanicStrategy {
-    Unwind,
-    Abort,
-}
-
-impl PanicStrategy {
-    pub fn desc(&self) -> &str {
-        match *self {
-            PanicStrategy::Unwind => "unwind",
-            PanicStrategy::Abort => "abort",
         }
     }
 }
@@ -621,7 +613,8 @@ macro_rules! options {
 
     #[allow(dead_code)]
     mod $mod_set {
-        use super::{$struct_name, Passes, SomePasses, AllPasses, PanicStrategy};
+        use super::{$struct_name, Passes, SomePasses, AllPasses};
+        use rustc_back::PanicStrategy;
 
         $(
             pub fn $opt(cg: &mut $struct_name, v: Option<&str>) -> bool {
@@ -722,7 +715,7 @@ macro_rules! options {
                     true
                 }
                 v => {
-                    let mut passes = vec!();
+                    let mut passes = vec![];
                     if parse_list(&mut passes, v) {
                         *slot = SomePasses(passes);
                         true
@@ -733,10 +726,10 @@ macro_rules! options {
             }
         }
 
-        fn parse_panic_strategy(slot: &mut PanicStrategy, v: Option<&str>) -> bool {
+        fn parse_panic_strategy(slot: &mut Option<PanicStrategy>, v: Option<&str>) -> bool {
             match v {
-                Some("unwind") => *slot = PanicStrategy::Unwind,
-                Some("abort") => *slot = PanicStrategy::Abort,
+                Some("unwind") => *slot = Some(PanicStrategy::Unwind),
+                Some("abort") => *slot = Some(PanicStrategy::Abort),
                 _ => return false
             }
             true
@@ -810,7 +803,7 @@ options! {CodegenOptions, CodegenSetter, basic_codegen_options,
         "explicitly enable the cfg(debug_assertions) directive"),
     inline_threshold: Option<usize> = (None, parse_opt_uint, [TRACKED],
         "set the inlining threshold for"),
-    panic: PanicStrategy = (PanicStrategy::Unwind, parse_panic_strategy,
+    panic: Option<PanicStrategy> = (None, parse_panic_strategy,
         [TRACKED], "panic strategy to compile crate with"),
 }
 
@@ -925,6 +918,8 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
           "the directory the MIR is dumped into"),
     perf_stats: bool = (false, parse_bool, [UNTRACKED],
           "print some performance-related statistics"),
+    hir_stats: bool = (false, parse_bool, [UNTRACKED],
+          "print some statistics about AST and HIR"),
 }
 
 pub fn default_lib_output() -> CrateType {
@@ -940,7 +935,7 @@ pub fn default_configuration(sess: &Session) -> ast::CrateConfig {
     let os = &sess.target.target.target_os;
     let env = &sess.target.target.target_env;
     let vendor = &sess.target.target.target_vendor;
-    let max_atomic_width = sess.target.target.options.max_atomic_width;
+    let max_atomic_width = sess.target.target.max_atomic_width();
 
     let fam = if let Some(ref fam) = sess.target.target.options.target_family {
         intern(fam)
@@ -979,8 +974,8 @@ pub fn default_configuration(sess: &Session) -> ast::CrateConfig {
     if sess.opts.debug_assertions {
         ret.push(attr::mk_word_item(InternedString::new("debug_assertions")));
     }
-    if sess.opts.crate_types.contains(&CrateTypeRustcMacro) {
-        ret.push(attr::mk_word_item(InternedString::new("rustc_macro")));
+    if sess.opts.crate_types.contains(&CrateTypeProcMacro) {
+        ret.push(attr::mk_word_item(InternedString::new("proc_macro")));
     }
     return ret;
 }
@@ -1244,10 +1239,9 @@ pub fn rustc_optgroups() -> Vec<RustcOptGroup> {
 pub fn parse_cfgspecs(cfgspecs: Vec<String> ) -> ast::CrateConfig {
     cfgspecs.into_iter().map(|s| {
         let sess = parse::ParseSess::new();
-        let mut parser = parse::new_parser_from_source_str(&sess,
-                                                           Vec::new(),
-                                                           "cfgspec".to_string(),
-                                                           s.to_string());
+        let mut parser =
+            parse::new_parser_from_source_str(&sess, "cfgspec".to_string(), s.to_string());
+
         let meta_item = panictry!(parser.parse_meta_item());
 
         if !parser.reader.is_eof() {
@@ -1301,7 +1295,7 @@ pub fn build_session_options_and_crate_config(matches: &getopts::Matches)
     let crate_types = parse_crate_types_from_list(unparsed_crate_types)
         .unwrap_or_else(|e| early_error(error_format, &e[..]));
 
-    let mut lint_opts = vec!();
+    let mut lint_opts = vec![];
     let mut describe_lints = false;
 
     for &level in &[lint::Allow, lint::Warn, lint::Deny, lint::Forbid] {
@@ -1537,6 +1531,7 @@ pub fn build_session_options_and_crate_config(matches: &getopts::Matches)
         libs: libs,
         unstable_features: UnstableFeatures::from_environment(),
         debug_assertions: debug_assertions,
+        actually_rustdoc: false,
     },
     cfg)
 }
@@ -1552,7 +1547,7 @@ pub fn parse_crate_types_from_list(list_list: Vec<String>) -> Result<Vec<CrateTy
                 "dylib"     => CrateTypeDylib,
                 "cdylib"    => CrateTypeCdylib,
                 "bin"       => CrateTypeExecutable,
-                "rustc-macro" => CrateTypeRustcMacro,
+                "proc-macro" => CrateTypeProcMacro,
                 _ => {
                     return Err(format!("unknown crate type: `{}`",
                                        part));
@@ -1636,7 +1631,7 @@ impl fmt::Display for CrateType {
             CrateTypeRlib => "rlib".fmt(f),
             CrateTypeStaticlib => "staticlib".fmt(f),
             CrateTypeCdylib => "cdylib".fmt(f),
-            CrateTypeRustcMacro => "rustc-macro".fmt(f),
+            CrateTypeProcMacro => "proc-macro".fmt(f),
         }
     }
 }
@@ -1666,10 +1661,11 @@ mod dep_tracking {
     use std::collections::BTreeMap;
     use std::hash::Hash;
     use std::path::PathBuf;
-    use super::{Passes, PanicStrategy, CrateType, OptLevel, DebugInfoLevel,
-                OutputTypes, Externs, ErrorOutputType};
     use std::collections::hash_map::DefaultHasher;
+    use super::{Passes, CrateType, OptLevel, DebugInfoLevel,
+                OutputTypes, Externs, ErrorOutputType};
     use syntax::feature_gate::UnstableFeatures;
+    use rustc_back::PanicStrategy;
 
     pub trait DepTrackingHash {
         fn hash(&self, &mut DefaultHasher, ErrorOutputType);
@@ -1708,6 +1704,7 @@ mod dep_tracking {
     impl_dep_tracking_hash_via_hash!(Option<bool>);
     impl_dep_tracking_hash_via_hash!(Option<usize>);
     impl_dep_tracking_hash_via_hash!(Option<String>);
+    impl_dep_tracking_hash_via_hash!(Option<PanicStrategy>);
     impl_dep_tracking_hash_via_hash!(Option<lint::Level>);
     impl_dep_tracking_hash_via_hash!(Option<PathBuf>);
     impl_dep_tracking_hash_via_hash!(CrateType);
@@ -1774,7 +1771,8 @@ mod tests {
     use std::iter::FromIterator;
     use std::path::PathBuf;
     use std::rc::Rc;
-    use super::{OutputType, OutputTypes, Externs, PanicStrategy};
+    use super::{OutputType, OutputTypes, Externs};
+    use rustc_back::PanicStrategy;
     use syntax::{ast, attr};
     use syntax::parse::token::InternedString;
     use syntax::codemap::dummy_spanned;
@@ -2320,7 +2318,7 @@ mod tests {
         assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
 
         opts = reference.clone();
-        opts.cg.panic = PanicStrategy::Abort;
+        opts.cg.panic = Some(PanicStrategy::Abort);
         assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
     }
 

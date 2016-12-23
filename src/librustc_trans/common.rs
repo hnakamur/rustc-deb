@@ -19,6 +19,7 @@ use llvm::{True, False, Bool, OperandBundleDef};
 use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
 use rustc::infer::TransNormalize;
+use rustc::mir::Mir;
 use rustc::util::common::MemoizationMap;
 use middle::lang_items::LangItem;
 use rustc::ty::subst::Substs;
@@ -32,7 +33,6 @@ use consts;
 use debuginfo::{self, DebugLoc};
 use declare;
 use machine;
-use mir::CachedMir;
 use monomorphize;
 use type_::Type;
 use value::Value;
@@ -46,7 +46,7 @@ use arena::TypedArena;
 use libc::{c_uint, c_char};
 use std::ops::Deref;
 use std::ffi::CString;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, Ref};
 
 use syntax::ast;
 use syntax::parse::token::InternedString;
@@ -127,7 +127,7 @@ pub fn type_is_imm_pair<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>)
         Layout::FatPointer { .. } => true,
         Layout::Univariant { ref variant, .. } => {
             // There must be only 2 fields.
-            if variant.offset_after_field.len() != 2 {
+            if variant.offsets.len() != 2 {
                 return false;
             }
 
@@ -250,10 +250,8 @@ pub fn validate_substs(substs: &Substs) {
 // Function context.  Every LLVM function we create will have one of
 // these.
 pub struct FunctionContext<'a, 'tcx: 'a> {
-    // The MIR for this function. At present, this is optional because
-    // we only have MIR available for things that are local to the
-    // crate.
-    pub mir: Option<CachedMir<'a, 'tcx>>,
+    // The MIR for this function.
+    pub mir: Option<Ref<'tcx, Mir<'tcx>>>,
 
     // The ValueRef returned from a call to llvm::LLVMAddFunction; the
     // address of the first instruction in the sequence of
@@ -313,8 +311,8 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
 }
 
 impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
-    pub fn mir(&self) -> CachedMir<'a, 'tcx> {
-        self.mir.clone().expect("fcx.mir was empty")
+    pub fn mir(&self) -> Ref<'tcx, Mir<'tcx>> {
+        self.mir.as_ref().map(Ref::clone).expect("fcx.mir was empty")
     }
 
     pub fn cleanup(&self) {
@@ -376,7 +374,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         let tcx = ccx.tcx();
         match tcx.lang_items.eh_personality() {
             Some(def_id) if !base::wants_msvc_seh(ccx.sess()) => {
-                Callee::def(ccx, def_id, Substs::empty(tcx)).reify(ccx)
+                Callee::def(ccx, def_id, tcx.intern_substs(&[])).reify(ccx)
             }
             _ => {
                 if let Some(llpersonality) = ccx.eh_personality().get() {
@@ -403,7 +401,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         let tcx = ccx.tcx();
         assert!(ccx.sess().target.target.options.custom_unwind_resume);
         if let Some(def_id) = tcx.lang_items.eh_unwind_resume() {
-            return Callee::def(ccx, def_id, Substs::empty(tcx));
+            return Callee::def(ccx, def_id, tcx.intern_substs(&[]));
         }
 
         let ty = tcx.mk_fn_ptr(tcx.mk_bare_fn(ty::BareFnTy {
@@ -490,7 +488,7 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
         self.set_lpad_ref(lpad.map(|p| &*self.fcx().lpad_arena.alloc(p)))
     }
 
-    pub fn mir(&self) -> CachedMir<'blk, 'tcx> {
+    pub fn mir(&self) -> Ref<'tcx, Mir<'tcx>> {
         self.fcx.mir()
     }
 
@@ -609,7 +607,7 @@ impl<'blk, 'tcx> BlockAndBuilder<'blk, 'tcx> {
         self.bcx.llbb
     }
 
-    pub fn mir(&self) -> CachedMir<'blk, 'tcx> {
+    pub fn mir(&self) -> Ref<'tcx, Mir<'tcx>> {
         self.bcx.mir()
     }
 
@@ -799,9 +797,7 @@ pub fn C_cstr(cx: &CrateContext, s: InternedString, null_terminated: bool) -> Va
                                                 s.as_ptr() as *const c_char,
                                                 s.len() as c_uint,
                                                 !null_terminated as Bool);
-
-        let gsym = token::gensym("str");
-        let sym = format!("str{}", gsym.0);
+        let sym = cx.generate_local_symbol_name("str");
         let g = declare::define_global(cx, &sym[..], val_ty(sc)).unwrap_or_else(||{
             bug!("symbol `{}` is already defined", sym);
         });

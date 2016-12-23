@@ -50,9 +50,9 @@
 #![feature(specialization)]
 #![feature(staged_api)]
 #![feature(step_by)]
+#![feature(trusted_len)]
 #![feature(unicode)]
 #![feature(unique)]
-#![cfg_attr(stage0, feature(unsafe_no_drop_flag))]
 #![cfg_attr(test, feature(rand, test))]
 
 #![no_std]

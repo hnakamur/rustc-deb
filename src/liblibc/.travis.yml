@@ -33,7 +33,7 @@ matrix:
     # build documentation
     - os: linux
       env: TARGET=x86_64-unknown-linux-gnu
-      rust: nightly
+      rust: stable
       script: sh ci/dox.sh
 
     # stable compat
@@ -78,13 +78,16 @@ matrix:
       rust: stable
     - os: linux
       env: TARGET=powerpc64-unknown-linux-gnu
-      rust: stable
+      rust: beta
     - os: linux
       env: TARGET=mips-unknown-linux-musl
       rust: stable
     - os: linux
       env: TARGET=mipsel-unknown-linux-musl
       rust: stable
+    - os: linux
+      env: TARGET=mips64-unknown-linux-gnuabi64
+      rust: nightly
 
     # beta
     - os: linux

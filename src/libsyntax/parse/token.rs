@@ -53,21 +53,6 @@ pub enum DelimToken {
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Eq, Hash, Debug, Copy)]
-pub enum SpecialMacroVar {
-    /// `$crate` will be filled in with the name of the crate a macro was
-    /// imported from, if any.
-    CrateMacroVar,
-}
-
-impl SpecialMacroVar {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SpecialMacroVar::CrateMacroVar => "crate",
-        }
-    }
-}
-
-#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Eq, Hash, Debug, Copy)]
 pub enum Lit {
     Byte(ast::Name),
     Char(ast::Name),
@@ -138,7 +123,7 @@ pub enum Token {
     Lifetime(ast::Ident),
 
     /* For interpolation */
-    Interpolated(Nonterminal),
+    Interpolated(Rc<Nonterminal>),
     // Can be expanded into several tokens.
     /// Doc comment
     DocComment(ast::Name),
@@ -148,8 +133,6 @@ pub enum Token {
     // In right-hand-sides of MBE macros:
     /// A syntactic variable that will be filled in by macro expansion.
     SubstNt(ast::Ident),
-    /// A macro variable with special meaning.
-    SpecialVarNt(SpecialMacroVar),
 
     // Junk. These carry no data because we don't really care about the data
     // they *would* carry, and don't really want to allocate a new ident for
@@ -176,10 +159,8 @@ impl Token {
     /// Returns `true` if the token can appear at the start of an expression.
     pub fn can_begin_expr(&self) -> bool {
         match *self {
-            OpenDelim(_)                => true,
+            OpenDelim(..)               => true,
             Ident(..)                   => true,
-            Underscore                  => true,
-            Tilde                       => true,
             Literal(..)                 => true,
             Not                         => true,
             BinOp(Minus)                => true,
@@ -189,13 +170,17 @@ impl Token {
             OrOr                        => true, // in lambda syntax
             AndAnd                      => true, // double borrow
             DotDot | DotDotDot          => true, // range notation
+            Lt | BinOp(Shl)             => true, // associated path
             ModSep                      => true,
-            Interpolated(NtExpr(..))    => true,
-            Interpolated(NtIdent(..))   => true,
-            Interpolated(NtBlock(..))   => true,
-            Interpolated(NtPath(..))    => true,
             Pound                       => true, // for expression attributes
-            _                           => false,
+            Interpolated(ref nt) => match **nt {
+                NtExpr(..) => true,
+                NtIdent(..) => true,
+                NtBlock(..) => true,
+                NtPath(..) => true,
+                _ => false,
+            },
+            _ => false,
         }
     }
 
@@ -233,10 +218,12 @@ impl Token {
 
     /// Returns `true` if the token is an interpolated path.
     pub fn is_path(&self) -> bool {
-        match *self {
-            Interpolated(NtPath(..))    => true,
-            _                           => false,
+        if let Interpolated(ref nt) = *self {
+            if let NtPath(..) = **nt {
+                return true;
+            }
         }
+        false
     }
 
     /// Returns `true` if the token is a lifetime.
@@ -253,8 +240,12 @@ impl Token {
         self.is_keyword(keywords::Const)
     }
 
+    pub fn is_qpath_start(&self) -> bool {
+        self == &Lt || self == &BinOp(Shl)
+    }
+
     pub fn is_path_start(&self) -> bool {
-        self == &ModSep || self == &Lt || self.is_path() ||
+        self == &ModSep || self.is_qpath_start() || self.is_path() ||
         self.is_path_segment_keyword() || self.is_ident() && !self.is_any_keyword()
     }
 
@@ -304,19 +295,19 @@ impl Token {
 pub enum Nonterminal {
     NtItem(P<ast::Item>),
     NtBlock(P<ast::Block>),
-    NtStmt(P<ast::Stmt>),
+    NtStmt(ast::Stmt),
     NtPat(P<ast::Pat>),
     NtExpr(P<ast::Expr>),
     NtTy(P<ast::Ty>),
-    NtIdent(Box<ast::SpannedIdent>),
+    NtIdent(ast::SpannedIdent),
     /// Stuff inside brackets for attributes
     NtMeta(P<ast::MetaItem>),
-    NtPath(Box<ast::Path>),
-    NtTT(P<tokenstream::TokenTree>), // needs P'ed to break a circularity
+    NtPath(ast::Path),
+    NtTT(tokenstream::TokenTree),
     // These are not exposed to macros, but are used by quasiquote.
     NtArm(ast::Arm),
-    NtImplItem(P<ast::ImplItem>),
-    NtTraitItem(P<ast::TraitItem>),
+    NtImplItem(ast::ImplItem),
+    NtTraitItem(ast::TraitItem),
     NtGenerics(ast::Generics),
     NtWhereClause(ast::WhereClause),
     NtArg(ast::Arg),
@@ -478,27 +469,20 @@ pub fn clear_ident_interner() {
 /// somehow.
 #[derive(Clone, PartialEq, Hash, PartialOrd, Eq, Ord)]
 pub struct InternedString {
-    string: Rc<String>,
+    string: Rc<str>,
 }
 
 impl InternedString {
     #[inline]
     pub fn new(string: &'static str) -> InternedString {
         InternedString {
-            string: Rc::new(string.to_owned()),
-        }
-    }
-
-    #[inline]
-    fn new_from_rc_str(string: Rc<String>) -> InternedString {
-        InternedString {
-            string: string,
+            string: Rc::__from_str(string),
         }
     }
 
     #[inline]
     pub fn new_from_name(name: ast::Name) -> InternedString {
-        with_ident_interner(|interner| InternedString::new_from_rc_str(interner.get(name)))
+        with_ident_interner(|interner| InternedString { string: interner.get(name) })
     }
 }
 
@@ -566,7 +550,7 @@ impl PartialEq<InternedString> for str {
 
 impl Decodable for InternedString {
     fn decode<D: Decoder>(d: &mut D) -> Result<InternedString, D::Error> {
-        Ok(intern(d.read_str()?.as_ref()).as_str())
+        Ok(intern(&d.read_str()?).as_str())
     }
 }
 

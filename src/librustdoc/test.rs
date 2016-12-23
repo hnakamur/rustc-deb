@@ -66,31 +66,27 @@ pub fn run(input: &str,
         maybe_sysroot: Some(env::current_exe().unwrap().parent().unwrap()
                                               .parent().unwrap().to_path_buf()),
         search_paths: libs.clone(),
-        crate_types: vec!(config::CrateTypeDylib),
+        crate_types: vec![config::CrateTypeDylib],
         externs: externs.clone(),
         unstable_features: UnstableFeatures::from_environment(),
         ..config::basic_options().clone()
     };
 
     let codemap = Rc::new(CodeMap::new());
-    let diagnostic_handler = errors::Handler::with_tty_emitter(ColorConfig::Auto,
-                                                               true,
-                                                               false,
-                                                               Some(codemap.clone()));
+    let handler =
+        errors::Handler::with_tty_emitter(ColorConfig::Auto, true, false, Some(codemap.clone()));
 
     let dep_graph = DepGraph::new(false);
     let _ignore = dep_graph.in_ignore();
     let cstore = Rc::new(CStore::new(&dep_graph));
-    let sess = session::build_session_(sessopts,
-                                       &dep_graph,
-                                       Some(input_path.clone()),
-                                       diagnostic_handler,
-                                       codemap,
-                                       cstore.clone());
+    let mut sess = session::build_session_(
+        sessopts, &dep_graph, Some(input_path.clone()), handler, codemap, cstore.clone(),
+    );
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
+    sess.parse_sess.config =
+        config::build_configuration(&sess, config::parse_cfgspecs(cfgs.clone()));
 
-    let cfg = config::build_configuration(&sess, config::parse_cfgspecs(cfgs.clone()));
-    let krate = panictry!(driver::phase_1_parse_input(&sess, cfg, &input));
+    let krate = panictry!(driver::phase_1_parse_input(&sess, &input));
     let driver::ExpansionResult { defs, mut hir_forest, .. } = {
         phase_2_configure_and_expand(
             &sess, &cstore, krate, None, "rustdoc-test", None, MakeGlobMap::No, |_| Ok(())
@@ -169,7 +165,7 @@ fn scrape_test_config(krate: &::rustc::hir::Crate) -> TestOptions {
         }
     }
 
-    return opts;
+    opts
 }
 
 fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
@@ -189,7 +185,7 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
         maybe_sysroot: Some(env::current_exe().unwrap().parent().unwrap()
                                               .parent().unwrap().to_path_buf()),
         search_paths: libs,
-        crate_types: vec!(config::CrateTypeExecutable),
+        crate_types: vec![config::CrateTypeExecutable],
         output_types: outputs,
         externs: externs,
         cg: config::CodegenOptions {
@@ -228,7 +224,7 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
     let codemap = Rc::new(CodeMap::new());
     let emitter = errors::emitter::EmitterWriter::new(box Sink(data.clone()),
                                                       Some(codemap.clone()));
-    let old = io::set_panic(box Sink(data.clone()));
+    let old = io::set_panic(Some(box Sink(data.clone())));
     let _bomb = Bomb(data.clone(), old.unwrap_or(box io::stdout()));
 
     // Compile the code
@@ -236,18 +232,16 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
 
     let dep_graph = DepGraph::new(false);
     let cstore = Rc::new(CStore::new(&dep_graph));
-    let sess = session::build_session_(sessopts,
-                                       &dep_graph,
-                                       None,
-                                       diagnostic_handler,
-                                       codemap,
-                                       cstore.clone());
+    let mut sess = session::build_session_(
+        sessopts, &dep_graph, None, diagnostic_handler, codemap, cstore.clone(),
+    );
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
 
     let outdir = Mutex::new(TempDir::new("rustdoctest").ok().expect("rustdoc needs a tempdir"));
     let libdir = sess.target_filesearch(PathKind::All).get_lib_path();
     let mut control = driver::CompileController::basic();
-    let cfg = config::build_configuration(&sess, config::parse_cfgspecs(cfgs.clone()));
+    sess.parse_sess.config =
+        config::build_configuration(&sess, config::parse_cfgspecs(cfgs.clone()));
     let out = Some(outdir.lock().unwrap().path().to_path_buf());
 
     if no_run {
@@ -255,18 +249,16 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
     }
 
     let res = panic::catch_unwind(AssertUnwindSafe(|| {
-        driver::compile_input(&sess, &cstore, cfg.clone(),
-                              &input, &out,
-                              &None, None, &control)
+        driver::compile_input(&sess, &cstore, &input, &out, &None, None, &control)
     }));
 
     match res {
         Ok(r) => {
             match r {
                 Err(count) => {
-                    if count > 0 && compile_fail == false {
+                    if count > 0 && !compile_fail {
                         sess.fatal("aborting due to previous error(s)")
-                    } else if count == 0 && compile_fail == true {
+                    } else if count == 0 && compile_fail {
                         panic!("test compiled while it wasn't supposed to")
                     }
                     if count > 0 && error_codes.len() > 0 {
@@ -279,7 +271,7 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
             }
         }
         Err(_) => {
-            if compile_fail == false {
+            if !compile_fail {
                 panic!("couldn't compile the test");
             }
             if error_codes.len() > 0 {
@@ -355,7 +347,7 @@ pub fn maketest(s: &str, cratename: Option<&str>, dont_insert_main: bool,
     if dont_insert_main || s.contains("fn main") {
         prog.push_str(&everything_else);
     } else {
-        prog.push_str("fn main() {\n    ");
+        prog.push_str("fn main() {\n");
         prog.push_str(&everything_else);
         prog = prog.trim().into();
         prog.push_str("\n}");
@@ -363,7 +355,7 @@ pub fn maketest(s: &str, cratename: Option<&str>, dont_insert_main: bool,
 
     info!("final test program: {}", prog);
 
-    return prog
+    prog
 }
 
 fn partition_source(s: &str) -> (String, String) {
@@ -387,7 +379,7 @@ fn partition_source(s: &str) -> (String, String) {
         }
     }
 
-    return (before, after);
+    (before, after)
 }
 
 pub struct Collector {
@@ -443,7 +435,7 @@ impl Collector {
                 // compiler failures are test failures
                 should_panic: testing::ShouldPanic::No,
             },
-            testfn: testing::DynTestFn(box move|| {
+            testfn: testing::DynTestFn(box move |()| {
                 runtest(&test,
                         &cratename,
                         cfgs,

@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(dotdot_in_tuple_patterns)]
-
 struct S(u8, u8, u8);
 
 fn main() {
@@ -20,9 +18,9 @@ fn main() {
     }
     match S(1, 2, 3) {
         S(1, 2, 3, 4) => {}
-        //~^ ERROR this pattern has 4 fields, but the corresponding struct has 3 fields
+        //~^ ERROR this pattern has 4 fields, but the corresponding tuple struct has 3 fields
         S(1, 2, .., 3, 4) => {}
-        //~^ ERROR this pattern has 4 fields, but the corresponding struct has 3 fields
+        //~^ ERROR this pattern has 4 fields, but the corresponding tuple struct has 3 fields
         _ => {}
     }
 }
