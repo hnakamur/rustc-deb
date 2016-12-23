@@ -74,7 +74,7 @@ impl<'tcx> Callee<'tcx> {
     pub fn method_call<'blk>(bcx: Block<'blk, 'tcx>,
                              method_call: ty::MethodCall)
                              -> Callee<'tcx> {
-        let method = bcx.tcx().tables.borrow().method_map[&method_call];
+        let method = bcx.tcx().tables().method_map[&method_call];
         Callee::method(bcx, method)
     }
 
@@ -302,9 +302,8 @@ fn trans_fn_pointer_shim<'a, 'tcx>(
     };
 
     // Check if we already trans'd this shim.
-    match ccx.fn_pointer_shims().borrow().get(&bare_fn_ty_maybe_ref) {
-        Some(&llval) => { return llval; }
-        None => { }
+    if let Some(&llval) = ccx.fn_pointer_shims().borrow().get(&bare_fn_ty_maybe_ref) {
+        return llval;
     }
 
     debug!("trans_fn_pointer_shim(bare_fn_ty={:?})",
@@ -327,7 +326,7 @@ fn trans_fn_pointer_shim<'a, 'tcx>(
         }
     };
     let sig = tcx.erase_late_bound_regions_and_normalize(sig);
-    let tuple_input_ty = tcx.mk_tup(sig.inputs.to_vec());
+    let tuple_input_ty = tcx.intern_tup(&sig.inputs[..]);
     let sig = ty::FnSig {
         inputs: vec![bare_fn_ty_maybe_ref,
                      tuple_input_ty],

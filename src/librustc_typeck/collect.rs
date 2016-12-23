@@ -68,7 +68,6 @@ use rustc_const_eval::{eval_const_expr_partial, report_const_eval_err};
 use rustc::ty::subst::Substs;
 use rustc::ty::{ToPredicate, ImplContainer, ImplOrTraitItemContainer, TraitContainer};
 use rustc::ty::{self, AdtKind, ToPolyTraitRef, Ty, TyCtxt, TypeScheme};
-use rustc::ty::{VariantKind};
 use rustc::ty::util::IntTypeExt;
 use rscope::*;
 use rustc::dep_graph::DepNode;
@@ -87,7 +86,7 @@ use syntax::parse::token::keywords;
 use syntax_pos::Span;
 
 use rustc::hir::{self, intravisit, map as hir_map, print as pprust};
-use rustc::hir::def::Def;
+use rustc::hir::def::{Def, CtorKind};
 use rustc::hir::def_id::DefId;
 
 ///////////////////////////////////////////////////////////////////////////
@@ -157,13 +156,10 @@ impl<'a,'tcx> CrateCtxt<'a,'tcx> {
     {
         {
             let mut stack = self.stack.borrow_mut();
-            match stack.iter().enumerate().rev().find(|&(_, r)| *r == request) {
-                None => { }
-                Some((i, _)) => {
-                    let cycle = &stack[i..];
-                    self.report_cycle(span, cycle);
-                    return Err(ErrorReported);
-                }
+            if let Some((i, _)) = stack.iter().enumerate().rev().find(|&(_, r)| *r == request) {
+                let cycle = &stack[i..];
+                self.report_cycle(span, cycle);
+                return Err(ErrorReported);
             }
             stack.push(request);
         }
@@ -987,9 +983,9 @@ fn convert_variant_ctor<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     let tcx = ccx.tcx;
     let def_id = tcx.map.local_def_id(ctor_id);
     generics_of_def_id(ccx, def_id);
-    let ctor_ty = match variant.kind {
-        VariantKind::Unit | VariantKind::Struct => scheme.ty,
-        VariantKind::Tuple => {
+    let ctor_ty = match variant.ctor_kind {
+        CtorKind::Fictive | CtorKind::Const => scheme.ty,
+        CtorKind::Fn => {
             let inputs: Vec<_> =
                 variant.fields
                 .iter()
@@ -1066,7 +1062,7 @@ fn convert_struct_variant<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
         name: name,
         disr_val: disr_val,
         fields: fields,
-        kind: VariantKind::from_variant_data(def),
+        ctor_kind: CtorKind::from_hir(def),
     }
 }
 
@@ -1164,10 +1160,12 @@ fn convert_enum_def<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
         } else if let Some(disr) = repr_type.disr_incr(tcx, prev_disr) {
             Some(disr)
         } else {
-            span_err!(tcx.sess, v.span, E0370,
-                      "enum discriminant overflowed on value after {}; \
-                       set explicitly via {} = {} if that is desired outcome",
-                      prev_disr.unwrap(), v.node.name, wrapped_disr);
+            struct_span_err!(tcx.sess, v.span, E0370,
+                             "enum discriminant overflowed")
+                .span_label(v.span, &format!("overflowed on value after {}", prev_disr.unwrap()))
+                .note(&format!("explicitly set `{} = {}` if that is desired outcome",
+                               v.node.name, wrapped_disr))
+                .emit();
             None
         }.unwrap_or(wrapped_disr);
         prev_disr = Some(disr);
@@ -1389,7 +1387,7 @@ fn convert_trait_predicates<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>, it: &hir::Item)
             let bounds = match trait_item.node {
                 hir::TypeTraitItem(ref bounds, _) => bounds,
                 _ => {
-                    return vec!().into_iter();
+                    return vec![].into_iter();
                 }
             };
 
@@ -1481,6 +1479,7 @@ fn generics_of_def_id<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                             default_def_id: tcx.map.local_def_id(parent),
                             default: None,
                             object_lifetime_default: ty::ObjectLifetimeDefault::BaseDefault,
+                            pure_wrt_drop: false,
                         };
                         tcx.ty_param_defs.borrow_mut().insert(param_id, def.clone());
                         opt_self = Some(def);
@@ -1525,7 +1524,8 @@ fn generics_of_def_id<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                 def_id: tcx.map.local_def_id(l.lifetime.id),
                 bounds: l.bounds.iter().map(|l| {
                     ast_region_to_region(tcx, l)
-                }).collect()
+                }).collect(),
+                pure_wrt_drop: l.pure_wrt_drop,
             }
         }).collect::<Vec<_>>();
 
@@ -1724,16 +1724,15 @@ fn add_unsized_bound<'gcx: 'tcx, 'tcx>(astconv: &AstConv<'gcx, 'tcx>,
     match unbound {
         Some(ref tpb) => {
             // FIXME(#8559) currently requires the unbound to be built-in.
-            let trait_def_id = tcx.expect_def(tpb.ref_id).def_id();
-            match kind_id {
-                Ok(kind_id) if trait_def_id != kind_id => {
+            if let Ok(kind_id) = kind_id {
+                let trait_def = tcx.expect_def(tpb.ref_id);
+                if trait_def != Def::Trait(kind_id) {
                     tcx.sess.span_warn(span,
                                        "default bound relaxed for a type parameter, but \
                                        this does nothing because the given bound is not \
                                        a default. Only `?Sized` is supported");
                     tcx.try_add_builtin_trait(kind_id, bounds);
                 }
-                _ => {}
             }
         }
         _ if kind_id.is_ok() => {
@@ -1925,6 +1924,7 @@ fn get_or_create_type_parameter_def<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
         default_def_id: ccx.tcx.map.local_def_id(parent),
         default: default,
         object_lifetime_default: object_lifetime_default,
+        pure_wrt_drop: param.pure_wrt_drop,
     };
 
     if def.name == keywords::SelfType.name() {

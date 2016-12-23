@@ -632,6 +632,7 @@ endif
 # is a separate choice from whether to pass `-g` when building the
 # compiler and standard library themselves.
 CTEST_RUSTC_FLAGS := $$(subst -g,,$$(CTEST_RUSTC_FLAGS))
+CTEST_RUSTC_FLAGS := $$(subst -Cdebuginfo=1,,$$(CTEST_RUSTC_FLAGS))
 ifdef CFG_ENABLE_DEBUGINFO_TESTS
 CTEST_RUSTC_FLAGS += -g
 endif
@@ -647,7 +648,7 @@ CTEST_COMMON_ARGS$(1)-T-$(2)-H-$(3) = \
         --host $(3) \
 	--docck-python $$(CFG_PYTHON) \
 	--lldb-python $$(CFG_LLDB_PYTHON) \
-        --gdb-version="$(CFG_GDB_VERSION)" \
+        --gdb="$(CFG_GDB)" \
         --lldb-version="$(CFG_LLDB_VERSION)" \
         --llvm-version="$$(LLVM_VERSION_$(3))" \
         --android-cross-path=$(CFG_ARM_LINUX_ANDROIDEABI_NDK) \

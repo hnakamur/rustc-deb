@@ -328,6 +328,8 @@ pub use self::traits::{FromIterator, IntoIterator, DoubleEndedIterator, Extend};
 pub use self::traits::{ExactSizeIterator, Sum, Product};
 #[unstable(feature = "fused", issue = "35602")]
 pub use self::traits::FusedIterator;
+#[unstable(feature = "trusted_len", issue = "37572")]
+pub use self::traits::TrustedLen;
 
 mod iterator;
 mod range;
@@ -372,6 +374,10 @@ impl<I> ExactSizeIterator for Rev<I>
 impl<I> FusedIterator for Rev<I>
     where I: FusedIterator + DoubleEndedIterator {}
 
+#[unstable(feature = "trusted_len", issue = "37572")]
+unsafe impl<I> TrustedLen for Rev<I>
+    where I: TrustedLen + DoubleEndedIterator {}
+
 /// An iterator that clones the elements of an underlying iterator.
 ///
 /// This `struct` is created by the [`cloned()`] method on [`Iterator`]. See its
@@ -386,7 +392,7 @@ pub struct Cloned<I> {
     it: I,
 }
 
-#[stable(feature = "rust1", since = "1.0.0")]
+#[stable(feature = "iter_cloned", since = "1.1.0")]
 impl<'a, I, T: 'a> Iterator for Cloned<I>
     where I: Iterator<Item=&'a T>, T: Clone
 {
@@ -399,9 +405,15 @@ impl<'a, I, T: 'a> Iterator for Cloned<I>
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.it.size_hint()
     }
+
+    fn fold<Acc, F>(self, init: Acc, mut f: F) -> Acc
+        where F: FnMut(Acc, Self::Item) -> Acc,
+    {
+        self.it.fold(init, move |acc, elt| f(acc, elt.clone()))
+    }
 }
 
-#[stable(feature = "rust1", since = "1.0.0")]
+#[stable(feature = "iter_cloned", since = "1.1.0")]
 impl<'a, I, T: 'a> DoubleEndedIterator for Cloned<I>
     where I: DoubleEndedIterator<Item=&'a T>, T: Clone
 {
@@ -410,7 +422,7 @@ impl<'a, I, T: 'a> DoubleEndedIterator for Cloned<I>
     }
 }
 
-#[stable(feature = "rust1", since = "1.0.0")]
+#[stable(feature = "iter_cloned", since = "1.1.0")]
 impl<'a, I, T: 'a> ExactSizeIterator for Cloned<I>
     where I: ExactSizeIterator<Item=&'a T>, T: Clone
 {}
@@ -418,6 +430,24 @@ impl<'a, I, T: 'a> ExactSizeIterator for Cloned<I>
 #[unstable(feature = "fused", issue = "35602")]
 impl<'a, I, T: 'a> FusedIterator for Cloned<I>
     where I: FusedIterator<Item=&'a T>, T: Clone
+{}
+
+#[doc(hidden)]
+unsafe impl<'a, I, T: 'a> TrustedRandomAccess for Cloned<I>
+    where I: TrustedRandomAccess<Item=&'a T>, T: Clone
+{
+    unsafe fn get_unchecked(&mut self, i: usize) -> Self::Item {
+        self.it.get_unchecked(i).clone()
+    }
+
+    #[inline]
+    fn may_have_side_effect() -> bool { true }
+}
+
+#[unstable(feature = "trusted_len", issue = "37572")]
+unsafe impl<'a, I, T: 'a> TrustedLen for Cloned<I>
+    where I: TrustedLen<Item=&'a T>,
+          T: Clone
 {}
 
 /// An iterator that repeats endlessly.
@@ -532,6 +562,25 @@ impl<A, B> Iterator for Chain<A, B> where
         }
     }
 
+    fn fold<Acc, F>(self, init: Acc, mut f: F) -> Acc
+        where F: FnMut(Acc, Self::Item) -> Acc,
+    {
+        let mut accum = init;
+        match self.state {
+            ChainState::Both | ChainState::Front => {
+                accum = self.a.fold(accum, &mut f);
+            }
+            _ => { }
+        }
+        match self.state {
+            ChainState::Both | ChainState::Back => {
+                accum = self.b.fold(accum, &mut f);
+            }
+            _ => { }
+        }
+        accum
+    }
+
     #[inline]
     fn nth(&mut self, mut n: usize) -> Option<A::Item> {
         match self.state {
@@ -628,6 +677,11 @@ impl<A, B> DoubleEndedIterator for Chain<A, B> where
 impl<A, B> FusedIterator for Chain<A, B>
     where A: FusedIterator,
           B: FusedIterator<Item=A::Item>,
+{}
+
+#[unstable(feature = "trusted_len", issue = "37572")]
+unsafe impl<A, B> TrustedLen for Chain<A, B>
+    where A: TrustedLen, B: TrustedLen<Item=A::Item>,
 {}
 
 /// An iterator that iterates two other iterators simultaneously.
@@ -773,6 +827,13 @@ impl<A, B> ZipImpl<A, B> for Zip<A, B>
             unsafe {
                 Some((self.a.get_unchecked(i), self.b.get_unchecked(i)))
             }
+        } else if A::may_have_side_effect() && self.index < self.a.len() {
+            // match the base implementation's potential side effects
+            unsafe {
+                self.a.get_unchecked(self.index);
+            }
+            self.index += 1;
+            None
         } else {
             None
         }
@@ -789,6 +850,23 @@ impl<A, B> ZipImpl<A, B> for Zip<A, B>
         where A: DoubleEndedIterator + ExactSizeIterator,
               B: DoubleEndedIterator + ExactSizeIterator
     {
+        // Adjust a, b to equal length
+        if A::may_have_side_effect() {
+            let sz = self.a.len();
+            if sz > self.len {
+                for _ in 0..sz - cmp::max(self.len, self.index) {
+                    self.a.next_back();
+                }
+            }
+        }
+        if B::may_have_side_effect() {
+            let sz = self.b.len();
+            if sz > self.len {
+                for _ in 0..sz - self.len {
+                    self.b.next_back();
+                }
+            }
+        }
         if self.index < self.len {
             self.len -= 1;
             let i = self.len;
@@ -814,11 +892,19 @@ unsafe impl<A, B> TrustedRandomAccess for Zip<A, B>
         (self.a.get_unchecked(i), self.b.get_unchecked(i))
     }
 
+    fn may_have_side_effect() -> bool {
+        A::may_have_side_effect() || B::may_have_side_effect()
+    }
 }
 
 #[unstable(feature = "fused", issue = "35602")]
 impl<A, B> FusedIterator for Zip<A, B>
     where A: FusedIterator, B: FusedIterator, {}
+
+#[unstable(feature = "trusted_len", issue = "37572")]
+unsafe impl<A, B> TrustedLen for Zip<A, B>
+    where A: TrustedLen, B: TrustedLen,
+{}
 
 /// An iterator that maps the values of `iter` with `f`.
 ///
@@ -900,6 +986,13 @@ impl<B, I: Iterator, F> Iterator for Map<I, F> where F: FnMut(I::Item) -> B {
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.iter.size_hint()
     }
+
+    fn fold<Acc, G>(self, init: Acc, mut g: G) -> Acc
+        where G: FnMut(Acc, Self::Item) -> Acc,
+    {
+        let mut f = self.f;
+        self.iter.fold(init, move |acc, elt| g(acc, f(elt)))
+    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -919,6 +1012,23 @@ impl<B, I: ExactSizeIterator, F> ExactSizeIterator for Map<I, F>
 #[unstable(feature = "fused", issue = "35602")]
 impl<B, I: FusedIterator, F> FusedIterator for Map<I, F>
     where F: FnMut(I::Item) -> B {}
+
+#[unstable(feature = "trusted_len", issue = "37572")]
+unsafe impl<B, I, F> TrustedLen for Map<I, F>
+    where I: TrustedLen,
+          F: FnMut(I::Item) -> B {}
+
+#[doc(hidden)]
+unsafe impl<B, I, F> TrustedRandomAccess for Map<I, F>
+    where I: TrustedRandomAccess,
+          F: FnMut(I::Item) -> B,
+{
+    unsafe fn get_unchecked(&mut self, i: usize) -> Self::Item {
+        (self.f)(self.iter.get_unchecked(i))
+    }
+    #[inline]
+    fn may_have_side_effect() -> bool { true }
+}
 
 /// An iterator that filters the elements of `iter` with `predicate`.
 ///
@@ -1135,10 +1245,20 @@ unsafe impl<I> TrustedRandomAccess for Enumerate<I>
     unsafe fn get_unchecked(&mut self, i: usize) -> (usize, I::Item) {
         (self.count + i, self.iter.get_unchecked(i))
     }
+
+    fn may_have_side_effect() -> bool {
+        I::may_have_side_effect()
+    }
 }
 
 #[unstable(feature = "fused", issue = "35602")]
 impl<I> FusedIterator for Enumerate<I> where I: FusedIterator {}
+
+#[unstable(feature = "trusted_len", issue = "37572")]
+unsafe impl<I> TrustedLen for Enumerate<I>
+    where I: TrustedLen,
+{}
+
 
 /// An iterator with a `peek()` that returns an optional reference to the next
 /// element.
@@ -1254,10 +1374,7 @@ impl<I: Iterator> Peekable<I> {
         if self.peeked.is_none() {
             self.peeked = self.iter.next();
         }
-        match self.peeked {
-            Some(ref value) => Some(value),
-            None => None,
-        }
+        self.peeked.as_ref()
     }
 }
 
@@ -1763,6 +1880,10 @@ unsafe impl<I> TrustedRandomAccess for Fuse<I>
 {
     unsafe fn get_unchecked(&mut self, i: usize) -> I::Item {
         self.iter.get_unchecked(i)
+    }
+
+    fn may_have_side_effect() -> bool {
+        I::may_have_side_effect()
     }
 }
 

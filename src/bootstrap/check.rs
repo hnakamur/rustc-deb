@@ -13,9 +13,9 @@
 //! This file implements the various regression test suites that we execute on
 //! our CI.
 
+use std::collections::HashSet;
 use std::env;
-use std::fs::{self, File};
-use std::io::prelude::*;
+use std::fs;
 use std::path::{PathBuf, Path};
 use std::process::Command;
 
@@ -108,6 +108,10 @@ pub fn compiletest(build: &Build,
     cmd.arg("--host").arg(compiler.host);
     cmd.arg("--llvm-filecheck").arg(build.llvm_filecheck(&build.config.build));
 
+    if let Some(nodejs) = build.config.nodejs.as_ref() {
+        cmd.arg("--nodejs").arg(nodejs);
+    }
+
     let mut flags = vec!["-Crpath".to_string()];
     if build.config.rust_optimize_tests {
         flags.push("-O".to_string());
@@ -139,8 +143,8 @@ pub fn compiletest(build: &Build,
         cmd.arg("--lldb-python").arg(python_default);
     }
 
-    if let Some(ref vers) = build.gdb_version {
-        cmd.arg("--gdb-version").arg(vers);
+    if let Some(ref gdb) = build.config.gdb {
+        cmd.arg("--gdb").arg(gdb);
     }
     if let Some(ref vers) = build.lldb_version {
         cmd.arg("--lldb-version").arg(vers);
@@ -152,10 +156,14 @@ pub fn compiletest(build: &Build,
     let llvm_version = output(Command::new(&llvm_config).arg("--version"));
     cmd.arg("--llvm-version").arg(llvm_version);
 
-    cmd.args(&build.flags.args);
+    cmd.args(&build.flags.cmd.test_args());
 
     if build.config.verbose || build.flags.verbose {
         cmd.arg("--verbose");
+    }
+
+    if build.config.quiet_tests {
+        cmd.arg("--quiet");
     }
 
     // Only pass correct values for these flags for the `run-make` suite as it
@@ -248,7 +256,13 @@ fn markdown_test(build: &Build, compiler: &Compiler, markdown: &Path) {
     build.add_rustc_lib_path(compiler, &mut cmd);
     cmd.arg("--test");
     cmd.arg(markdown);
-    cmd.arg("--test-args").arg(build.flags.args.join(" "));
+
+    let mut test_args = build.flags.cmd.test_args().join(" ");
+    if build.config.quiet_tests {
+        test_args.push_str(" --quiet");
+    }
+    cmd.arg("--test-args").arg(test_args);
+
     build.run(&mut cmd);
 }
 
@@ -259,56 +273,58 @@ fn markdown_test(build: &Build, compiler: &Compiler, markdown: &Path) {
 /// It essentially is the driver for running `cargo test`.
 ///
 /// Currently this runs all tests for a DAG by passing a bunch of `-p foo`
-/// arguments, and those arguments are discovered from `Cargo.lock`.
+/// arguments, and those arguments are discovered from `cargo metadata`.
 pub fn krate(build: &Build,
              compiler: &Compiler,
              target: &str,
-             mode: Mode) {
-    let (name, path, features) = match mode {
-        Mode::Libstd => ("libstd", "src/rustc/std_shim", build.std_features()),
-        Mode::Libtest => ("libtest", "src/rustc/test_shim", String::new()),
-        Mode::Librustc => ("librustc", "src/rustc", build.rustc_features()),
+             mode: Mode,
+             krate: Option<&str>) {
+    let (name, path, features, root) = match mode {
+        Mode::Libstd => {
+            ("libstd", "src/rustc/std_shim", build.std_features(), "std_shim")
+        }
+        Mode::Libtest => {
+            ("libtest", "src/rustc/test_shim", String::new(), "test_shim")
+        }
+        Mode::Librustc => {
+            ("librustc", "src/rustc", build.rustc_features(), "rustc-main")
+        }
         _ => panic!("can only test libraries"),
     };
     println!("Testing {} stage{} ({} -> {})", name, compiler.stage,
              compiler.host, target);
 
     // Build up the base `cargo test` command.
+    //
+    // Pass in some standard flags then iterate over the graph we've discovered
+    // in `cargo metadata` with the maps above and figure out what `-p`
+    // arguments need to get passed.
     let mut cargo = build.cargo(compiler, mode, target, "test");
     cargo.arg("--manifest-path")
          .arg(build.src.join(path).join("Cargo.toml"))
          .arg("--features").arg(features);
 
-    // Generate a list of `-p` arguments to pass to the `cargo test` invocation
-    // by crawling the corresponding Cargo.lock file.
-    let lockfile = build.src.join(path).join("Cargo.lock");
-    let mut contents = String::new();
-    t!(t!(File::open(&lockfile)).read_to_string(&mut contents));
-    let mut lines = contents.lines();
-    while let Some(line) = lines.next() {
-        let prefix = "name = \"";
-        if !line.starts_with(prefix) {
-            continue
+    match krate {
+        Some(krate) => {
+            cargo.arg("-p").arg(krate);
         }
-        lines.next(); // skip `version = ...`
-
-        // skip crates.io or otherwise non-path crates
-        if let Some(line) = lines.next() {
-            if line.starts_with("source") {
-                continue
+        None => {
+            let mut visited = HashSet::new();
+            let mut next = vec![root];
+            while let Some(name) = next.pop() {
+                // Right now jemalloc is our only target-specific crate in the sense
+                // that it's not present on all platforms. Custom skip it here for now,
+                // but if we add more this probably wants to get more generalized.
+                if !name.contains("jemalloc") {
+                    cargo.arg("-p").arg(name);
+                }
+                for dep in build.crates[name].deps.iter() {
+                    if visited.insert(dep) {
+                        next.push(dep);
+                    }
+                }
             }
         }
-
-        let crate_name = &line[prefix.len()..line.len() - 1];
-
-        // Right now jemalloc is our only target-specific crate in the sense
-        // that it's not present on all platforms. Custom skip it here for now,
-        // but if we add more this probably wants to get more generalized.
-        if crate_name.contains("jemalloc") {
-            continue
-        }
-
-        cargo.arg("-p").arg(crate_name);
     }
 
     // The tests are going to run with the *target* libraries, so we need to
@@ -320,11 +336,19 @@ pub fn krate(build: &Build,
     dylib_path.insert(0, build.sysroot_libdir(compiler, target));
     cargo.env(dylib_path_var(), env::join_paths(&dylib_path).unwrap());
 
+    if build.config.quiet_tests {
+        cargo.arg("--");
+        cargo.arg("--quiet");
+    }
+
     if target.contains("android") {
         build.run(cargo.arg("--no-run"));
         krate_android(build, compiler, target, mode);
+    } else if target.contains("emscripten") {
+        build.run(cargo.arg("--no-run"));
+        krate_emscripten(build, compiler, target, mode);
     } else {
-        cargo.args(&build.flags.args);
+        cargo.args(&build.flags.cmd.test_args());
         build.run(&mut cargo);
     }
 }
@@ -356,7 +380,7 @@ fn krate_android(build: &Build,
                               target = target,
                               test = test_file_name,
                               log = log,
-                              args = build.flags.args.join(" "));
+                              args = build.flags.cmd.test_args().join(" "));
 
         let output = output(Command::new("adb").arg("shell").arg(&program));
         println!("{}", output);
@@ -371,6 +395,35 @@ fn krate_android(build: &Build,
     }
 }
 
+fn krate_emscripten(build: &Build,
+                    compiler: &Compiler,
+                    target: &str,
+                    mode: Mode) {
+     let mut tests = Vec::new();
+     let out_dir = build.cargo_out(compiler, mode, target);
+     find_tests(&out_dir, target, &mut tests);
+     find_tests(&out_dir.join("deps"), target, &mut tests);
+
+     for test in tests {
+         let test_file_name = test.to_string_lossy().into_owned();
+         println!("running {}", test_file_name);
+         let nodejs = build.config.nodejs.as_ref().expect("nodejs not configured");
+         let status = Command::new(nodejs)
+             .arg(&test_file_name)
+             .stderr(::std::process::Stdio::inherit())
+             .status();
+         match status {
+             Ok(status) => {
+                 if !status.success() {
+                     panic!("some tests failed");
+                 }
+             }
+             Err(e) => panic!(format!("failed to execute command: {}", e)),
+         };
+     }
+ }
+
+
 fn find_tests(dir: &Path,
               target: &str,
               dst: &mut Vec<PathBuf>) {
@@ -381,7 +434,8 @@ fn find_tests(dir: &Path,
         }
         let filename = e.file_name().into_string().unwrap();
         if (target.contains("windows") && filename.ends_with(".exe")) ||
-           (!target.contains("windows") && !filename.contains(".")) {
+           (!target.contains("windows") && !filename.contains(".")) ||
+           (target.contains("emscripten") && filename.contains(".js")){
             dst.push(e.path());
         }
     }

@@ -32,6 +32,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, ExitStatus};
 use std::str;
 
+use extract_gdb_version;
+
 pub fn run(config: Config, testpaths: &TestPaths) {
     match &*config.target {
 
@@ -41,7 +43,12 @@ pub fn run(config: Config, testpaths: &TestPaths) {
             }
         }
 
-        _=> { }
+        _ => {
+            // android has it's own gdb handling
+            if config.mode == DebugInfoGdb && config.gdb.is_none() {
+                panic!("gdb not available but debuginfo gdb debuginfo test requested");
+            }
+        }
     }
 
     if config.verbose {
@@ -253,7 +260,7 @@ impl<'test> TestCx<'test> {
 
         let mut src = String::new();
         File::open(&self.testpaths.file).unwrap().read_to_string(&mut src).unwrap();
-        let mut srcs = vec!(src);
+        let mut srcs = vec![src];
 
         let mut round = 0;
         while round < rounds {
@@ -335,13 +342,13 @@ impl<'test> TestCx<'test> {
                     -> ProcArgs {
         let aux_dir = self.aux_output_dir_name();
         // FIXME (#9639): This needs to handle non-utf8 paths
-        let mut args = vec!("-".to_owned(),
+        let mut args = vec!["-".to_owned(),
                             "-Zunstable-options".to_owned(),
                             "--unpretty".to_owned(),
                             pretty_type,
                             format!("--target={}", self.config.target),
                             "-L".to_owned(),
-                            aux_dir.to_str().unwrap().to_owned());
+                            aux_dir.to_str().unwrap().to_owned()];
         args.extend(self.split_maybe_args(&self.config.target_rustcflags));
         args.extend(self.props.compile_flags.iter().cloned());
         return ProcArgs {
@@ -388,7 +395,7 @@ actual:\n\
         self.create_dir_racy(&out_dir);
 
         // FIXME (#9639): This needs to handle non-utf8 paths
-        let mut args = vec!("-".to_owned(),
+        let mut args = vec!["-".to_owned(),
                             "-Zno-trans".to_owned(),
                             "--out-dir".to_owned(),
                             out_dir.to_str().unwrap().to_owned(),
@@ -396,7 +403,7 @@ actual:\n\
                             "-L".to_owned(),
                             self.config.build_base.to_str().unwrap().to_owned(),
                             "-L".to_owned(),
-                            aux_dir.to_str().unwrap().to_owned());
+                            aux_dir.to_str().unwrap().to_owned()];
         if let Some(revision) = self.revision {
             args.extend(vec![
                 format!("--cfg"),
@@ -430,11 +437,23 @@ actual:\n\
     }
 
     fn run_debuginfo_gdb_test_no_opt(&self) {
+        let prefixes = if self.config.gdb_native_rust {
+            // GDB with Rust
+            static PREFIXES: &'static [&'static str] = &["gdb", "gdbr"];
+            println!("NOTE: compiletest thinks it is using GDB with native rust support");
+            PREFIXES
+        } else {
+            // Generic GDB
+            static PREFIXES: &'static [&'static str] = &["gdb", "gdbg"];
+            println!("NOTE: compiletest thinks it is using GDB without native rust support");
+            PREFIXES
+        };
+
         let DebuggerCommands {
             commands,
             check_lines,
             breakpoint_lines
-        } = self.parse_debugger_commands("gdb");
+        } = self.parse_debugger_commands(prefixes);
         let mut cmds = commands.join("\n");
 
         // compile test file (it should have 'compile-flags:-g' in the header)
@@ -487,7 +506,7 @@ actual:\n\
                                  exe_file.to_str().unwrap().to_owned(),
                                  self.config.adb_test_dir.clone()
                              ],
-                             vec!(("".to_owned(), "".to_owned())),
+                             vec![("".to_owned(), "".to_owned())],
                              Some("".to_owned()))
                     .expect(&format!("failed to exec `{:?}`", self.config.adb_path));
 
@@ -499,7 +518,7 @@ actual:\n\
                                  "tcp:5039".to_owned(),
                                  "tcp:5039".to_owned()
                              ],
-                             vec!(("".to_owned(), "".to_owned())),
+                             vec![("".to_owned(), "".to_owned())],
                              Some("".to_owned()))
                     .expect(&format!("failed to exec `{:?}`", self.config.adb_path));
 
@@ -520,8 +539,8 @@ actual:\n\
                                                               "shell".to_owned(),
                                                               adb_arg.clone()
                                                           ],
-                                                          vec!(("".to_owned(),
-                                                                "".to_owned())),
+                                                          vec![("".to_owned(),
+                                                                "".to_owned())],
                                                           Some("".to_owned()))
                     .expect(&format!("failed to exec `{:?}`", self.config.adb_path));
                 loop {
@@ -535,10 +554,10 @@ actual:\n\
                 let debugger_script = self.make_out_name("debugger.script");
                 // FIXME (#9639): This needs to handle non-utf8 paths
                 let debugger_opts =
-                    vec!("-quiet".to_owned(),
+                    vec!["-quiet".to_owned(),
                          "-batch".to_owned(),
                          "-nx".to_owned(),
-                         format!("-command={}", debugger_script.to_str().unwrap()));
+                         format!("-command={}", debugger_script.to_str().unwrap())];
 
                 let mut gdb_path = tool_path;
                 gdb_path.push_str(&format!("/bin/{}-gdb", self.config.target));
@@ -550,7 +569,7 @@ actual:\n\
                                  &gdb_path,
                                  None,
                                  &debugger_opts,
-                                 vec!(("".to_owned(), "".to_owned())),
+                                 vec![("".to_owned(), "".to_owned())],
                                  None)
                     .expect(&format!("failed to exec `{:?}`", gdb_path));
                 let cmdline = {
@@ -586,19 +605,18 @@ actual:\n\
                 script_str.push_str("show version\n");
 
                 match self.config.gdb_version {
-                    Some(ref version) => {
+                    Some(version) => {
                         println!("NOTE: compiletest thinks it is using GDB version {}",
                                  version);
 
-                        if header::gdb_version_to_int(version) >
-                            header::gdb_version_to_int("7.4") {
-                                // Add the directory containing the pretty printers to
-                                // GDB's script auto loading safe path
-                                script_str.push_str(
-                                    &format!("add-auto-load-safe-path {}\n",
-                                             rust_pp_module_abs_path.replace(r"\", r"\\"))
-                                );
-                            }
+                        if version > extract_gdb_version("7.4").unwrap() {
+                            // Add the directory containing the pretty printers to
+                            // GDB's script auto loading safe path
+                            script_str.push_str(
+                                &format!("add-auto-load-safe-path {}\n",
+                                         rust_pp_module_abs_path.replace(r"\", r"\\"))
+                            );
+                        }
                     }
                     _ => {
                         println!("NOTE: compiletest does not know which version of \
@@ -633,22 +651,17 @@ actual:\n\
                 debug!("script_str = {}", script_str);
                 self.dump_output_file(&script_str, "debugger.script");
 
-                // run debugger script with gdb
-                fn debugger() -> &'static str {
-                    if cfg!(windows) {"gdb.exe"} else {"gdb"}
-                }
-
                 let debugger_script = self.make_out_name("debugger.script");
 
                 // FIXME (#9639): This needs to handle non-utf8 paths
                 let debugger_opts =
-                    vec!("-quiet".to_owned(),
+                    vec!["-quiet".to_owned(),
                          "-batch".to_owned(),
                          "-nx".to_owned(),
-                         format!("-command={}", debugger_script.to_str().unwrap()));
+                         format!("-command={}", debugger_script.to_str().unwrap())];
 
                 let proc_args = ProcArgs {
-                    prog: debugger().to_owned(),
+                    prog: self.config.gdb.as_ref().unwrap().to_owned(),
                     args: debugger_opts,
                 };
 
@@ -731,7 +744,7 @@ actual:\n\
             check_lines,
             breakpoint_lines,
             ..
-        } = self.parse_debugger_commands("lldb");
+        } = self.parse_debugger_commands(&["lldb"]);
 
         // Write debugger script:
         // We don't want to hang when calling `quit` while the process is still running
@@ -826,13 +839,15 @@ actual:\n\
         }
     }
 
-    fn parse_debugger_commands(&self, debugger_prefix: &str) -> DebuggerCommands {
-        let command_directive = format!("{}-command", debugger_prefix);
-        let check_directive = format!("{}-check", debugger_prefix);
+    fn parse_debugger_commands(&self, debugger_prefixes: &[&str]) -> DebuggerCommands {
+        let directives = debugger_prefixes.iter().map(|prefix| (
+            format!("{}-command", prefix),
+            format!("{}-check", prefix),
+        )).collect::<Vec<_>>();
 
-        let mut breakpoint_lines = vec!();
-        let mut commands = vec!();
-        let mut check_lines = vec!();
+        let mut breakpoint_lines = vec![];
+        let mut commands = vec![];
+        let mut check_lines = vec![];
         let mut counter = 1;
         let reader = BufReader::new(File::open(&self.testpaths.file).unwrap());
         for line in reader.lines() {
@@ -842,17 +857,19 @@ actual:\n\
                         breakpoint_lines.push(counter);
                     }
 
-                    header::parse_name_value_directive(
-                        &line,
-                        &command_directive).map(|cmd| {
-                            commands.push(cmd)
-                        });
+                    for &(ref command_directive, ref check_directive) in &directives {
+                        header::parse_name_value_directive(
+                            &line,
+                            &command_directive).map(|cmd| {
+                                commands.push(cmd)
+                            });
 
-                    header::parse_name_value_directive(
-                        &line,
-                        &check_directive).map(|cmd| {
-                            check_lines.push(cmd)
-                        });
+                        header::parse_name_value_directive(
+                            &line,
+                            &check_directive).map(|cmd| {
+                                check_lines.push(cmd)
+                            });
+                    }
                 }
                 Err(e) => {
                     self.fatal(&format!("Error while parsing debugger commands: {}", e))
@@ -1120,8 +1137,8 @@ actual:\n\
     fn compile_test(&self) -> ProcRes {
         let aux_dir = self.aux_output_dir_name();
         // FIXME (#9639): This needs to handle non-utf8 paths
-        let link_args = vec!("-L".to_owned(),
-                             aux_dir.to_str().unwrap().to_owned());
+        let link_args = vec!["-L".to_owned(),
+                             aux_dir.to_str().unwrap().to_owned()];
         let args = self.make_compile_args(link_args,
                                           &self.testpaths.file,
                                           TargetLocation::ThisFile(self.make_exe_name()));
@@ -1168,7 +1185,6 @@ actual:\n\
             "arm-linux-androideabi" | "armv7-linux-androideabi" | "aarch64-linux-android" => {
                 self._arm_exec_compiled_test(env)
             }
-
             _=> {
                 let aux_dir = self.aux_output_dir_name();
                 self.compose_and_run(self.make_run_args(),
@@ -1232,9 +1248,9 @@ actual:\n\
                 if (self.config.target.contains("musl") && !aux_props.force_host) ||
                     self.config.target.contains("emscripten")
                 {
-                    vec!("--crate-type=lib".to_owned())
+                    vec!["--crate-type=lib".to_owned()]
                 } else {
-                    vec!("--crate-type=dylib".to_owned())
+                    vec!["--crate-type=dylib".to_owned()]
                 }
             };
             crate_type.extend(extra_link_args.clone());
@@ -1316,10 +1332,10 @@ actual:\n\
         };
 
         // FIXME (#9639): This needs to handle non-utf8 paths
-        let mut args = vec!(input_file.to_str().unwrap().to_owned(),
+        let mut args = vec![input_file.to_str().unwrap().to_owned(),
                             "-L".to_owned(),
                             self.config.build_base.to_str().unwrap().to_owned(),
-                            format!("--target={}", target));
+                            format!("--target={}", target)];
 
         if let Some(revision) = self.revision {
             args.extend(vec![
@@ -1421,7 +1437,7 @@ actual:\n\
     fn make_exe_name(&self) -> PathBuf {
         let mut f = self.output_base_name();
         // FIXME: This is using the host architecture exe suffix, not target!
-        if self.config.target == "asmjs-unknown-emscripten" {
+        if self.config.target.contains("emscripten") {
             let mut fname = f.file_name().unwrap().to_os_string();
             fname.push(".js");
             f.set_file_name(&fname);
@@ -1439,8 +1455,9 @@ actual:\n\
         let mut args = self.split_maybe_args(&self.config.runtool);
 
         // If this is emscripten, then run tests under nodejs
-        if self.config.target == "asmjs-unknown-emscripten" {
-            args.push("nodejs".to_owned());
+        if self.config.target.contains("emscripten") {
+            let nodejs = self.config.nodejs.clone().unwrap_or("nodejs".to_string());
+            args.push(nodejs);
         }
 
         let exe_file = self.make_exe_name();
@@ -1613,7 +1630,7 @@ actual:\n\
                                            args.prog.clone(),
                                            self.config.adb_test_dir.clone()
                                        ],
-                                       vec!(("".to_owned(), "".to_owned())),
+                                       vec![("".to_owned(), "".to_owned())],
                                        Some("".to_owned()))
             .expect(&format!("failed to exec `{}`", self.config.adb_path));
 
@@ -1645,7 +1662,7 @@ actual:\n\
                      &self.config.adb_path,
                      None,
                      &runargs,
-                     vec!(("".to_owned(), "".to_owned())), Some("".to_owned()))
+                     vec![("".to_owned(), "".to_owned())], Some("".to_owned()))
             .expect(&format!("failed to exec `{}`", self.config.adb_path));
 
         // get exitcode of result
@@ -1659,7 +1676,7 @@ actual:\n\
                          &self.config.adb_path,
                          None,
                          &runargs,
-                         vec!(("".to_owned(), "".to_owned())),
+                         vec![("".to_owned(), "".to_owned())],
                          Some("".to_owned()))
             .expect(&format!("failed to exec `{}`", self.config.adb_path));
 
@@ -1683,7 +1700,7 @@ actual:\n\
                          &self.config.adb_path,
                          None,
                          &runargs,
-                         vec!(("".to_owned(), "".to_owned())),
+                         vec![("".to_owned(), "".to_owned())],
                          Some("".to_owned()))
             .expect(&format!("failed to exec `{}`", self.config.adb_path));
 
@@ -1698,7 +1715,7 @@ actual:\n\
                          &self.config.adb_path,
                          None,
                          &runargs,
-                         vec!(("".to_owned(), "".to_owned())),
+                         vec![("".to_owned(), "".to_owned())],
                          Some("".to_owned()))
             .expect(&format!("failed to exec `{}`", self.config.adb_path));
 
@@ -1730,8 +1747,8 @@ actual:\n\
                                                        .to_owned(),
                                                    self.config.adb_test_dir.to_owned(),
                                                ],
-                                               vec!(("".to_owned(),
-                                                     "".to_owned())),
+                                               vec![("".to_owned(),
+                                                     "".to_owned())],
                                                Some("".to_owned()))
                     .expect(&format!("failed to exec `{}`", self.config.adb_path));
 
@@ -1749,9 +1766,9 @@ actual:\n\
     fn compile_test_and_save_ir(&self) -> ProcRes {
         let aux_dir = self.aux_output_dir_name();
         // FIXME (#9639): This needs to handle non-utf8 paths
-        let mut link_args = vec!("-L".to_owned(),
-                                 aux_dir.to_str().unwrap().to_owned());
-        let llvm_args = vec!("--emit=llvm-ir".to_owned(),);
+        let mut link_args = vec!["-L".to_owned(),
+                                 aux_dir.to_str().unwrap().to_owned()];
+        let llvm_args = vec!["--emit=llvm-ir".to_owned(),];
         link_args.extend(llvm_args);
         let args = self.make_compile_args(link_args,
                                           &self.testpaths.file,
@@ -1768,8 +1785,8 @@ actual:\n\
         let proc_args = ProcArgs {
             // FIXME (#9639): This needs to handle non-utf8 paths
             prog: prog.to_str().unwrap().to_owned(),
-            args: vec!(format!("-input-file={}", irfile.to_str().unwrap()),
-                       self.testpaths.file.to_str().unwrap().to_owned())
+            args: vec![format!("-input-file={}", irfile.to_str().unwrap()),
+                       self.testpaths.file.to_str().unwrap().to_owned()]
         };
         self.compose_and_run(proc_args, Vec::new(), "", None, None)
     }
@@ -2105,12 +2122,17 @@ actual:\n\
                                                  .collect::<Vec<_>>().join(" ");
 
             cmd.env("IS_MSVC", "1")
+               .env("IS_WINDOWS", "1")
                .env("MSVC_LIB", format!("'{}' -nologo", lib.display()))
                .env("CC", format!("'{}' {}", self.config.cc, cflags))
                .env("CXX", &self.config.cxx);
         } else {
             cmd.env("CC", format!("{} {}", self.config.cc, self.config.cflags))
                .env("CXX", format!("{} {}", self.config.cxx, self.config.cflags));
+
+            if self.config.target.contains("windows") {
+                cmd.env("IS_WINDOWS", "1");
+            }
         }
 
         let output = cmd.output().expect("failed to spawn `make`");

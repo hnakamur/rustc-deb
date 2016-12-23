@@ -22,10 +22,10 @@ use super::util::impl_trait_ref_and_oblig;
 
 use rustc_data_structures::fnv::FnvHashMap;
 use hir::def_id::DefId;
-use infer::{InferCtxt, TypeOrigin};
+use infer::{InferCtxt, InferOk, TypeOrigin};
 use middle::region;
 use ty::subst::{Subst, Substs};
-use traits::{self, Reveal, ObligationCause, Normalized};
+use traits::{self, Reveal, ObligationCause};
 use ty::{self, TyCtxt, TypeFoldable};
 use syntax_pos::DUMMY_SP;
 
@@ -187,22 +187,16 @@ pub fn specializes<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                              .subst(tcx, &penv.free_substs);
 
     // Create a infcx, taking the predicates of impl1 as assumptions:
-    let result = tcx.infer_ctxt(None, Some(penv), Reveal::ExactMatch).enter(|mut infcx| {
-        // Normalize the trait reference, adding any obligations
-        // that arise into the impl1 assumptions.
-        let Normalized { value: impl1_trait_ref, obligations: normalization_obligations } = {
-            let selcx = &mut SelectionContext::new(&infcx);
-            traits::normalize(selcx, ObligationCause::dummy(), &impl1_trait_ref)
-        };
-        infcx.parameter_environment.caller_bounds
-            .extend(normalization_obligations.into_iter().map(|o| {
-            match tcx.lift_to_global(&o.predicate) {
-                Some(predicate) => predicate,
-                None => {
-                    bug!("specializes: obligation `{:?}` has inference types/regions", o);
+    let result = tcx.infer_ctxt(None, Some(penv), Reveal::ExactMatch).enter(|infcx| {
+        // Normalize the trait reference. The WF rules ought to ensure
+        // that this always succeeds.
+        let impl1_trait_ref =
+            match traits::fully_normalize(&infcx, ObligationCause::dummy(), &impl1_trait_ref) {
+                Ok(impl1_trait_ref) => impl1_trait_ref,
+                Err(err) => {
+                    bug!("failed to fully normalize {:?}: {:?}", impl1_trait_ref, err);
                 }
-            }
-        }));
+            };
 
         // Attempt to prove that impl2 applies, given all of the above.
         fulfill_implication(&infcx, impl1_trait_ref, impl2_def_id).is_ok()
@@ -228,14 +222,18 @@ fn fulfill_implication<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
                                                                    target_substs);
 
     // do the impls unify? If not, no specialization.
-    if let Err(_) = infcx.eq_trait_refs(true,
-                                        TypeOrigin::Misc(DUMMY_SP),
-                                        source_trait_ref,
-                                        target_trait_ref) {
-        debug!("fulfill_implication: {:?} does not unify with {:?}",
-               source_trait_ref,
-               target_trait_ref);
-        return Err(());
+    match infcx.eq_trait_refs(true, TypeOrigin::Misc(DUMMY_SP), source_trait_ref,
+                                                                target_trait_ref) {
+        Ok(InferOk { obligations, .. }) => {
+            // FIXME(#32730) propagate obligations
+            assert!(obligations.is_empty())
+        }
+        Err(_) => {
+            debug!("fulfill_implication: {:?} does not unify with {:?}",
+                   source_trait_ref,
+                   target_trait_ref);
+            return Err(());
+        }
     }
 
     // attempt to prove all of the predicates for impl2 given those for impl1

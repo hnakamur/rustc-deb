@@ -20,7 +20,7 @@
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(dotdot_in_tuple_patterns)]
+#![cfg_attr(stage0, feature(dotdot_in_tuple_patterns))]
 #![feature(libc)]
 #![feature(rustc_private)]
 #![feature(set_stdio)]
@@ -111,7 +111,7 @@ fn unstable(g: getopts::OptGroup) -> RustcOptGroup { RustcOptGroup::unstable(g) 
 
 pub fn opts() -> Vec<RustcOptGroup> {
     use getopts::*;
-    vec!(
+    vec![
         stable(optflag("h", "help", "show this help message")),
         stable(optflag("V", "version", "print rustdoc's version")),
         stable(optflag("v", "verbose", "use verbose output")),
@@ -162,7 +162,7 @@ pub fn opts() -> Vec<RustcOptGroup> {
         unstable(optmulti("Z", "",
                           "internal and debugging options (only on nightly build)", "FLAG")),
         stable(optopt("", "sysroot", "Override the system root", "PATH")),
-    )
+    ]
 }
 
 pub fn usage(argv0: &str) {
@@ -288,15 +288,14 @@ pub fn main_args(args: &[String]) -> isize {
                               passes.into_iter().collect(),
                               css_file_extension,
                               renderinfo)
-                .expect("failed to generate documentation")
+                .expect("failed to generate documentation");
+            0
         }
         Some(s) => {
             println!("unknown output format: {}", s);
-            return 1;
+            1
         }
     }
-
-    return 0;
 }
 
 /// Looks inside the command line arguments to extract the relevant input format

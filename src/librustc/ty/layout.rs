@@ -511,11 +511,11 @@ pub struct Struct {
     /// If true, the size is exact, otherwise it's only a lower bound.
     pub sized: bool,
 
-    /// Offsets for the first byte after each field.
-    /// That is, field_offset(i) = offset_after_field[i - 1] and the
-    /// whole structure's size is the last offset, excluding padding.
-    // FIXME(eddyb) use small vector optimization for the common case.
-    pub offset_after_field: Vec<Size>
+    /// Offsets for the first byte of each field.
+    /// FIXME(eddyb) use small vector optimization for the common case.
+    pub offsets: Vec<Size>,
+
+    pub min_size: Size,
 }
 
 impl<'a, 'gcx, 'tcx> Struct {
@@ -524,7 +524,8 @@ impl<'a, 'gcx, 'tcx> Struct {
             align: if packed { dl.i8_align } else { dl.aggregate_align },
             packed: packed,
             sized: true,
-            offset_after_field: vec![]
+            offsets: vec![],
+            min_size: Size::from_bytes(0),
         }
     }
 
@@ -534,12 +535,14 @@ impl<'a, 'gcx, 'tcx> Struct {
                      scapegoat: Ty<'gcx>)
                      -> Result<(), LayoutError<'gcx>>
     where I: Iterator<Item=Result<&'a Layout, LayoutError<'gcx>>> {
-        self.offset_after_field.reserve(fields.size_hint().0);
+        self.offsets.reserve(fields.size_hint().0);
+
+        let mut offset = self.min_size;
 
         for field in fields {
             if !self.sized {
                 bug!("Struct::extend: field #{} of `{}` comes after unsized field",
-                     self.offset_after_field.len(), scapegoat);
+                     self.offsets.len(), scapegoat);
             }
 
             let field = field?;
@@ -548,34 +551,29 @@ impl<'a, 'gcx, 'tcx> Struct {
             }
 
             // Invariant: offset < dl.obj_size_bound() <= 1<<61
-            let mut offset = if !self.packed {
+            if !self.packed {
                 let align = field.align(dl);
                 self.align = self.align.max(align);
-                self.offset_after_field.last_mut().map_or(Size::from_bytes(0), |last| {
-                    *last = last.abi_align(align);
-                    *last
-                })
-            } else {
-                self.offset_after_field.last().map_or(Size::from_bytes(0), |&last| last)
-            };
+                offset = offset.abi_align(align);
+            }
+
+            self.offsets.push(offset);
+
 
             offset = offset.checked_add(field.size(dl), dl)
                            .map_or(Err(LayoutError::SizeOverflow(scapegoat)), Ok)?;
-
-            self.offset_after_field.push(offset);
         }
+
+        self.min_size = offset;
 
         Ok(())
     }
 
     /// Get the size without trailing alignment padding.
-    pub fn min_size(&self) -> Size {
-        self.offset_after_field.last().map_or(Size::from_bytes(0), |&last| last)
-    }
 
     /// Get the size with trailing aligment padding.
     pub fn stride(&self) -> Size {
-        self.min_size().abi_align(self.align)
+        self.min_size.abi_align(self.align)
     }
 
     /// Determine whether a structure would be zero-sized, given its fields.
@@ -599,7 +597,8 @@ impl<'a, 'gcx, 'tcx> Struct {
                                   -> Result<Option<FieldPath>, LayoutError<'gcx>> {
         let tcx = infcx.tcx.global_tcx();
         match (ty.layout(infcx)?, &ty.sty) {
-            (&Scalar { non_zero: true, .. }, _) => Ok(Some(vec![])),
+            (&Scalar { non_zero: true, .. }, _) |
+            (&CEnum { non_zero: true, .. }, _) => Ok(Some(vec![])),
             (&FatPointer { non_zero: true, .. }, _) => {
                 Ok(Some(vec![FAT_PTR_ADDR as u32]))
             }
@@ -670,15 +669,6 @@ impl<'a, 'gcx, 'tcx> Struct {
             }
         }
         Ok(None)
-    }
-
-    pub fn offset_of_field(&self, index: usize) -> Size {
-        assert!(index < self.offset_after_field.len());
-        if index == 0 {
-            Size::from_bytes(0)
-        } else {
-            self.offset_after_field[index-1]
-        }
     }
 }
 
@@ -780,6 +770,7 @@ pub enum Layout {
     CEnum {
         discr: Integer,
         signed: bool,
+        non_zero: bool,
         // Inclusive discriminant range.
         // If min > max, it represents min...u64::MAX followed by 0...max.
         // FIXME(eddyb) always use the shortest range, e.g. by finding
@@ -1013,9 +1004,10 @@ impl<'a, 'gcx, 'tcx> Layout {
 
                 if def.is_enum() && def.variants.iter().all(|v| v.fields.is_empty()) {
                     // All bodies empty -> intlike
-                    let (mut min, mut max) = (i64::MAX, i64::MIN);
+                    let (mut min, mut max, mut non_zero) = (i64::MAX, i64::MIN, true);
                     for v in &def.variants {
                         let x = v.disr_val.to_u64_unchecked() as i64;
+                        if x == 0 { non_zero = false; }
                         if x < min { min = x; }
                         if x > max { max = x; }
                     }
@@ -1024,6 +1016,7 @@ impl<'a, 'gcx, 'tcx> Layout {
                     return success(CEnum {
                         discr: discr,
                         signed: signed,
+                        non_zero: non_zero,
                         min: min as u64,
                         max: max as u64
                     });
@@ -1080,19 +1073,17 @@ impl<'a, 'gcx, 'tcx> Layout {
 
                         // FIXME(eddyb) should take advantage of a newtype.
                         if path == &[0] && variants[discr].len() == 1 {
-                            match *variants[discr][0].layout(infcx)? {
-                                Scalar { value, .. } => {
-                                    return success(RawNullablePointer {
-                                        nndiscr: discr as u64,
-                                        value: value
-                                    });
-                                }
-                                _ => {
-                                    bug!("Layout::compute: `{}`'s non-zero \
-                                        `{}` field not scalar?!",
-                                        ty, variants[discr][0])
-                                }
-                            }
+                            let value = match *variants[discr][0].layout(infcx)? {
+                                Scalar { value, .. } => value,
+                                CEnum { discr, .. } => Int(discr),
+                                _ => bug!("Layout::compute: `{}`'s non-zero \
+                                           `{}` field not scalar?!",
+                                           ty, variants[discr][0])
+                            };
+                            return success(RawNullablePointer {
+                                nndiscr: discr as u64,
+                                value: value,
+                            });
                         }
 
                         path.push(0); // For GEP through a pointer.
@@ -1138,7 +1129,7 @@ impl<'a, 'gcx, 'tcx> Layout {
                     });
                     let mut st = Struct::new(dl, false);
                     st.extend(dl, discr.iter().map(Ok).chain(fields), ty)?;
-                    size = cmp::max(size, st.min_size());
+                    size = cmp::max(size, st.min_size);
                     align = align.max(st.align);
                     Ok(st)
                 }).collect::<Result<Vec<_>, _>>()?;
@@ -1171,11 +1162,15 @@ impl<'a, 'gcx, 'tcx> Layout {
                     let old_ity_size = Int(min_ity).size(dl);
                     let new_ity_size = Int(ity).size(dl);
                     for variant in &mut variants {
-                        for offset in &mut variant.offset_after_field {
+                        for offset in &mut variant.offsets[1..] {
                             if *offset > old_ity_size {
                                 break;
                             }
                             *offset = new_ity_size;
+                        }
+                        // We might be making the struct larger.
+                        if variant.min_size <= old_ity_size {
+                            variant.min_size = new_ity_size;
                         }
                     }
                 }

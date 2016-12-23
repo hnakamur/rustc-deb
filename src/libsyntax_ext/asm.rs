@@ -107,7 +107,7 @@ pub fn expand_asm<'cx>(cx: &'cx mut ExtCtxt,
                 if p2.token != token::Eof {
                     let mut extra_tts = panictry!(p2.parse_all_token_trees());
                     extra_tts.extend(tts[first_colon..].iter().cloned());
-                    p = parse::tts_to_parser(cx.parse_sess, extra_tts, cx.cfg());
+                    p = parse::tts_to_parser(cx.parse_sess, extra_tts);
                 }
 
                 asm = s;
@@ -122,7 +122,7 @@ pub fn expand_asm<'cx>(cx: &'cx mut ExtCtxt,
 
                     let (constraint, _str_style) = panictry!(p.parse_str());
 
-                    let span = p.last_span;
+                    let span = p.prev_span;
 
                     panictry!(p.expect(&token::OpenDelim(token::Paren)));
                     let out = panictry!(p.parse_expr());
@@ -167,9 +167,9 @@ pub fn expand_asm<'cx>(cx: &'cx mut ExtCtxt,
                     let (constraint, _str_style) = panictry!(p.parse_str());
 
                     if constraint.starts_with("=") {
-                        cx.span_err(p.last_span, "input operand constraint contains '='");
+                        cx.span_err(p.prev_span, "input operand constraint contains '='");
                     } else if constraint.starts_with("+") {
-                        cx.span_err(p.last_span, "input operand constraint contains '+'");
+                        cx.span_err(p.prev_span, "input operand constraint contains '+'");
                     }
 
                     panictry!(p.expect(&token::OpenDelim(token::Paren)));
@@ -189,9 +189,9 @@ pub fn expand_asm<'cx>(cx: &'cx mut ExtCtxt,
                     let (s, _str_style) = panictry!(p.parse_str());
 
                     if OPTIONS.iter().any(|&opt| s == opt) {
-                        cx.span_warn(p.last_span, "expected a clobber, found an option");
+                        cx.span_warn(p.prev_span, "expected a clobber, found an option");
                     } else if s.starts_with("{") || s.ends_with("}") {
-                        cx.span_err(p.last_span, "clobber should not be surrounded by braces");
+                        cx.span_err(p.prev_span, "clobber should not be surrounded by braces");
                     }
 
                     clobs.push(s);
@@ -209,7 +209,7 @@ pub fn expand_asm<'cx>(cx: &'cx mut ExtCtxt,
                 } else if option == "intel" {
                     dialect = AsmDialect::Intel;
                 } else {
-                    cx.span_warn(p.last_span, "unrecognized option");
+                    cx.span_warn(p.prev_span, "unrecognized option");
                 }
 
                 if p.token == token::Comma {
@@ -250,7 +250,7 @@ pub fn expand_asm<'cx>(cx: &'cx mut ExtCtxt,
 
     MacEager::expr(P(ast::Expr {
         id: ast::DUMMY_NODE_ID,
-        node: ast::ExprKind::InlineAsm(ast::InlineAsm {
+        node: ast::ExprKind::InlineAsm(P(ast::InlineAsm {
             asm: token::intern_and_get_ident(&asm),
             asm_str_style: asm_str_style.unwrap(),
             outputs: outputs,
@@ -260,7 +260,7 @@ pub fn expand_asm<'cx>(cx: &'cx mut ExtCtxt,
             alignstack: alignstack,
             dialect: dialect,
             expn_id: expn_id,
-        }),
+        })),
         span: sp,
         attrs: ast::ThinVec::new(),
     }))

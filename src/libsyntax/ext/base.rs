@@ -15,14 +15,13 @@ use attr::HasAttrs;
 use codemap::{self, CodeMap, ExpnInfo, Spanned, respan};
 use syntax_pos::{Span, ExpnId, NO_EXPANSION};
 use errors::DiagnosticBuilder;
-use ext::expand::{self, Invocation, Expansion};
+use ext::expand::{self, Expansion};
 use ext::hygiene::Mark;
 use fold::{self, Folder};
 use parse::{self, parser};
 use parse::token;
 use parse::token::{InternedString, str_to_ident};
 use ptr::P;
-use std_inject;
 use util::small_vector::SmallVector;
 
 use std::path::PathBuf;
@@ -509,37 +508,47 @@ pub enum SyntaxExtension {
     /// the block.
     ///
     IdentTT(Box<IdentMacroExpander>, Option<Span>, bool),
+
+    CustomDerive(Box<MultiItemModifier>),
 }
 
 pub type NamedSyntaxExtension = (Name, SyntaxExtension);
 
 pub trait Resolver {
     fn next_node_id(&mut self) -> ast::NodeId;
+    fn get_module_scope(&mut self, id: ast::NodeId) -> Mark;
 
     fn visit_expansion(&mut self, mark: Mark, expansion: &Expansion);
-    fn add_macro(&mut self, scope: Mark, def: ast::MacroDef);
-    fn add_ext(&mut self, scope: Mark, ident: ast::Ident, ext: Rc<SyntaxExtension>);
+    fn add_macro(&mut self, scope: Mark, def: ast::MacroDef, export: bool);
+    fn add_ext(&mut self, ident: ast::Ident, ext: Rc<SyntaxExtension>);
     fn add_expansions_at_stmt(&mut self, id: ast::NodeId, macros: Vec<Mark>);
 
     fn find_attr_invoc(&mut self, attrs: &mut Vec<Attribute>) -> Option<Attribute>;
-    fn resolve_invoc(&mut self, scope: Mark, invoc: &Invocation) -> Option<Rc<SyntaxExtension>>;
-    fn resolve_derive_mode(&mut self, ident: ast::Ident) -> Option<Rc<MultiItemModifier>>;
+    fn resolve_macro(&mut self, scope: Mark, path: &ast::Path, force: bool)
+                     -> Result<Rc<SyntaxExtension>, Determinacy>;
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum Determinacy {
+    Determined,
+    Undetermined,
 }
 
 pub struct DummyResolver;
 
 impl Resolver for DummyResolver {
     fn next_node_id(&mut self) -> ast::NodeId { ast::DUMMY_NODE_ID }
+    fn get_module_scope(&mut self, _id: ast::NodeId) -> Mark { Mark::root() }
 
     fn visit_expansion(&mut self, _invoc: Mark, _expansion: &Expansion) {}
-    fn add_macro(&mut self, _scope: Mark, _def: ast::MacroDef) {}
-    fn add_ext(&mut self, _scope: Mark, _ident: ast::Ident, _ext: Rc<SyntaxExtension>) {}
+    fn add_macro(&mut self, _scope: Mark, _def: ast::MacroDef, _export: bool) {}
+    fn add_ext(&mut self, _ident: ast::Ident, _ext: Rc<SyntaxExtension>) {}
     fn add_expansions_at_stmt(&mut self, _id: ast::NodeId, _macros: Vec<Mark>) {}
 
     fn find_attr_invoc(&mut self, _attrs: &mut Vec<Attribute>) -> Option<Attribute> { None }
-    fn resolve_derive_mode(&mut self, _ident: ast::Ident) -> Option<Rc<MultiItemModifier>> { None }
-    fn resolve_invoc(&mut self, _scope: Mark, _invoc: &Invocation) -> Option<Rc<SyntaxExtension>> {
-        None
+    fn resolve_macro(&mut self, _scope: Mark, _path: &ast::Path, _force: bool)
+                     -> Result<Rc<SyntaxExtension>, Determinacy> {
+        Err(Determinacy::Determined)
     }
 }
 
@@ -555,7 +564,9 @@ pub struct ExpansionData {
     pub depth: usize,
     pub backtrace: ExpnId,
     pub module: Rc<ModuleData>,
-    pub in_block: bool,
+
+    // True if non-inline modules without a `#[path]` are forbidden at the root of this expansion.
+    pub no_noninline_mod: bool,
 }
 
 /// One of these is made during expansion and incrementally updated as we go;
@@ -563,30 +574,30 @@ pub struct ExpansionData {
 /// -> expn_info of their expansion context stored into their span.
 pub struct ExtCtxt<'a> {
     pub parse_sess: &'a parse::ParseSess,
-    pub cfg: ast::CrateConfig,
     pub ecfg: expand::ExpansionConfig<'a>,
     pub crate_root: Option<&'static str>,
     pub resolver: &'a mut Resolver,
+    pub resolve_err_count: usize,
     pub current_expansion: ExpansionData,
 }
 
 impl<'a> ExtCtxt<'a> {
-    pub fn new(parse_sess: &'a parse::ParseSess, cfg: ast::CrateConfig,
+    pub fn new(parse_sess: &'a parse::ParseSess,
                ecfg: expand::ExpansionConfig<'a>,
                resolver: &'a mut Resolver)
                -> ExtCtxt<'a> {
         ExtCtxt {
             parse_sess: parse_sess,
-            cfg: cfg,
             ecfg: ecfg,
             crate_root: None,
             resolver: resolver,
+            resolve_err_count: 0,
             current_expansion: ExpansionData {
                 mark: Mark::root(),
                 depth: 0,
                 backtrace: NO_EXPANSION,
                 module: Rc::new(ModuleData { mod_path: Vec::new(), directory: PathBuf::new() }),
-                in_block: false,
+                no_noninline_mod: false,
             },
         }
     }
@@ -604,11 +615,13 @@ impl<'a> ExtCtxt<'a> {
 
     pub fn new_parser_from_tts(&self, tts: &[tokenstream::TokenTree])
         -> parser::Parser<'a> {
-        parse::tts_to_parser(self.parse_sess, tts.to_vec(), self.cfg())
+        let mut parser = parse::tts_to_parser(self.parse_sess, tts.to_vec());
+        parser.allow_interpolated_tts = false; // FIXME(jseyfried) `quote!` can't handle these yet
+        parser
     }
     pub fn codemap(&self) -> &'a CodeMap { self.parse_sess.codemap() }
     pub fn parse_sess(&self) -> &'a parse::ParseSess { self.parse_sess }
-    pub fn cfg(&self) -> ast::CrateConfig { self.cfg.clone() }
+    pub fn cfg(&self) -> &ast::CrateConfig { &self.parse_sess.config }
     pub fn call_site(&self) -> Span {
         self.codemap().with_expn_info(self.backtrace(), |ei| match ei {
             Some(expn_info) => expn_info.call_site,
@@ -730,28 +743,6 @@ impl<'a> ExtCtxt<'a> {
     }
     pub fn name_of(&self, st: &str) -> ast::Name {
         token::intern(st)
-    }
-
-    pub fn initialize(&mut self, user_exts: Vec<NamedSyntaxExtension>, krate: &ast::Crate) {
-        if std_inject::no_core(&krate) {
-            self.crate_root = None;
-        } else if std_inject::no_std(&krate) {
-            self.crate_root = Some("core");
-        } else {
-            self.crate_root = Some("std");
-        }
-
-        for (name, extension) in user_exts {
-            let ident = ast::Ident::with_empty_ctxt(name);
-            self.resolver.add_ext(Mark::root(), ident, Rc::new(extension));
-        }
-
-        let mut module = ModuleData {
-            mod_path: vec![token::str_to_ident(&self.ecfg.crate_name)],
-            directory: PathBuf::from(self.parse_sess.codemap().span_to_filename(krate.span)),
-        };
-        module.directory.pop();
-        self.current_expansion.module = Rc::new(module);
     }
 }
 

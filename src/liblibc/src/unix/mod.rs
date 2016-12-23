@@ -228,6 +228,10 @@ cfg_if! {
         #[link(name = "root")]
         #[link(name = "network")]
         extern {}
+    } else if #[cfg(target_os = "fuchsia")] {
+        #[link(name = "c")]
+        #[link(name = "mxio")]
+        extern {}
     } else {
         #[link(name = "c")]
         #[link(name = "m")]
@@ -833,12 +837,18 @@ extern {
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
                link_name = "nice$UNIX2003")]
     pub fn nice(incr: ::c_int) -> ::c_int;
+
+    pub fn grantpt(fd: ::c_int) -> ::c_int;
+    pub fn posix_openpt(flags: ::c_int) -> ::c_int;
+    pub fn ptsname(fd: ::c_int) -> *mut ::c_char;
+    pub fn unlockpt(fd: ::c_int) -> ::c_int;
 }
 
 cfg_if! {
     if #[cfg(any(target_os = "linux",
                  target_os = "android",
-                 target_os = "emscripten"))] {
+                 target_os = "emscripten",
+                 target_os = "fuchsia"))] {
         mod notbsd;
         pub use self::notbsd::*;
     } else if #[cfg(any(target_os = "macos",

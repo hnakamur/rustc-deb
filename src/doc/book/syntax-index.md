@@ -61,7 +61,6 @@
 * `-` (`- expr`): arithmetic negation.  Overloadable (`Neg`).
 * `-=` (`var -= expr`): arithmetic subtraction & assignment. Overloadable (`SubAssign`).
 * `->` (`fn(…) -> type`, `|…| -> type`): function and closure return type.  See [Functions], [Closures].
-* `-> !` (`fn(…) -> !`, `|…| -> !`): diverging function or closure. See [Diverging Functions].
 * `.` (`expr.ident`): member access.  See [Structs], [Method Syntax].
 * `..` (`..`, `expr..`, `..expr`, `expr..expr`): right-exclusive range literal.
 * `..` (`..expr`): struct literal update syntax.  See [Structs (Update syntax)].
@@ -95,6 +94,7 @@
 * `|=` (`var |= expr`): bitwise or & assignment. Overloadable (`BitOrAssign`).
 * `||` (`expr || expr`): logical or.
 * `_`: "ignored" pattern binding (see [Patterns (Ignoring bindings)]). Also used to make integer-literals readable (see [Reference (Integer literals)]).
+* `?` (`expr?`): Error propagation. Returns early when `Err(_)` is encountered, unwraps otherwise. Similar to the [`try!` macro].
 
 ## Other Syntax
 
@@ -159,6 +159,10 @@
 * `/*!…*/`: inner block doc comment.  See [Comments].
 * `/**…*/`: outer block doc comment.  See [Comments].
 
+<!-- Special types -->
+
+* `!`: always empty Never type.  See [Diverging Functions].
+
 <!-- Various things involving parens and tuples -->
 
 * `()`: empty tuple (*a.k.a.* unit), both literal and type.
@@ -207,6 +211,7 @@
 [Functions]: functions.html
 [Generics]: generics.html
 [Iterators]: iterators.html
+[`try!` macro]: error-handling.html#the-try-macro
 [Lifetimes]: lifetimes.html
 [Loops (`for`)]: loops.html#for
 [Loops (`loop`)]: loops.html#loop

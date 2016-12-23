@@ -478,12 +478,9 @@ impl RegionMaps {
         //! Returns the scope when temp created by expr_id will be cleaned up
 
         // check for a designated rvalue scope
-        match self.rvalue_scopes.borrow().get(&expr_id) {
-            Some(&s) => {
-                debug!("temporary_scope({:?}) = {:?} [custom]", expr_id, s);
-                return Some(s);
-            }
-            None => { }
+        if let Some(&s) = self.rvalue_scopes.borrow().get(&expr_id) {
+            debug!("temporary_scope({:?}) = {:?} [custom]", expr_id, s);
+            return Some(s);
         }
 
         let scope_map : &[CodeExtent] = &self.scope_map.borrow();
@@ -928,19 +925,15 @@ fn resolve_local(visitor: &mut RegionResolutionVisitor, local: &hir::Local) {
     //
     // FIXME(#6308) -- Note that `[]` patterns work more smoothly post-DST.
 
-    match local.init {
-        Some(ref expr) => {
-            record_rvalue_scope_if_borrow_expr(visitor, &expr, blk_scope);
+    if let Some(ref expr) = local.init {
+        record_rvalue_scope_if_borrow_expr(visitor, &expr, blk_scope);
 
-            let is_borrow =
-                if let Some(ref ty) = local.ty { is_borrowed_ty(&ty) } else { false };
+        let is_borrow =
+            if let Some(ref ty) = local.ty { is_borrowed_ty(&ty) } else { false };
 
-            if is_binding_pat(&local.pat) || is_borrow {
-                record_rvalue_scope(visitor, &expr, blk_scope);
-            }
+        if is_binding_pat(&local.pat) || is_borrow {
+            record_rvalue_scope(visitor, &expr, blk_scope);
         }
-
-        None => { }
     }
 
     intravisit::walk_local(visitor, local);
@@ -961,7 +954,7 @@ fn resolve_local(visitor: &mut RegionResolutionVisitor, local: &hir::Local) {
                 field_pats.iter().any(|fp| is_binding_pat(&fp.node.pat))
             }
 
-            PatKind::Vec(ref pats1, ref pats2, ref pats3) => {
+            PatKind::Slice(ref pats1, ref pats2, ref pats3) => {
                 pats1.iter().any(|p| is_binding_pat(&p)) ||
                 pats2.iter().any(|p| is_binding_pat(&p)) ||
                 pats3.iter().any(|p| is_binding_pat(&p))
@@ -1012,7 +1005,7 @@ fn resolve_local(visitor: &mut RegionResolutionVisitor, local: &hir::Local) {
                         visitor, &field.expr, blk_id);
                 }
             }
-            hir::ExprVec(ref subexprs) |
+            hir::ExprArray(ref subexprs) |
             hir::ExprTup(ref subexprs) => {
                 for subexpr in subexprs {
                     record_rvalue_scope_if_borrow_expr(
@@ -1023,16 +1016,12 @@ fn resolve_local(visitor: &mut RegionResolutionVisitor, local: &hir::Local) {
                 record_rvalue_scope_if_borrow_expr(visitor, &subexpr, blk_id)
             }
             hir::ExprBlock(ref block) => {
-                match block.expr {
-                    Some(ref subexpr) => {
-                        record_rvalue_scope_if_borrow_expr(
-                            visitor, &subexpr, blk_id);
-                    }
-                    None => { }
+                if let Some(ref subexpr) = block.expr {
+                    record_rvalue_scope_if_borrow_expr(
+                        visitor, &subexpr, blk_id);
                 }
             }
-            _ => {
-            }
+            _ => {}
         }
     }
 

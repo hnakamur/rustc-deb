@@ -988,6 +988,9 @@ impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
 #[unstable(feature = "fused", issue = "35602")]
 impl<'a, T> FusedIterator for Iter<'a, T> {}
 
+#[unstable(feature = "trusted_len", issue = "37572")]
+unsafe impl<'a, T> TrustedLen for Iter<'a, T> {}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Clone for Iter<'a, T> {
     fn clone(&self) -> Iter<'a, T> { Iter { ptr: self.ptr, end: self.end, _marker: self._marker } }
@@ -1108,6 +1111,9 @@ impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
 
 #[unstable(feature = "fused", issue = "35602")]
 impl<'a, T> FusedIterator for IterMut<'a, T> {}
+
+#[unstable(feature = "trusted_len", issue = "37572")]
+unsafe impl<'a, T> TrustedLen for IterMut<'a, T> {}
 
 /// An internal abstraction over the splitting iterators, so that
 /// splitn, splitn_mut etc can be implemented once.
@@ -1968,6 +1974,7 @@ unsafe impl<'a, T> TrustedRandomAccess for Iter<'a, T> {
     unsafe fn get_unchecked(&mut self, i: usize) -> &'a T {
         &*self.ptr.offset(i as isize)
     }
+    fn may_have_side_effect() -> bool { false }
 }
 
 #[doc(hidden)]
@@ -1975,4 +1982,5 @@ unsafe impl<'a, T> TrustedRandomAccess for IterMut<'a, T> {
     unsafe fn get_unchecked(&mut self, i: usize) -> &'a mut T {
         &mut *self.ptr.offset(i as isize)
     }
+    fn may_have_side_effect() -> bool { false }
 }

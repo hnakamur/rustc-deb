@@ -95,6 +95,7 @@ impl fmt::Debug for Lifetime {
 pub struct LifetimeDef {
     pub lifetime: Lifetime,
     pub bounds: HirVec<Lifetime>,
+    pub pure_wrt_drop: bool,
 }
 
 /// A "Path" is essentially Rust's notion of a name; for instance:
@@ -290,6 +291,7 @@ pub struct TyParam {
     pub bounds: TyParamBounds,
     pub default: Option<P<Ty>>,
     pub span: Span,
+    pub pure_wrt_drop: bool,
 }
 
 /// Represents lifetimes and type parameters attached to a declaration
@@ -325,6 +327,36 @@ impl Generics {
 
     pub fn is_parameterized(&self) -> bool {
         self.is_lt_parameterized() || self.is_type_parameterized()
+    }
+}
+
+pub enum UnsafeGeneric {
+    Region(LifetimeDef, &'static str),
+    Type(TyParam, &'static str),
+}
+
+impl UnsafeGeneric {
+    pub fn attr_name(&self) -> &'static str {
+        match *self {
+            UnsafeGeneric::Region(_, s) => s,
+            UnsafeGeneric::Type(_, s) => s,
+        }
+    }
+}
+
+impl Generics {
+    pub fn carries_unsafe_attr(&self) -> Option<UnsafeGeneric> {
+        for r in &self.lifetimes {
+            if r.pure_wrt_drop {
+                return Some(UnsafeGeneric::Region(r.clone(), "may_dangle"));
+            }
+        }
+        for t in &self.ty_params {
+            if t.pure_wrt_drop {
+                return Some(UnsafeGeneric::Type(t.clone(), "may_dangle"));
+            }
+        }
+        return None;
     }
 }
 
@@ -381,7 +413,6 @@ pub type CrateConfig = HirVec<P<MetaItem>>;
 pub struct Crate {
     pub module: Mod,
     pub attrs: HirVec<Attribute>,
-    pub config: CrateConfig,
     pub span: Span,
     pub exported_macros: HirVec<MacroDef>,
 
@@ -426,8 +457,6 @@ pub struct MacroDef {
     pub id: NodeId,
     pub span: Span,
     pub imported_from: Option<Name>,
-    pub export: bool,
-    pub use_locally: bool,
     pub allow_internal_unstable: bool,
     pub body: HirVec<TokenTree>,
 }
@@ -478,7 +507,7 @@ impl Pat {
             PatKind::Box(ref s) | PatKind::Ref(ref s, _) => {
                 s.walk_(it)
             }
-            PatKind::Vec(ref before, ref slice, ref after) => {
+            PatKind::Slice(ref before, ref slice, ref after) => {
                 before.iter().all(|p| p.walk_(it)) &&
                 slice.iter().all(|p| p.walk_(it)) &&
                 after.iter().all(|p| p.walk_(it))
@@ -554,8 +583,8 @@ pub enum PatKind {
     /// A range pattern, e.g. `1...2`
     Range(P<Expr>, P<Expr>),
     /// `[a, b, ..i, y, z]` is represented as:
-    ///     `PatKind::Vec(box [a, b], Some(i), box [y, z])`
-    Vec(HirVec<P<Pat>>, Option<P<Pat>>, HirVec<P<Pat>>),
+    ///     `PatKind::Slice(box [a, b], Some(i), box [y, z])`
+    Slice(HirVec<P<Pat>>, Option<P<Pat>>, HirVec<P<Pat>>),
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
@@ -787,6 +816,7 @@ pub struct Field {
     pub name: Spanned<Name>,
     pub expr: P<Expr>,
     pub span: Span,
+    pub is_shorthand: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
@@ -810,8 +840,8 @@ pub enum UnsafeSource {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash)]
 pub struct Expr {
     pub id: NodeId,
-    pub node: Expr_,
     pub span: Span,
+    pub node: Expr_,
     pub attrs: ThinVec<Attribute>,
 }
 
@@ -826,7 +856,7 @@ pub enum Expr_ {
     /// A `box x` expression.
     ExprBox(P<Expr>),
     /// An array (`[a, b, c, d]`)
-    ExprVec(HirVec<P<Expr>>),
+    ExprArray(HirVec<P<Expr>>),
     /// A function call
     ///
     /// The first field resolves to the function itself (usually an `ExprPath`),
@@ -910,13 +940,13 @@ pub enum Expr_ {
     ExprRet(Option<P<Expr>>),
 
     /// Inline assembly (from `asm!`), with its outputs and inputs.
-    ExprInlineAsm(InlineAsm, Vec<P<Expr>>, Vec<P<Expr>>),
+    ExprInlineAsm(P<InlineAsm>, HirVec<P<Expr>>, HirVec<P<Expr>>),
 
     /// A struct or struct-like variant literal expression.
     ///
     /// For example, `Foo {x: 1, y: 2}`, or
     /// `Foo {x: 1, .. base}`, where `base` is the `Option<Expr>`.
-    ExprStruct(Path, HirVec<Field>, Option<P<Expr>>),
+    ExprStruct(P<Path>, HirVec<Field>, Option<P<Expr>>),
 
     /// An array literal constructed from one repeated element.
     ///
@@ -1080,10 +1110,10 @@ pub struct BareFnTy {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 /// The different kinds of types recognized by the compiler
 pub enum Ty_ {
-    /// A variable length array (`[T]`)
-    TyVec(P<Ty>),
+    /// A variable length slice (`[T]`)
+    TySlice(P<Ty>),
     /// A fixed length array (`[T; n]`)
-    TyFixedLengthVec(P<Ty>, P<Expr>),
+    TyArray(P<Ty>, P<Expr>),
     /// A raw pointer (`*const T` or `*mut T`)
     TyPtr(MutTy),
     /// A reference (`&'a T` or `&'a mut T`)

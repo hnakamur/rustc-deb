@@ -11,6 +11,7 @@
 use infer::type_variable;
 use ty::{self, Lift, Ty, TyCtxt};
 use ty::fold::{TypeFoldable, TypeFolder, TypeVisitor};
+use rustc_data_structures::accumulate_vec::AccumulateVec;
 
 use std::rc::Rc;
 use syntax::abi;
@@ -217,15 +218,15 @@ impl<'a, 'tcx> Lift<'tcx> for ty::ItemSubsts<'a> {
     }
 }
 
-impl<'a, 'tcx> Lift<'tcx> for ty::adjustment::AutoRef<'a> {
-    type Lifted = ty::adjustment::AutoRef<'tcx>;
+impl<'a, 'tcx> Lift<'tcx> for ty::adjustment::AutoBorrow<'a> {
+    type Lifted = ty::adjustment::AutoBorrow<'tcx>;
     fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>) -> Option<Self::Lifted> {
         match *self {
-            ty::adjustment::AutoPtr(r, m) => {
-                tcx.lift(&r).map(|r| ty::adjustment::AutoPtr(r, m))
+            ty::adjustment::AutoBorrow::Ref(r, m) => {
+                tcx.lift(&r).map(|r| ty::adjustment::AutoBorrow::Ref(r, m))
             }
-            ty::adjustment::AutoUnsafe(m) => {
-                Some(ty::adjustment::AutoUnsafe(m))
+            ty::adjustment::AutoBorrow::RawPtr(m) => {
+                Some(ty::adjustment::AutoBorrow::RawPtr(m))
             }
         }
     }
@@ -296,13 +297,8 @@ impl<'a, 'tcx> Lift<'tcx> for ty::error::TypeError<'a> {
             UnsafetyMismatch(x) => UnsafetyMismatch(x),
             AbiMismatch(x) => AbiMismatch(x),
             Mutability => Mutability,
-            BoxMutability => BoxMutability,
-            PtrMutability => PtrMutability,
-            RefMutability => RefMutability,
-            VecMutability => VecMutability,
             TupleSize(x) => TupleSize(x),
             FixedArraySize(x) => FixedArraySize(x),
-            TyParamSize(x) => TyParamSize(x),
             ArgCount => ArgCount,
             RegionsDoesNotOutlive(a, b) => {
                 return tcx.lift(&(a, b)).map(|(a, b)| RegionsDoesNotOutlive(a, b))
@@ -319,14 +315,12 @@ impl<'a, 'tcx> Lift<'tcx> for ty::error::TypeError<'a> {
             RegionsOverlyPolymorphic(a, b) => {
                 return tcx.lift(&b).map(|b| RegionsOverlyPolymorphic(a, b))
             }
-            IntegerAsChar => IntegerAsChar,
             IntMismatch(x) => IntMismatch(x),
             FloatMismatch(x) => FloatMismatch(x),
             Traits(x) => Traits(x),
             BuiltinBoundsMismatch(x) => BuiltinBoundsMismatch(x),
             VariadicMismatch(x) => VariadicMismatch(x),
             CyclicTy => CyclicTy,
-            ConvergenceMismatch(x) => ConvergenceMismatch(x),
             ProjectionNameMismatched(x) => ProjectionNameMismatched(x),
             ProjectionBoundsLength(x) => ProjectionBoundsLength(x),
 
@@ -455,8 +449,8 @@ impl<'tcx> TypeFoldable<'tcx> for ty::TraitObject<'tcx> {
 
 impl<'tcx> TypeFoldable<'tcx> for &'tcx ty::Slice<Ty<'tcx>> {
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
-        let tys = self.iter().map(|t| t.fold_with(folder)).collect();
-        folder.tcx().mk_type_list(tys)
+        let v = self.iter().map(|t| t.fold_with(folder)).collect::<AccumulateVec<[_; 8]>>();
+        folder.tcx().intern_type_list(&v)
     }
 
     fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
@@ -682,13 +676,13 @@ impl<'tcx> TypeFoldable<'tcx> for ty::ItemSubsts<'tcx> {
     }
 }
 
-impl<'tcx> TypeFoldable<'tcx> for ty::adjustment::AutoRef<'tcx> {
+impl<'tcx> TypeFoldable<'tcx> for ty::adjustment::AutoBorrow<'tcx> {
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
         match *self {
-            ty::adjustment::AutoPtr(ref r, m) => {
-                ty::adjustment::AutoPtr(r.fold_with(folder), m)
+            ty::adjustment::AutoBorrow::Ref(ref r, m) => {
+                ty::adjustment::AutoBorrow::Ref(r.fold_with(folder), m)
             }
-            ty::adjustment::AutoUnsafe(m) => ty::adjustment::AutoUnsafe(m)
+            ty::adjustment::AutoBorrow::RawPtr(m) => ty::adjustment::AutoBorrow::RawPtr(m)
         }
     }
 
@@ -698,8 +692,8 @@ impl<'tcx> TypeFoldable<'tcx> for ty::adjustment::AutoRef<'tcx> {
 
     fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
         match *self {
-            ty::adjustment::AutoPtr(r, _m) => r.visit_with(visitor),
-            ty::adjustment::AutoUnsafe(_m) => false,
+            ty::adjustment::AutoBorrow::Ref(r, _m) => r.visit_with(visitor),
+            ty::adjustment::AutoBorrow::RawPtr(_m) => false,
         }
     }
 }
@@ -723,6 +717,7 @@ impl<'tcx> TypeFoldable<'tcx> for ty::TypeParameterDef<'tcx> {
             default: self.default.fold_with(folder),
             default_def_id: self.default_def_id,
             object_lifetime_default: self.object_lifetime_default.fold_with(folder),
+            pure_wrt_drop: self.pure_wrt_drop,
         }
     }
 
@@ -761,6 +756,7 @@ impl<'tcx> TypeFoldable<'tcx> for ty::RegionParameterDef<'tcx> {
             def_id: self.def_id,
             index: self.index,
             bounds: self.bounds.fold_with(folder),
+            pure_wrt_drop: self.pure_wrt_drop,
         }
     }
 

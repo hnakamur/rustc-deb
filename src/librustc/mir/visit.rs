@@ -12,7 +12,7 @@ use middle::const_val::ConstVal;
 use hir::def_id::DefId;
 use ty::subst::Substs;
 use ty::{ClosureSubsts, Region, Ty};
-use mir::repr::*;
+use mir::*;
 use rustc_const_math::ConstUsize;
 use rustc_data_structures::tuple_slice::TupleSlice;
 use rustc_data_structures::indexed_vec::Idx;
@@ -157,14 +157,14 @@ macro_rules! make_mir_visitor {
 
             fn visit_projection(&mut self,
                                 lvalue: & $($mutability)* LvalueProjection<'tcx>,
-                                context: LvalueContext,
+                                context: LvalueContext<'tcx>,
                                 location: Location) {
                 self.super_projection(lvalue, context, location);
             }
 
             fn visit_projection_elem(&mut self,
                                      lvalue: & $($mutability)* LvalueElem<'tcx>,
-                                     context: LvalueContext,
+                                     context: LvalueContext<'tcx>,
                                      location: Location) {
                 self.super_projection_elem(lvalue, context, location);
             }
@@ -236,19 +236,9 @@ macro_rules! make_mir_visitor {
                 self.super_typed_const_val(val, location);
             }
 
-            fn visit_var_decl(&mut self,
-                              var_decl: & $($mutability)* VarDecl<'tcx>) {
-                self.super_var_decl(var_decl);
-            }
-
-            fn visit_temp_decl(&mut self,
-                               temp_decl: & $($mutability)* TempDecl<'tcx>) {
-                self.super_temp_decl(temp_decl);
-            }
-
-            fn visit_arg_decl(&mut self,
-                              arg_decl: & $($mutability)* ArgDecl<'tcx>) {
-                self.super_arg_decl(arg_decl);
+            fn visit_local_decl(&mut self,
+                                local_decl: & $($mutability)* LocalDecl<'tcx>) {
+                self.super_local_decl(local_decl);
             }
 
             fn visit_visibility_scope(&mut self,
@@ -272,16 +262,8 @@ macro_rules! make_mir_visitor {
 
                 self.visit_ty(&$($mutability)* mir.return_ty);
 
-                for var_decl in &$($mutability)* mir.var_decls {
-                    self.visit_var_decl(var_decl);
-                }
-
-                for arg_decl in &$($mutability)* mir.arg_decls {
-                    self.visit_arg_decl(arg_decl);
-                }
-
-                for temp_decl in &$($mutability)* mir.temp_decls {
-                    self.visit_temp_decl(temp_decl);
+                for local_decl in &$($mutability)* mir.local_decls {
+                    self.visit_local_decl(local_decl);
                 }
 
                 self.visit_span(&$($mutability)* mir.span);
@@ -531,7 +513,7 @@ macro_rules! make_mir_visitor {
                     Rvalue::Aggregate(ref $($mutability)* kind,
                                       ref $($mutability)* operands) => {
                         match *kind {
-                            AggregateKind::Vec => {
+                            AggregateKind::Array => {
                             }
                             AggregateKind::Tuple => {
                             }
@@ -584,10 +566,7 @@ macro_rules! make_mir_visitor {
                             context: LvalueContext<'tcx>,
                             location: Location) {
                 match *lvalue {
-                    Lvalue::Var(_) |
-                    Lvalue::Temp(_) |
-                    Lvalue::Arg(_) |
-                    Lvalue::ReturnPointer => {
+                    Lvalue::Local(_) => {
                     }
                     Lvalue::Static(ref $($mutability)* def_id) => {
                         self.visit_def_id(def_id, location);
@@ -600,7 +579,7 @@ macro_rules! make_mir_visitor {
 
             fn super_projection(&mut self,
                                 proj: & $($mutability)* LvalueProjection<'tcx>,
-                                context: LvalueContext,
+                                context: LvalueContext<'tcx>,
                                 location: Location) {
                 let Projection {
                     ref $($mutability)* base,
@@ -617,7 +596,7 @@ macro_rules! make_mir_visitor {
 
             fn super_projection_elem(&mut self,
                                      proj: & $($mutability)* LvalueElem<'tcx>,
-                                     _context: LvalueContext,
+                                     _context: LvalueContext<'tcx>,
                                      location: Location) {
                 match *proj {
                     ProjectionElem::Deref => {
@@ -639,37 +618,19 @@ macro_rules! make_mir_visitor {
                 }
             }
 
-            fn super_var_decl(&mut self,
-                              var_decl: & $($mutability)* VarDecl<'tcx>) {
-                let VarDecl {
+            fn super_local_decl(&mut self,
+                                local_decl: & $($mutability)* LocalDecl<'tcx>) {
+                let LocalDecl {
                     mutability: _,
+                    ref $($mutability)* ty,
                     name: _,
-                    ref $($mutability)* ty,
                     ref $($mutability)* source_info,
-                } = *var_decl;
+                } = *local_decl;
 
                 self.visit_ty(ty);
-                self.visit_source_info(source_info);
-            }
-
-            fn super_temp_decl(&mut self,
-                               temp_decl: & $($mutability)* TempDecl<'tcx>) {
-                let TempDecl {
-                    ref $($mutability)* ty,
-                } = *temp_decl;
-
-                self.visit_ty(ty);
-            }
-
-            fn super_arg_decl(&mut self,
-                              arg_decl: & $($mutability)* ArgDecl<'tcx>) {
-                let ArgDecl {
-                    ref $($mutability)* ty,
-                    spread: _,
-                    debug_name: _
-                } = *arg_decl;
-
-                self.visit_ty(ty);
+                if let Some(ref $($mutability)* info) = *source_info {
+                    self.visit_source_info(info);
+                }
             }
 
             fn super_visibility_scope(&mut self,
@@ -778,7 +739,7 @@ macro_rules! make_mir_visitor {
 make_mir_visitor!(Visitor,);
 make_mir_visitor!(MutVisitor,mut);
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LvalueContext<'tcx> {
     // Appears as LHS of an assignment
     Store,

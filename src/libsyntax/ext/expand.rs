@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ast::{Block, Crate, Ident, Mac_, PatKind};
+use ast::{Block, Ident, Mac_, PatKind};
 use ast::{Name, MacStmtStyle, StmtKind, ItemKind};
 use ast;
 use ext::hygiene::Mark;
@@ -16,7 +16,7 @@ use ext::placeholders::{placeholder, PlaceholderExpander};
 use attr::{self, HasAttrs};
 use codemap::{ExpnInfo, NameAndSpan, MacroBang, MacroAttribute};
 use syntax_pos::{self, Span, ExpnId};
-use config::StripUnconfigured;
+use config::{is_test_or_bench, StripUnconfigured};
 use ext::base::*;
 use feature_gate::{self, Features};
 use fold;
@@ -26,6 +26,7 @@ use parse::parser::Parser;
 use parse::token::{self, intern, keywords};
 use print::pprust;
 use ptr::P;
+use std_inject;
 use tokenstream::{TokenTree, TokenStream};
 use util::small_vector::SmallVector;
 use visit::Visitor;
@@ -186,8 +187,14 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
         MacroExpander { cx: cx, monotonic: monotonic }
     }
 
-    fn expand_crate(&mut self, mut krate: ast::Crate) -> ast::Crate {
-        let err_count = self.cx.parse_sess.span_diagnostic.err_count();
+    pub fn expand_crate(&mut self, mut krate: ast::Crate) -> ast::Crate {
+        self.cx.crate_root = std_inject::injected_crate_name(&krate);
+        let mut module = ModuleData {
+            mod_path: vec![token::str_to_ident(&self.cx.ecfg.crate_name)],
+            directory: PathBuf::from(self.cx.codemap().span_to_filename(krate.span)),
+        };
+        module.directory.pop();
+        self.cx.current_expansion.module = Rc::new(module);
 
         let krate_item = Expansion::Items(SmallVector::one(P(ast::Item {
             attrs: krate.attrs,
@@ -206,10 +213,6 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             _ => unreachable!(),
         };
 
-        if self.cx.parse_sess.span_diagnostic.err_count() > err_count {
-            self.cx.parse_sess.span_diagnostic.abort_if_errors();
-        }
-
         krate
     }
 
@@ -221,25 +224,57 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
         let (expansion, mut invocations) = self.collect_invocations(expansion);
         invocations.reverse();
 
-        let mut expansions = vec![vec![(0, expansion)]];
-        while let Some(invoc) = invocations.pop() {
+        let mut expansions = Vec::new();
+        let mut undetermined_invocations = Vec::new();
+        let (mut progress, mut force) = (false, !self.monotonic);
+        loop {
+            let invoc = if let Some(invoc) = invocations.pop() {
+                invoc
+            } else if undetermined_invocations.is_empty() {
+                break
+            } else {
+                invocations = mem::replace(&mut undetermined_invocations, Vec::new());
+                force = !mem::replace(&mut progress, false);
+                continue
+            };
+
+            let scope =
+                if self.monotonic { invoc.expansion_data.mark } else { orig_expansion_data.mark };
+            let resolution = match invoc.kind {
+                InvocationKind::Bang { ref mac, .. } => {
+                    self.cx.resolver.resolve_macro(scope, &mac.node.path, force)
+                }
+                InvocationKind::Attr { ref attr, .. } => {
+                    let ident = ast::Ident::with_empty_ctxt(intern(&*attr.name()));
+                    let path = ast::Path::from_ident(attr.span, ident);
+                    self.cx.resolver.resolve_macro(scope, &path, force)
+                }
+            };
+            let ext = match resolution {
+                Ok(ext) => Some(ext),
+                Err(Determinacy::Determined) => None,
+                Err(Determinacy::Undetermined) => {
+                    undetermined_invocations.push(invoc);
+                    continue
+                }
+            };
+
+            progress = true;
             let ExpansionData { depth, mark, .. } = invoc.expansion_data;
             self.cx.current_expansion = invoc.expansion_data.clone();
 
-            let scope = if self.monotonic { mark } else { orig_expansion_data.mark };
             self.cx.current_expansion.mark = scope;
-            let expansion = match self.cx.resolver.resolve_invoc(scope, &invoc) {
+            let expansion = match ext {
                 Some(ext) => self.expand_invoc(invoc, ext),
                 None => invoc.expansion_kind.dummy(invoc.span()),
             };
 
-            self.cx.current_expansion.depth = depth + 1;
             let (expansion, new_invocations) = self.collect_invocations(expansion);
 
-            if expansions.len() == depth {
+            if expansions.len() < depth {
                 expansions.push(Vec::new());
             }
-            expansions[depth].push((mark.as_u32(), expansion));
+            expansions[depth - 1].push((mark.as_u32(), expansion));
             if !self.cx.ecfg.single_step {
                 invocations.extend(new_invocations.into_iter().rev());
             }
@@ -250,20 +285,17 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
         let mut placeholder_expander = PlaceholderExpander::new(self.cx, self.monotonic);
         while let Some(expansions) = expansions.pop() {
             for (mark, expansion) in expansions.into_iter().rev() {
-                let expansion = expansion.fold_with(&mut placeholder_expander);
                 placeholder_expander.add(ast::NodeId::from_u32(mark), expansion);
             }
         }
 
-        placeholder_expander.remove(ast::NodeId::from_u32(0))
+        expansion.fold_with(&mut placeholder_expander)
     }
 
     fn collect_invocations(&mut self, expansion: Expansion) -> (Expansion, Vec<Invocation>) {
-        let crate_config = mem::replace(&mut self.cx.cfg, Vec::new());
         let result = {
             let mut collector = InvocationCollector {
                 cfg: StripUnconfigured {
-                    config: &crate_config,
                     should_test: self.cx.ecfg.should_test,
                     sess: self.cx.parse_sess,
                     features: self.cx.ecfg.features,
@@ -274,11 +306,12 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             };
             (expansion.fold_with(&mut collector), collector.invocations)
         };
-        self.cx.cfg = crate_config;
 
         if self.monotonic {
+            let err_count = self.cx.parse_sess.span_diagnostic.err_count();
             let mark = self.cx.current_expansion.mark;
             self.cx.resolver.visit_expansion(mark, &result.0);
+            self.cx.resolve_err_count += self.cx.parse_sess.span_diagnostic.err_count() - err_count;
         }
 
         result
@@ -328,7 +361,15 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                 let tok_result = mac.expand(self.cx, attr.span, attr_toks, item_toks);
                 self.parse_expansion(tok_result, kind, name, attr.span)
             }
-            _ => unreachable!(),
+            SyntaxExtension::CustomDerive(_) => {
+                self.cx.span_err(attr.span, &format!("`{}` is a derive mode", name));
+                kind.dummy(attr.span)
+            }
+            _ => {
+                let msg = &format!("macro `{}` may not be used in attributes", name);
+                self.cx.span_err(attr.span, &msg);
+                kind.dummy(attr.span)
+            }
         }
     }
 
@@ -400,6 +441,11 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             MultiDecorator(..) | MultiModifier(..) | SyntaxExtension::AttrProcMacro(..) => {
                 self.cx.span_err(path.span,
                                  &format!("`{}` can only be used in attributes", extname));
+                return kind.dummy(span);
+            }
+
+            SyntaxExtension::CustomDerive(..) => {
+                self.cx.span_err(path.span, &format!("`{}` is a derive mode", extname));
                 return kind.dummy(span);
             }
 
@@ -536,7 +582,11 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
         self.invocations.push(Invocation {
             kind: kind,
             expansion_kind: expansion_kind,
-            expansion_data: ExpansionData { mark: mark, ..self.cx.current_expansion.clone() },
+            expansion_data: ExpansionData {
+                mark: mark,
+                depth: self.cx.current_expansion.depth + 1,
+                ..self.cx.current_expansion.clone()
+            },
         });
         placeholder(expansion_kind, ast::NodeId::from_u32(mark.as_u32()))
     }
@@ -593,7 +643,7 @@ fn string_to_tts(text: String, parse_sess: &ParseSess) -> Vec<TokenTree> {
                             .new_filemap(String::from("<macro expansion>"), None, text);
 
     let lexer = lexer::StringReader::new(&parse_sess.span_diagnostic, filemap);
-    let mut parser = Parser::new(parse_sess, Vec::new(), Box::new(lexer));
+    let mut parser = Parser::new(parse_sess, Box::new(lexer));
     panictry!(parser.parse_all_token_trees())
 }
 
@@ -665,16 +715,16 @@ impl<'a, 'b> Folder for InvocationCollector<'a, 'b> {
     }
 
     fn fold_block(&mut self, block: P<Block>) -> P<Block> {
-        let orig_in_block = mem::replace(&mut self.cx.current_expansion.in_block, true);
+        let no_noninline_mod = mem::replace(&mut self.cx.current_expansion.no_noninline_mod, true);
         let result = noop_fold_block(block, self);
-        self.cx.current_expansion.in_block = orig_in_block;
+        self.cx.current_expansion.no_noninline_mod = no_noninline_mod;
         result
     }
 
     fn fold_item(&mut self, item: P<ast::Item>) -> SmallVector<P<ast::Item>> {
         let item = configure!(self, item);
 
-        let (item, attr) = self.classify_item(item);
+        let (mut item, attr) = self.classify_item(item);
         if let Some(attr) = attr {
             let item = Annotatable::Item(fully_configure!(self, item, noop_fold_item));
             return self.collect_attr(attr, item, ExpansionKind::Items).make_items();
@@ -706,6 +756,7 @@ impl<'a, 'b> Folder for InvocationCollector<'a, 'b> {
                     return noop_fold_item(item, self);
                 }
 
+                let orig_no_noninline_mod = self.cx.current_expansion.no_noninline_mod;
                 let mut module = (*self.cx.current_expansion.module).clone();
                 module.mod_path.push(item.ident);
 
@@ -715,11 +766,14 @@ impl<'a, 'b> Folder for InvocationCollector<'a, 'b> {
                 let inline_module = item.span.contains(inner) || inner == syntax_pos::DUMMY_SP;
 
                 if inline_module {
-                    module.directory.push(&*{
-                        ::attr::first_attr_value_str_by_name(&item.attrs, "path")
-                            .unwrap_or(item.ident.name.as_str())
-                    });
+                    if let Some(path) = attr::first_attr_value_str_by_name(&item.attrs, "path") {
+                        self.cx.current_expansion.no_noninline_mod = false;
+                        module.directory.push(&*path);
+                    } else {
+                        module.directory.push(&*item.ident.name.as_str());
+                    }
                 } else {
+                    self.cx.current_expansion.no_noninline_mod = false;
                     module.directory =
                         PathBuf::from(self.cx.parse_sess.codemap().span_to_filename(inner));
                     module.directory.pop();
@@ -729,7 +783,15 @@ impl<'a, 'b> Folder for InvocationCollector<'a, 'b> {
                     mem::replace(&mut self.cx.current_expansion.module, Rc::new(module));
                 let result = noop_fold_item(item, self);
                 self.cx.current_expansion.module = orig_module;
+                self.cx.current_expansion.no_noninline_mod = orig_no_noninline_mod;
                 return result;
+            }
+            // Ensure that test functions are accessible from the test harness.
+            ast::ItemKind::Fn(..) if self.cx.ecfg.should_test => {
+                if item.attrs.iter().any(|attr| is_test_or_bench(attr)) {
+                    item = item.map(|mut item| { item.vis = ast::Visibility::Public; item });
+                }
+                noop_fold_item(item, self)
             }
             _ => noop_fold_item(item, self),
         }
@@ -848,24 +910,8 @@ impl<'feat> ExpansionConfig<'feat> {
         fn enable_allow_internal_unstable = allow_internal_unstable,
         fn enable_custom_derive = custom_derive,
         fn enable_pushpop_unsafe = pushpop_unsafe,
-        fn enable_rustc_macro = rustc_macro,
+        fn enable_proc_macro = proc_macro,
     }
-}
-
-pub fn expand_crate(cx: &mut ExtCtxt,
-                    user_exts: Vec<NamedSyntaxExtension>,
-                    c: Crate) -> Crate {
-    cx.initialize(user_exts, &c);
-    cx.monotonic_expander().expand_crate(c)
-}
-
-// Expands crate using supplied MacroExpander - allows for
-// non-standard expansion behaviour (e.g. step-wise).
-pub fn expand_crate_with_expander(expander: &mut MacroExpander,
-                                  user_exts: Vec<NamedSyntaxExtension>,
-                                  c: Crate) -> Crate {
-    expander.cx.initialize(user_exts, &c);
-    expander.expand_crate(c)
 }
 
 // A Marker adds the given mark to the syntax context and
@@ -890,6 +936,6 @@ impl Folder for Marker {
 }
 
 // apply a given mark to the given token trees. Used prior to expansion of a macro.
-fn mark_tts(tts: &[TokenTree], m: Mark) -> Vec<TokenTree> {
+pub fn mark_tts(tts: &[TokenTree], m: Mark) -> Vec<TokenTree> {
     noop_fold_tts(tts, &mut Marker{mark:m, expn_id: None})
 }

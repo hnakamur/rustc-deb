@@ -178,7 +178,8 @@ pub fn implied_bounds<'a, 'gcx, 'tcx>(
                         match infcx.tcx.no_late_bound_regions(data) {
                             None => vec![],
                             Some(ty::OutlivesPredicate(ty_a, r_b)) => {
-                                let components = infcx.outlives_components(ty_a);
+                                let ty_a = infcx.resolve_type_vars_if_possible(&ty_a);
+                                let components = infcx.tcx.outlives_components(ty_a);
                                 implied_bounds_from_components(r_b, components)
                             }
                         },
@@ -201,11 +202,11 @@ fn implied_bounds_from_components<'tcx>(sub_region: &'tcx ty::Region,
         .flat_map(|component| {
             match component {
                 Component::Region(r) =>
-                    vec!(ImpliedBound::RegionSubRegion(sub_region, r)),
+                    vec![ImpliedBound::RegionSubRegion(sub_region, r)],
                 Component::Param(p) =>
-                    vec!(ImpliedBound::RegionSubParam(sub_region, p)),
+                    vec![ImpliedBound::RegionSubParam(sub_region, p)],
                 Component::Projection(p) =>
-                    vec!(ImpliedBound::RegionSubProjection(sub_region, p)),
+                    vec![ImpliedBound::RegionSubProjection(sub_region, p)],
                 Component::EscapingProjection(_) =>
                     // If the projection has escaping regions, don't
                     // try to infer any implied bounds even for its
@@ -215,9 +216,9 @@ fn implied_bounds_from_components<'tcx>(sub_region: &'tcx ty::Region,
                     // idea is that the WAY that the caller proves
                     // that may change in the future and we want to
                     // give ourselves room to get smarter here.
-                    vec!(),
+                    vec![],
                 Component::UnresolvedInferenceVariable(..) =>
-                    vec!(),
+                    vec![],
             }
         })
         .collect()
@@ -497,7 +498,7 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
             let explicit_bound = data.region_bound;
 
             for implicit_bound in implicit_bounds {
-                let cause = self.cause(traits::ReferenceOutlivesReferent(ty));
+                let cause = self.cause(traits::ObjectTypeBound(ty, explicit_bound));
                 let outlives = ty::Binder(ty::OutlivesPredicate(explicit_bound, implicit_bound));
                 self.out.push(traits::Obligation::new(cause, outlives.to_predicate()));
             }

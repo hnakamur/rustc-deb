@@ -143,13 +143,14 @@ pub fn run_core(search_paths: SearchPaths,
     let sessopts = config::Options {
         maybe_sysroot: maybe_sysroot,
         search_paths: search_paths,
-        crate_types: vec!(config::CrateTypeRlib),
-        lint_opts: vec!((warning_lint, lint::Allow)),
+        crate_types: vec![config::CrateTypeRlib],
+        lint_opts: vec![(warning_lint, lint::Allow)],
         lint_cap: Some(lint::Allow),
         externs: externs,
         target_triple: triple.unwrap_or(config::host_triple().to_string()),
         // Ensure that rustdoc works even if rustc is feature-staged
         unstable_features: UnstableFeatures::Allow,
+        actually_rustdoc: true,
         ..config::basic_options().clone()
     };
 
@@ -162,14 +163,16 @@ pub fn run_core(search_paths: SearchPaths,
     let dep_graph = DepGraph::new(false);
     let _ignore = dep_graph.in_ignore();
     let cstore = Rc::new(CStore::new(&dep_graph));
-    let sess = session::build_session_(sessopts, &dep_graph, cpath, diagnostic_handler,
-                                       codemap, cstore.clone());
+    let mut sess = session::build_session_(
+        sessopts, &dep_graph, cpath, diagnostic_handler, codemap, cstore.clone()
+    );
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
 
     let mut cfg = config::build_configuration(&sess, config::parse_cfgspecs(cfgs));
     target_features::add_configuration(&mut cfg, &sess);
+    sess.parse_sess.config = cfg;
 
-    let krate = panictry!(driver::phase_1_parse_input(&sess, cfg, &input));
+    let krate = panictry!(driver::phase_1_parse_input(&sess, &input));
 
     let name = link::find_crate_name(Some(&sess), &krate.attrs, &input);
 
@@ -188,7 +191,7 @@ pub fn run_core(search_paths: SearchPaths,
                                                      resolutions,
                                                      &arenas,
                                                      &name,
-                                                     |tcx, _, analysis, _, result| {
+                                                     |tcx, analysis, _, result| {
         if let Err(_) = result {
             sess.fatal("Compilation failed, aborting rustdoc");
         }

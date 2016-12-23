@@ -490,7 +490,7 @@ fn visit_expr(ir: &mut IrMaps, expr: &Expr) {
 
       // otherwise, live nodes are not required:
       hir::ExprIndex(..) | hir::ExprField(..) | hir::ExprTupField(..) |
-      hir::ExprVec(..) | hir::ExprCall(..) | hir::ExprMethodCall(..) |
+      hir::ExprArray(..) | hir::ExprCall(..) | hir::ExprMethodCall(..) |
       hir::ExprTup(..) | hir::ExprBinary(..) | hir::ExprAddrOf(..) |
       hir::ExprCast(..) | hir::ExprUnary(..) | hir::ExprBreak(_) |
       hir::ExprAgain(_) | hir::ExprLit(_) | hir::ExprRet(..) |
@@ -1081,7 +1081,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
           hir::ExprAssignOp(_, ref l, ref r) => {
             // an overloaded assign op is like a method call
-            if self.ir.tcx.is_method_call(expr.id) {
+            if self.ir.tcx.tables().is_method_call(expr.id) {
                 let succ = self.propagate_through_expr(&l, succ);
                 self.propagate_through_expr(&r, succ)
             } else {
@@ -1095,7 +1095,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
           // Uninteresting cases: just propagate in rev exec order
 
-          hir::ExprVec(ref exprs) => {
+          hir::ExprArray(ref exprs) => {
             self.propagate_through_exprs(&exprs[..], succ)
           }
 
@@ -1113,8 +1113,8 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
           hir::ExprCall(ref f, ref args) => {
             // FIXME(canndrew): This is_never should really be an is_uninhabited
-            let diverges = !self.ir.tcx.is_method_call(expr.id) &&
-                self.ir.tcx.expr_ty_adjusted(&f).fn_ret().0.is_never();
+            let diverges = !self.ir.tcx.tables().is_method_call(expr.id) &&
+                self.ir.tcx.tables().expr_ty_adjusted(&f).fn_ret().0.is_never();
             let succ = if diverges {
                 self.s.exit_ln
             } else {
@@ -1126,7 +1126,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
           hir::ExprMethodCall(.., ref args) => {
             let method_call = ty::MethodCall::expr(expr.id);
-            let method_ty = self.ir.tcx.tables.borrow().method_map[&method_call].ty;
+            let method_ty = self.ir.tcx.tables().method_map[&method_call].ty;
             // FIXME(canndrew): This is_never should really be an is_uninhabited
             let succ = if method_ty.fn_ret().0.is_never() {
                 self.s.exit_ln
@@ -1409,7 +1409,7 @@ fn check_expr(this: &mut Liveness, expr: &Expr) {
       }
 
       hir::ExprAssignOp(_, ref l, _) => {
-        if !this.ir.tcx.is_method_call(expr.id) {
+        if !this.ir.tcx.tables().is_method_call(expr.id) {
             this.check_lvalue(&l);
         }
 
@@ -1436,7 +1436,7 @@ fn check_expr(this: &mut Liveness, expr: &Expr) {
       hir::ExprCall(..) | hir::ExprMethodCall(..) | hir::ExprIf(..) |
       hir::ExprMatch(..) | hir::ExprWhile(..) | hir::ExprLoop(..) |
       hir::ExprIndex(..) | hir::ExprField(..) | hir::ExprTupField(..) |
-      hir::ExprVec(..) | hir::ExprTup(..) | hir::ExprBinary(..) |
+      hir::ExprArray(..) | hir::ExprTup(..) | hir::ExprBinary(..) |
       hir::ExprCast(..) | hir::ExprUnary(..) | hir::ExprRet(..) |
       hir::ExprBreak(..) | hir::ExprAgain(..) | hir::ExprLit(_) |
       hir::ExprBlock(..) | hir::ExprAddrOf(..) |
@@ -1459,7 +1459,7 @@ fn check_fn(_v: &Liveness,
 
 impl<'a, 'tcx> Liveness<'a, 'tcx> {
     fn fn_ret(&self, id: NodeId) -> ty::Binder<Ty<'tcx>> {
-        let fn_ty = self.ir.tcx.node_id_to_type(id);
+        let fn_ty = self.ir.tcx.tables().node_id_to_type(id);
         match fn_ty.sty {
             ty::TyClosure(closure_def_id, substs) =>
                 self.ir.tcx.closure_type(closure_def_id, substs).sig.output(),
@@ -1502,7 +1502,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
                     None if !body.stmts.is_empty() =>
                         match body.stmts.last().unwrap().node {
                             hir::StmtSemi(ref e, _) => {
-                                self.ir.tcx.expr_ty(&e) == fn_ret
+                                self.ir.tcx.tables().expr_ty(&e) == fn_ret
                             },
                             _ => false
                         },

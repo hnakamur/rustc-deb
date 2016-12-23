@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use attr::HasAttrs;
-use feature_gate::{emit_feature_err, EXPLAIN_STMT_ATTR_SYNTAX, Features, get_features, GateIssue};
+use feature_gate::{feature_err, EXPLAIN_STMT_ATTR_SYNTAX, Features, get_features, GateIssue};
 use {fold, attr};
 use ast;
 use codemap::{Spanned, respan};
@@ -20,7 +20,6 @@ use util::small_vector::SmallVector;
 
 /// A folder that strips out items that do not belong in the current configuration.
 pub struct StripUnconfigured<'a> {
-    pub config: &'a ast::CrateConfig,
     pub should_test: bool,
     pub sess: &'a ParseSess,
     pub features: Option<&'a Features>,
@@ -32,7 +31,6 @@ pub fn features(mut krate: ast::Crate, sess: &ParseSess, should_test: bool)
     let features;
     {
         let mut strip_unconfigured = StripUnconfigured {
-            config: &krate.config.clone(),
             should_test: should_test,
             sess: sess,
             features: None,
@@ -107,7 +105,7 @@ impl<'a> StripUnconfigured<'a> {
         use attr::cfg_matches;
         match (cfg.meta_item(), mi.meta_item()) {
             (Some(cfg), Some(mi)) =>
-                if cfg_matches(self.config, &cfg, self.sess, self.features) {
+                if cfg_matches(&cfg, self.sess, self.features) {
                     self.process_cfg_attr(respan(mi.span, ast::Attribute_ {
                         id: attr::mk_attr_id(),
                         style: attr.node.style,
@@ -148,7 +146,7 @@ impl<'a> StripUnconfigured<'a> {
                 return true;
             }
 
-            attr::cfg_matches(self.config, mis[0].meta_item().unwrap(), self.sess, self.features)
+            attr::cfg_matches(mis[0].meta_item().unwrap(), self.sess, self.features)
         })
     }
 
@@ -157,11 +155,15 @@ impl<'a> StripUnconfigured<'a> {
         // flag the offending attributes
         for attr in attrs.iter() {
             if !self.features.map(|features| features.stmt_expr_attributes).unwrap_or(true) {
-                emit_feature_err(&self.sess,
-                                 "stmt_expr_attributes",
-                                 attr.span,
-                                 GateIssue::Language,
-                                 EXPLAIN_STMT_ATTR_SYNTAX);
+                let mut err = feature_err(&self.sess,
+                                          "stmt_expr_attributes",
+                                          attr.span,
+                                          GateIssue::Language,
+                                          EXPLAIN_STMT_ATTR_SYNTAX);
+                if attr.node.is_sugared_doc {
+                    err.help("`///` is for documentation comments. For a plain comment, use `//`.");
+                }
+                err.emit();
             }
         }
     }
@@ -302,6 +304,6 @@ fn is_cfg(attr: &ast::Attribute) -> bool {
     attr.check_name("cfg")
 }
 
-fn is_test_or_bench(attr: &ast::Attribute) -> bool {
+pub fn is_test_or_bench(attr: &ast::Attribute) -> bool {
     attr.check_name("test") || attr.check_name("bench")
 }

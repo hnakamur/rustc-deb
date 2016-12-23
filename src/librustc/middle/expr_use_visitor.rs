@@ -442,7 +442,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 }
             }
 
-            hir::ExprVec(ref exprs) => {
+            hir::ExprArray(ref exprs) => {
                 self.consume_exprs(exprs);
             }
 
@@ -720,11 +720,11 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         //NOTE(@jroesch): mixed RefCell borrow causes crash
         let adj = infcx.adjustments().get(&expr.id).map(|x| x.clone());
         if let Some(adjustment) = adj {
-            match adjustment {
-                adjustment::AdjustNeverToAny(..) |
-                adjustment::AdjustReifyFnPointer |
-                adjustment::AdjustUnsafeFnPointer |
-                adjustment::AdjustMutToConstPointer => {
+            match adjustment.kind {
+                adjustment::Adjust::NeverToAny |
+                adjustment::Adjust::ReifyFnPointer |
+                adjustment::Adjust::UnsafeFnPointer |
+                adjustment::Adjust::MutToConstPointer => {
                     // Creating a closure/fn-pointer or unsizing consumes
                     // the input and stores it into the resulting rvalue.
                     debug!("walk_adjustment: trivial adjustment");
@@ -732,8 +732,21 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                         return_if_err!(self.mc.cat_expr_unadjusted(expr));
                     self.delegate_consume(expr.id, expr.span, cmt_unadjusted);
                 }
-                adjustment::AdjustDerefRef(ref adj) => {
-                    self.walk_autoderefref(expr, adj);
+                adjustment::Adjust::DerefRef { autoderefs, autoref, unsize } => {
+                    debug!("walk_adjustment expr={:?} adj={:?}", expr, adjustment);
+
+                    self.walk_autoderefs(expr, autoderefs);
+
+                    let cmt_derefd =
+                        return_if_err!(self.mc.cat_expr_autoderefd(expr, autoderefs));
+
+                    let cmt_refd =
+                        self.walk_autoref(expr, cmt_derefd, autoref);
+
+                    if unsize {
+                        // Unsizing consumes the thin pointer and produces a fat one.
+                        self.delegate_consume(expr.id, expr.span, cmt_refd);
+                    }
                 }
             }
         }
@@ -770,28 +783,6 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         }
     }
 
-    fn walk_autoderefref(&mut self,
-                         expr: &hir::Expr,
-                         adj: &adjustment::AutoDerefRef<'tcx>) {
-        debug!("walk_autoderefref expr={:?} adj={:?}",
-               expr,
-               adj);
-
-        self.walk_autoderefs(expr, adj.autoderefs);
-
-        let cmt_derefd =
-            return_if_err!(self.mc.cat_expr_autoderefd(expr, adj.autoderefs));
-
-        let cmt_refd =
-            self.walk_autoref(expr, cmt_derefd, adj.autoref);
-
-        if adj.unsize.is_some() {
-            // Unsizing consumes the thin pointer and produces a fat one.
-            self.delegate_consume(expr.id, expr.span, cmt_refd);
-        }
-    }
-
-
     /// Walks the autoref `opt_autoref` applied to the autoderef'd
     /// `expr`. `cmt_derefd` is the mem-categorized form of `expr`
     /// after all relevant autoderefs have occurred. Because AutoRefs
@@ -803,7 +794,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
     fn walk_autoref(&mut self,
                     expr: &hir::Expr,
                     cmt_base: mc::cmt<'tcx>,
-                    opt_autoref: Option<adjustment::AutoRef<'tcx>>)
+                    opt_autoref: Option<adjustment::AutoBorrow<'tcx>>)
                     -> mc::cmt<'tcx>
     {
         debug!("walk_autoref(expr.id={} cmt_derefd={:?} opt_autoref={:?})",
@@ -822,7 +813,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         };
 
         match *autoref {
-            adjustment::AutoPtr(r, m) => {
+            adjustment::AutoBorrow::Ref(r, m) => {
                 self.delegate.borrow(expr.id,
                                      expr.span,
                                      cmt_base,
@@ -831,7 +822,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                                      AutoRef);
             }
 
-            adjustment::AutoUnsafe(m) => {
+            adjustment::AutoBorrow::RawPtr(m) => {
                 debug!("walk_autoref: expr.id={} cmt_base={:?}",
                        expr.id,
                        cmt_base);
@@ -1003,7 +994,8 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         // the leaves of the pattern tree structure.
         return_if_err!(mc.cat_pattern(cmt_discr, pat, |mc, cmt_pat, pat| {
             match tcx.expect_def_or_none(pat.id) {
-                Some(Def::Variant(variant_did)) => {
+                Some(Def::Variant(variant_did)) |
+                Some(Def::VariantCtor(variant_did, ..)) => {
                     let enum_did = tcx.parent_def_id(variant_did).unwrap();
                     let downcast_cmt = if tcx.lookup_adt_def(enum_did).is_univariant() {
                         cmt_pat
@@ -1015,12 +1007,14 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                     debug!("variant downcast_cmt={:?} pat={:?}", downcast_cmt, pat);
                     delegate.matched_pat(pat, downcast_cmt, match_mode);
                 }
-                Some(Def::Struct(..)) | Some(Def::Union(..)) |
-                Some(Def::TyAlias(..)) | Some(Def::AssociatedTy(..)) => {
+                Some(Def::Struct(..)) | Some(Def::StructCtor(..)) | Some(Def::Union(..)) |
+                Some(Def::TyAlias(..)) | Some(Def::AssociatedTy(..)) | Some(Def::SelfTy(..)) => {
                     debug!("struct cmt_pat={:?} pat={:?}", cmt_pat, pat);
                     delegate.matched_pat(pat, cmt_pat, match_mode);
                 }
-                _ => {}
+                None | Some(Def::Local(..)) |
+                Some(Def::Const(..)) | Some(Def::AssociatedConst(..)) => {}
+                def => bug!("unexpected definition: {:?}", def)
             }
         }));
     }

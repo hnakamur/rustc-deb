@@ -20,10 +20,11 @@ pub use self::fold::TypeFoldable;
 use dep_graph::{self, DepNode};
 use hir::map as ast_map;
 use middle;
-use hir::def::{Def, PathResolution, ExportMap};
+use hir::def::{Def, CtorKind, PathResolution, ExportMap};
 use hir::def_id::{CrateNum, DefId, CRATE_DEF_INDEX, LOCAL_CRATE};
 use middle::lang_items::{FnTraitLangItem, FnMutTraitLangItem, FnOnceTraitLangItem};
 use middle::region::{CodeExtent, ROOT_CODE_EXTENT};
+use mir::Mir;
 use traits;
 use ty;
 use ty::subst::{Subst, Substs};
@@ -34,13 +35,14 @@ use util::nodemap::FnvHashMap;
 
 use serialize::{self, Encodable, Encoder};
 use std::borrow::Cow;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, Ref};
 use std::hash::{Hash, Hasher};
 use std::iter;
 use std::ops::Deref;
 use std::rc::Rc;
 use std::slice;
 use std::vec::IntoIter;
+use std::mem;
 use syntax::ast::{self, Name, NodeId};
 use syntax::attr;
 use syntax::parse::token::{self, InternedString};
@@ -477,6 +479,7 @@ bitflags! {
                                   TypeFlags::HAS_SELF.bits |
                                   TypeFlags::HAS_TY_INFER.bits |
                                   TypeFlags::HAS_RE_INFER.bits |
+                                  TypeFlags::HAS_RE_SKOL.bits |
                                   TypeFlags::HAS_RE_EARLY_BOUND.bits |
                                   TypeFlags::HAS_FREE_REGIONS.bits |
                                   TypeFlags::HAS_TY_ERR.bits |
@@ -521,7 +524,7 @@ pub type Ty<'tcx> = &'tcx TyS<'tcx>;
 impl<'tcx> serialize::UseSpecializedEncodable for Ty<'tcx> {}
 impl<'tcx> serialize::UseSpecializedDecodable for Ty<'tcx> {}
 
-/// A wrapper for slices with the additioanl invariant
+/// A wrapper for slices with the additional invariant
 /// that the slice is interned and no other slice with
 /// the same contents can exist in the same context.
 /// This means we can use pointer + length for both
@@ -559,6 +562,14 @@ impl<'a, T> IntoIterator for &'a Slice<T> {
 }
 
 impl<'tcx> serialize::UseSpecializedDecodable for &'tcx Slice<Ty<'tcx>> {}
+
+impl<T> Slice<T> {
+    pub fn empty<'a>() -> &'a Slice<T> {
+        unsafe {
+            mem::transmute(slice::from_raw_parts(0x1 as *const T, 0))
+        }
+    }
+}
 
 /// Upvars do not get their own node-id. Instead, we use the pair of
 /// the original var id (that is, the root variable that is referenced
@@ -680,6 +691,11 @@ pub struct TypeParameterDef<'tcx> {
     pub default_def_id: DefId, // for use in error reporing about defaults
     pub default: Option<Ty<'tcx>>,
     pub object_lifetime_default: ObjectLifetimeDefault<'tcx>,
+
+    /// `pure_wrt_drop`, set by the (unsafe) `#[may_dangle]` attribute
+    /// on generic parameter `T`, asserts data behind the parameter
+    /// `T` won't be accessed during the parent type's `Drop` impl.
+    pub pure_wrt_drop: bool,
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable)]
@@ -688,6 +704,11 @@ pub struct RegionParameterDef<'tcx> {
     pub def_id: DefId,
     pub index: u32,
     pub bounds: Vec<&'tcx ty::Region>,
+
+    /// `pure_wrt_drop`, set by the (unsafe) `#[may_dangle]` attribute
+    /// on generic parameter `'a`, asserts data of lifetime `'a`
+    /// won't be accessed during the parent type's `Drop` impl.
+    pub pure_wrt_drop: bool,
 }
 
 impl<'tcx> RegionParameterDef<'tcx> {
@@ -731,6 +752,14 @@ impl<'tcx> Generics<'tcx> {
 
     pub fn count(&self) -> usize {
         self.parent_count() + self.own_count()
+    }
+
+    pub fn region_param(&self, param: &EarlyBoundRegion) -> &RegionParameterDef<'tcx> {
+        &self.regions[param.index as usize - self.has_self as usize]
+    }
+
+    pub fn type_param(&self, param: &ParamTy) -> &TypeParameterDef<'tcx> {
+        &self.types[param.idx as usize - self.has_self as usize - self.regions.len()]
     }
 }
 
@@ -1428,7 +1457,7 @@ pub struct VariantDefData<'tcx, 'container: 'tcx> {
     pub name: Name, // struct's name if this is a struct
     pub disr_val: Disr,
     pub fields: Vec<FieldDefData<'tcx, 'container>>,
-    pub kind: VariantKind,
+    pub ctor_kind: CtorKind,
 }
 
 pub struct FieldDefData<'tcx, 'container: 'tcx> {
@@ -1492,19 +1521,6 @@ impl<'tcx> serialize::UseSpecializedDecodable for AdtDef<'tcx> {}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum AdtKind { Struct, Union, Enum }
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
-pub enum VariantKind { Struct, Tuple, Unit }
-
-impl VariantKind {
-    pub fn from_variant_data(vdata: &hir::VariantData) -> Self {
-        match *vdata {
-            hir::VariantData::Struct(..) => VariantKind::Struct,
-            hir::VariantData::Tuple(..) => VariantKind::Tuple,
-            hir::VariantData::Unit(..) => VariantKind::Unit,
-        }
-    }
-}
 
 impl<'a, 'gcx, 'tcx, 'container> AdtDefData<'gcx, 'container> {
     fn new(tcx: TyCtxt<'a, 'gcx, 'tcx>,
@@ -1681,9 +1697,9 @@ impl<'a, 'gcx, 'tcx, 'container> AdtDefData<'gcx, 'container> {
 
     pub fn variant_of_def(&self, def: Def) -> &VariantDefData<'gcx, 'container> {
         match def {
-            Def::Variant(vid) => self.variant_with_id(vid),
-            Def::Struct(..) | Def::Union(..) |
-            Def::TyAlias(..) | Def::AssociatedTy(..) => self.struct_variant(),
+            Def::Variant(vid) | Def::VariantCtor(vid, ..) => self.variant_with_id(vid),
+            Def::Struct(..) | Def::StructCtor(..) | Def::Union(..) |
+            Def::TyAlias(..) | Def::AssociatedTy(..) | Def::SelfTy(..) => self.struct_variant(),
             _ => bug!("unexpected def {:?} in variant_of_def", def)
         }
     }
@@ -1792,7 +1808,7 @@ impl<'a, 'tcx> AdtDefData<'tcx, 'tcx> {
             _ if tys.references_error() => tcx.types.err,
             0 => tcx.types.bool,
             1 => tys[0],
-            _ => tcx.mk_tup(tys)
+            _ => tcx.intern_tup(&tys[..])
         };
 
         match self.sized_constraint.get(dep_node()) {
@@ -1868,7 +1884,7 @@ impl<'a, 'tcx> AdtDefData<'tcx, 'tcx> {
                 };
                 let sized_predicate = Binder(TraitRef {
                     def_id: sized_trait,
-                    substs: Substs::new_trait(tcx, ty, &[])
+                    substs: tcx.mk_substs_trait(ty, &[])
                 }).to_predicate();
                 let predicates = tcx.lookup_predicates(self.did).predicates;
                 if predicates.into_iter().any(|p| p == sized_predicate) {
@@ -2104,80 +2120,8 @@ impl BorrowKind {
 }
 
 impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
-    pub fn node_id_to_type(self, id: NodeId) -> Ty<'gcx> {
-        match self.node_id_to_type_opt(id) {
-           Some(ty) => ty,
-           None => bug!("node_id_to_type: no type for node `{}`",
-                        self.map.node_to_string(id))
-        }
-    }
-
-    pub fn node_id_to_type_opt(self, id: NodeId) -> Option<Ty<'gcx>> {
-        self.tables.borrow().node_types.get(&id).cloned()
-    }
-
-    pub fn node_id_item_substs(self, id: NodeId) -> ItemSubsts<'gcx> {
-        match self.tables.borrow().item_substs.get(&id) {
-            None => ItemSubsts {
-                substs: Substs::empty(self.global_tcx())
-            },
-            Some(ts) => ts.clone(),
-        }
-    }
-
-    // Returns the type of a pattern as a monotype. Like @expr_ty, this function
-    // doesn't provide type parameter substitutions.
-    pub fn pat_ty(self, pat: &hir::Pat) -> Ty<'gcx> {
-        self.node_id_to_type(pat.id)
-    }
-    pub fn pat_ty_opt(self, pat: &hir::Pat) -> Option<Ty<'gcx>> {
-        self.node_id_to_type_opt(pat.id)
-    }
-
-    // Returns the type of an expression as a monotype.
-    //
-    // NB (1): This is the PRE-ADJUSTMENT TYPE for the expression.  That is, in
-    // some cases, we insert `AutoAdjustment` annotations such as auto-deref or
-    // auto-ref.  The type returned by this function does not consider such
-    // adjustments.  See `expr_ty_adjusted()` instead.
-    //
-    // NB (2): This type doesn't provide type parameter substitutions; e.g. if you
-    // ask for the type of "id" in "id(3)", it will return "fn(&isize) -> isize"
-    // instead of "fn(ty) -> T with T = isize".
-    pub fn expr_ty(self, expr: &hir::Expr) -> Ty<'gcx> {
-        self.node_id_to_type(expr.id)
-    }
-
-    pub fn expr_ty_opt(self, expr: &hir::Expr) -> Option<Ty<'gcx>> {
-        self.node_id_to_type_opt(expr.id)
-    }
-
-    /// Returns the type of `expr`, considering any `AutoAdjustment`
-    /// entry recorded for that expression.
-    ///
-    /// It would almost certainly be better to store the adjusted ty in with
-    /// the `AutoAdjustment`, but I opted not to do this because it would
-    /// require serializing and deserializing the type and, although that's not
-    /// hard to do, I just hate that code so much I didn't want to touch it
-    /// unless it was to fix it properly, which seemed a distraction from the
-    /// thread at hand! -nmatsakis
-    pub fn expr_ty_adjusted(self, expr: &hir::Expr) -> Ty<'gcx> {
-        self.expr_ty(expr)
-            .adjust(self.global_tcx(), expr.span, expr.id,
-                    self.tables.borrow().adjustments.get(&expr.id),
-                    |method_call| {
-            self.tables.borrow().method_map.get(&method_call).map(|method| method.ty)
-        })
-    }
-
-    pub fn expr_ty_adjusted_opt(self, expr: &hir::Expr) -> Option<Ty<'gcx>> {
-        self.expr_ty_opt(expr).map(|t| t.adjust(self.global_tcx(),
-                                                expr.span,
-                                                expr.id,
-                                                self.tables.borrow().adjustments.get(&expr.id),
-                                                |method_call| {
-            self.tables.borrow().method_map.get(&method_call).map(|method| method.ty)
-        }))
+    pub fn tables(self) -> Ref<'a, Tables<'gcx>> {
+        self.tables.borrow()
     }
 
     pub fn expr_span(self, id: NodeId) -> Span {
@@ -2240,7 +2184,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             hir::ExprClosure(..) |
             hir::ExprBlock(..) |
             hir::ExprRepeat(..) |
-            hir::ExprVec(..) |
+            hir::ExprArray(..) |
             hir::ExprBreak(..) |
             hir::ExprAgain(..) |
             hir::ExprRet(..) |
@@ -2340,11 +2284,15 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     // or variant or their constructors, panics otherwise.
     pub fn expect_variant_def(self, def: Def) -> VariantDef<'tcx> {
         match def {
-            Def::Variant(did) => {
+            Def::Variant(did) | Def::VariantCtor(did, ..) => {
                 let enum_did = self.parent_def_id(did).unwrap();
                 self.lookup_adt_def(enum_did).variant_with_id(did)
             }
             Def::Struct(did) | Def::Union(did) => {
+                self.lookup_adt_def(did).struct_variant()
+            }
+            Def::StructCtor(ctor_did, ..) => {
+                let did = self.parent_def_id(ctor_did).expect("struct ctor has no parent");
                 self.lookup_adt_def(did).struct_variant()
             }
             _ => bug!("expect_variant_def used with unexpected def {:?}", def)
@@ -2498,6 +2446,19 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         lookup_locally_or_in_crate_store(
             "super_predicates", did, &self.super_predicates,
             || self.sess.cstore.item_super_predicates(self.global_tcx(), did))
+    }
+
+    /// Given the did of an item, returns its MIR, borrowed immutably.
+    pub fn item_mir(self, did: DefId) -> Ref<'gcx, Mir<'gcx>> {
+        lookup_locally_or_in_crate_store("mir_map", did, &self.mir_map, || {
+            let mir = self.sess.cstore.get_item_mir(self.global_tcx(), did);
+            let mir = self.alloc_mir(mir);
+
+            // Perma-borrow MIR from extern crates to prevent mutation.
+            mem::forget(mir.borrow());
+
+            mir
+        }).borrow()
     }
 
     /// If `type_needs_drop` returns true, then `ty` is definitely
@@ -2787,7 +2748,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         // regions, so it shouldn't matter what we use for the free id
         let free_id_outlive = self.region_maps.node_extent(ast::DUMMY_NODE_ID);
         ty::ParameterEnvironment {
-            free_substs: Substs::empty(self),
+            free_substs: self.intern_substs(&[]),
             caller_bounds: Vec::new(),
             implicit_region_bound: self.mk_region(ty::ReEmpty),
             free_id_outlive: free_id_outlive,
@@ -2873,19 +2834,6 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
     pub fn node_scope_region(self, id: NodeId) -> &'tcx Region {
         self.mk_region(ty::ReScope(self.region_maps.node_extent(id)))
-    }
-
-    pub fn is_method_call(self, expr_id: NodeId) -> bool {
-        self.tables.borrow().method_map.contains_key(&MethodCall::expr(expr_id))
-    }
-
-    pub fn is_overloaded_autoderef(self, expr_id: NodeId, autoderefs: u32) -> bool {
-        self.tables.borrow().method_map.contains_key(&MethodCall::autoderef(expr_id,
-                                                                            autoderefs))
-    }
-
-    pub fn upvar_capture(self, upvar_id: ty::UpvarId) -> Option<ty::UpvarCapture<'tcx>> {
-        Some(self.tables.borrow().upvar_capture_map.get(&upvar_id).unwrap().clone())
     }
 
     pub fn visit_all_items_in_krate<V,F>(self,

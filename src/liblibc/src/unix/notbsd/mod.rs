@@ -53,7 +53,9 @@ s! {
         pub ai_protocol: ::c_int,
         pub ai_addrlen: socklen_t,
 
-        #[cfg(any(target_os = "linux", target_os = "emscripten"))]
+        #[cfg(any(target_os = "linux",
+                  target_os = "emscripten",
+                  target_os = "fuchsia"))]
         pub ai_addr: *mut ::sockaddr,
 
         pub ai_canonname: *mut c_char,
@@ -851,11 +853,15 @@ extern {
                    flg: ::c_int) -> ::c_int;
     pub fn pthread_mutex_timedlock(lock: *mut pthread_mutex_t,
                                    abstime: *const ::timespec) -> ::c_int;
+    pub fn ptsname_r(fd: ::c_int,
+                     buf: *mut ::c_char,
+                     buflen: ::size_t) -> ::c_int;
 }
 
 cfg_if! {
     if #[cfg(any(target_os = "linux",
-                 target_os = "emscripten"))] {
+                 target_os = "emscripten",
+                 target_os = "fuchsia"))] {
         mod linux;
         pub use self::linux::*;
     } else if #[cfg(target_os = "android")] {

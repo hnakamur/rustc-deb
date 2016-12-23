@@ -19,7 +19,7 @@
 
 #![allow(non_camel_case_types)]
 
-#![feature(dotdot_in_tuple_patterns)]
+#![cfg_attr(stage0, feature(dotdot_in_tuple_patterns))]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
@@ -50,8 +50,6 @@ pub use borrowck::{AnalysisData, BorrowckCtxt, ElaborateDrops};
 pub mod diagnostics;
 
 mod borrowck;
-mod bitslice;
-mod indexed_set;
 
 pub mod graphviz;
 

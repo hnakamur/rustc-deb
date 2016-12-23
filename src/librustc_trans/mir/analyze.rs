@@ -13,14 +13,11 @@
 
 use rustc_data_structures::bitvec::BitVector;
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
-use rustc::mir::repr as mir;
-use rustc::mir::repr::TerminatorKind;
-use rustc::mir::repr::Location;
+use rustc::mir::{self, Location, TerminatorKind};
 use rustc::mir::visit::{Visitor, LvalueContext};
 use rustc::mir::traversal;
 use common::{self, Block, BlockAndBuilder};
 use glue;
-use std::iter;
 use super::rvalue;
 
 pub fn lvalue_locals<'bcx, 'tcx>(bcx: Block<'bcx,'tcx>,
@@ -30,11 +27,7 @@ pub fn lvalue_locals<'bcx, 'tcx>(bcx: Block<'bcx,'tcx>,
 
     analyzer.visit_mir(mir);
 
-    let local_types = mir.arg_decls.iter().map(|a| a.ty)
-               .chain(mir.var_decls.iter().map(|v| v.ty))
-               .chain(mir.temp_decls.iter().map(|t| t.ty))
-               .chain(iter::once(mir.return_ty));
-    for (index, ty) in local_types.enumerate() {
+    for (index, ty) in mir.local_decls.iter().map(|l| l.ty).enumerate() {
         let ty = bcx.monomorphize(&ty);
         debug!("local {} has type {:?}", index, ty);
         if ty.is_scalar() ||
@@ -49,12 +42,6 @@ pub fn lvalue_locals<'bcx, 'tcx>(bcx: Block<'bcx,'tcx>,
                     common::type_is_fat_ptr(bcx.tcx(), ty));
         } else if common::type_is_imm_pair(bcx.ccx(), ty) {
             // We allow pairs and uses of any of their 2 fields.
-        } else if !analyzer.seen_assigned.contains(index) {
-            // No assignment has been seen, which means that
-            // either the local has been marked as lvalue
-            // already, or there is no possible initialization
-            // for the local, making any reads invalid.
-            // This is useful in weeding out dead temps.
         } else {
             // These sorts of types require an alloca. Note that
             // type_is_immediate() may *still* be true, particularly
@@ -80,12 +67,11 @@ impl<'mir, 'bcx, 'tcx> LocalAnalyzer<'mir, 'bcx, 'tcx> {
     fn new(mir: &'mir mir::Mir<'tcx>,
            bcx: &'mir BlockAndBuilder<'bcx, 'tcx>)
            -> LocalAnalyzer<'mir, 'bcx, 'tcx> {
-        let local_count = mir.count_locals();
         LocalAnalyzer {
             mir: mir,
             bcx: bcx,
-            lvalue_locals: BitVector::new(local_count),
-            seen_assigned: BitVector::new(local_count)
+            lvalue_locals: BitVector::new(mir.local_decls.len()),
+            seen_assigned: BitVector::new(mir.local_decls.len())
         }
     }
 
@@ -109,7 +95,7 @@ impl<'mir, 'bcx, 'tcx> Visitor<'tcx> for LocalAnalyzer<'mir, 'bcx, 'tcx> {
                     location: Location) {
         debug!("visit_assign(block={:?}, lvalue={:?}, rvalue={:?})", block, lvalue, rvalue);
 
-        if let Some(index) = self.mir.local_index(lvalue) {
+        if let mir::Lvalue::Local(index) = *lvalue {
             self.mark_assigned(index);
             if !rvalue::rvalue_creates_operand(self.mir, self.bcx, rvalue) {
                 self.mark_as_lvalue(index);
@@ -153,7 +139,7 @@ impl<'mir, 'bcx, 'tcx> Visitor<'tcx> for LocalAnalyzer<'mir, 'bcx, 'tcx> {
 
         // Allow uses of projections of immediate pair fields.
         if let mir::Lvalue::Projection(ref proj) = *lvalue {
-            if self.mir.local_index(&proj.base).is_some() {
+            if let mir::Lvalue::Local(_) = proj.base {
                 let ty = proj.base.ty(self.mir, self.bcx.tcx());
 
                 let ty = self.bcx.monomorphize(&ty.to_ty(self.bcx.tcx()));
@@ -167,7 +153,7 @@ impl<'mir, 'bcx, 'tcx> Visitor<'tcx> for LocalAnalyzer<'mir, 'bcx, 'tcx> {
             }
         }
 
-        if let Some(index) = self.mir.local_index(lvalue) {
+        if let mir::Lvalue::Local(index) = *lvalue {
             match context {
                 LvalueContext::Call => {
                     self.mark_assigned(index);

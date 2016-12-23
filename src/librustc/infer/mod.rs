@@ -25,7 +25,7 @@ use middle::mem_categorization as mc;
 use middle::mem_categorization::McResult;
 use middle::region::CodeExtent;
 use mir::tcx::LvalueTy;
-use ty::subst::{Subst, Substs};
+use ty::subst::{Kind, Subst, Substs};
 use ty::adjustment;
 use ty::{TyVid, IntVid, FloatVid};
 use ty::{self, Ty, TyCtxt};
@@ -199,9 +199,6 @@ pub enum TypeOrigin {
     // Computing common supertype of an if expression with no else counter-part
     IfExpressionWithNoElse(Span),
 
-    // Computing common supertype in a range expression
-    RangeExpression(Span),
-
     // `where a == b`
     EquatePredicate(Span),
 
@@ -231,7 +228,6 @@ impl TypeOrigin {
             },
             &TypeOrigin::IfExpression(_) => "if and else have incompatible types",
             &TypeOrigin::IfExpressionWithNoElse(_) => "if may be missing an else clause",
-            &TypeOrigin::RangeExpression(_) => "start and end of range have incompatible types",
             &TypeOrigin::EquatePredicate(_) => "equality predicate not satisfied",
             &TypeOrigin::MainFunctionType(_) => "main function has wrong type",
             &TypeOrigin::StartFunctionType(_) => "start function has wrong type",
@@ -251,7 +247,6 @@ impl TypeOrigin {
             &TypeOrigin::MatchExpressionArm(..) => "match arms have compatible types",
             &TypeOrigin::IfExpression(_) => "if and else have compatible types",
             &TypeOrigin::IfExpressionWithNoElse(_) => "if missing an else returns ()",
-            &TypeOrigin::RangeExpression(_) => "start and end of range have compatible types",
             &TypeOrigin::EquatePredicate(_) => "equality where clause is satisfied",
             &TypeOrigin::MainFunctionType(_) => "`main` function has the correct type",
             &TypeOrigin::StartFunctionType(_) => "`start` function has the correct type",
@@ -360,6 +355,19 @@ pub enum SubregionOrigin<'tcx> {
 
     // Region constraint arriving from destructor safety
     SafeDestructor(Span),
+
+    // Comparing the signature and requirements of an impl method against
+    // the containing trait.
+    CompareImplMethodObligation {
+        span: Span,
+        item_name: ast::Name,
+        impl_item_def_id: DefId,
+        trait_item_def_id: DefId,
+
+        // this is `Some(_)` if this error arises from the bug fix for
+        // #18937. This is a temporary measure.
+        lint_id: Option<ast::NodeId>,
+    },
 }
 
 /// Places that type/region parameters can appear.
@@ -1061,7 +1069,10 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         self.probe(|_| {
             let origin = TypeOrigin::Misc(syntax_pos::DUMMY_SP);
             let trace = TypeTrace::types(origin, true, a, b);
-            self.sub(true, trace, &a, &b).map(|_| ())
+            self.sub(true, trace, &a, &b).map(|InferOk { obligations, .. }| {
+                // FIXME(#32730) propagate obligations
+                assert!(obligations.is_empty());
+            })
         })
     }
 
@@ -1152,16 +1163,18 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     }
 
     pub fn region_outlives_predicate(&self,
-                                     span: Span,
+                                     cause: &traits::ObligationCause<'tcx>,
                                      predicate: &ty::PolyRegionOutlivesPredicate<'tcx>)
         -> UnitResult<'tcx>
     {
         self.commit_if_ok(|snapshot| {
             let (ty::OutlivesPredicate(r_a, r_b), skol_map) =
                 self.skolemize_late_bound_regions(predicate, snapshot);
-            let origin = RelateRegionParamBound(span);
+            let origin =
+                SubregionOrigin::from_obligation_cause(cause,
+                                                       || RelateRegionParamBound(cause.span));
             self.sub_regions(origin, r_b, r_a); // `b : a` ==> `a <= b`
-            self.leak_check(false, span, &skol_map, snapshot)?;
+            self.leak_check(false, cause.span, &skol_map, snapshot)?;
             Ok(self.pop_skolemized(skol_map, snapshot))
         })
     }
@@ -1221,7 +1234,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     pub fn type_var_for_def(&self,
                             span: Span,
                             def: &ty::TypeParameterDef<'tcx>,
-                            substs: &Substs<'tcx>)
+                            substs: &[Kind<'tcx>])
                             -> Ty<'tcx> {
         let default = def.default.map(|default| {
             type_variable::Default {
@@ -1254,26 +1267,6 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
     pub fn fresh_bound_region(&self, debruijn: ty::DebruijnIndex) -> &'tcx ty::Region {
         self.region_vars.new_bound(debruijn)
-    }
-
-    /// Apply `adjustment` to the type of `expr`
-    pub fn adjust_expr_ty(&self,
-                          expr: &hir::Expr,
-                          adjustment: Option<&adjustment::AutoAdjustment<'tcx>>)
-                          -> Ty<'tcx>
-    {
-        let raw_ty = self.expr_ty(expr);
-        let raw_ty = self.shallow_resolve(raw_ty);
-        let resolve_ty = |ty: Ty<'tcx>| self.resolve_type_vars_if_possible(&ty);
-        raw_ty.adjust(self.tcx,
-                      expr.span,
-                      expr.id,
-                      adjustment,
-                      |method_call| self.tables
-                                        .borrow()
-                                        .method_map
-                                        .get(&method_call)
-                                        .map(|method| resolve_ty(method.ty)))
     }
 
     /// True if errors have been reported since this infcx was
@@ -1602,8 +1595,12 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             // anyhow. We should make this typetrace stuff more
             // generic so we don't have to do anything quite this
             // terrible.
-            self.equate(true, TypeTrace::dummy(self.tcx), a, b)
-        }).map(|_| ())
+            let trace = TypeTrace::dummy(self.tcx);
+            self.equate(true, trace, a, b).map(|InferOk { obligations, .. }| {
+                // FIXME(#32730) propagate obligations
+                assert!(obligations.is_empty());
+            })
+        })
     }
 
     pub fn node_ty(&self, id: ast::NodeId) -> McResult<Ty<'tcx>> {
@@ -1612,7 +1609,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     }
 
     pub fn expr_ty_adjusted(&self, expr: &hir::Expr) -> McResult<Ty<'tcx>> {
-        let ty = self.adjust_expr_ty(expr, self.tables.borrow().adjustments.get(&expr.id));
+        let ty = self.tables.borrow().expr_ty_adjusted(expr);
         self.resolve_type_vars_or_error(&ty)
     }
 
@@ -1656,9 +1653,9 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             .map(|method| method.def_id)
     }
 
-    pub fn adjustments(&self) -> Ref<NodeMap<adjustment::AutoAdjustment<'tcx>>> {
+    pub fn adjustments(&self) -> Ref<NodeMap<adjustment::Adjustment<'tcx>>> {
         fn project_adjustments<'a, 'tcx>(tables: &'a ty::Tables<'tcx>)
-                                        -> &'a NodeMap<adjustment::AutoAdjustment<'tcx>> {
+                                        -> &'a NodeMap<adjustment::Adjustment<'tcx>> {
             &tables.adjustments
         }
 
@@ -1755,7 +1752,6 @@ impl TypeOrigin {
             TypeOrigin::MatchExpressionArm(match_span, ..) => match_span,
             TypeOrigin::IfExpression(span) => span,
             TypeOrigin::IfExpressionWithNoElse(span) => span,
-            TypeOrigin::RangeExpression(span) => span,
             TypeOrigin::EquatePredicate(span) => span,
             TypeOrigin::MainFunctionType(span) => span,
             TypeOrigin::StartFunctionType(span) => span,
@@ -1792,6 +1788,32 @@ impl<'tcx> SubregionOrigin<'tcx> {
             AddrOf(a) => a,
             AutoBorrow(a) => a,
             SafeDestructor(a) => a,
+            CompareImplMethodObligation { span, .. } => span,
+        }
+    }
+
+    pub fn from_obligation_cause<F>(cause: &traits::ObligationCause<'tcx>,
+                                    default: F)
+                                    -> Self
+        where F: FnOnce() -> Self
+    {
+        match cause.code {
+            traits::ObligationCauseCode::ReferenceOutlivesReferent(ref_type) =>
+                SubregionOrigin::ReferenceOutlivesReferent(ref_type, cause.span),
+
+            traits::ObligationCauseCode::CompareImplMethodObligation { item_name,
+                                                                       impl_item_def_id,
+                                                                       trait_item_def_id,
+                                                                       lint_id } =>
+                SubregionOrigin::CompareImplMethodObligation {
+                    span: cause.span,
+                    item_name: item_name,
+                    impl_item_def_id: impl_item_def_id,
+                    trait_item_def_id: trait_item_def_id,
+                    lint_id: lint_id,
+                },
+
+            _ => default(),
         }
     }
 }
