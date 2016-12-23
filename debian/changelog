@@ -1,5 +1,6 @@
-rustc (1.13.0+dfsg1-3) UNRELEASED; urgency=medium
+rustc (1.14.0+dfsg1-1) unstable; urgency=medium
 
+  * New upstream release
   * Update debian/watch
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 23 Dec 2016 16:19:39 +0100
