@@ -8,5 +8,5 @@ repack,\
 repacksuffix=+dfsg1,\
 compression=xz,\
 " \
- https://www.rust-lang.org/en-US/downloads.html \
+ https://www.rust-lang.org/en-US/other-installers.html \
  (?:.*/)rustc?-(\d[\d.]*(?:-[\w.]+)?)-src\.tar\.gz

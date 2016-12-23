@@ -1,3 +1,9 @@
+rustc (1.13.0+dfsg1-3) UNRELEASED; urgency=medium
+
+  * Update debian/watch
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 23 Dec 2016 16:19:39 +0100
+
 rustc (1.13.0+dfsg1-2) unstable; urgency=high
 
   * Skip macro-stepping test on arm64, until
