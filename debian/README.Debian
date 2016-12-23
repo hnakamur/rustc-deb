@@ -1,3 +1,6 @@
+Shared libraries
+================
+
 For now, the shared libraries of Rust are private.
 The rational is the following:
  * Upstream prefers static linking for now
@@ -12,7 +15,7 @@ The rational is the following:
  -- Sylvestre Ledru <sylvestre@debian.org>, Fri, 13 Feb 2015 15:08:43 +0100
 
 Building from source
---------------------
+====================
 
 By default, the Debian rustc package will use the system rustc to bootstrap
 itself from. The system rustc has to be either the previous or the same version
@@ -43,9 +46,9 @@ time using itself to bootstrap from:
   apt-get source --compile rustc
 
 Bootstrapping a new distro
---------------------------
+==========================
 
-If you want to bootstrap [*] a new distro that does not already have rustc, you
+If you want to bootstrap a new distro that does not already have rustc, you
 may run `debian/rules source_orig-dl` to create a .dsc that does not
 Build-Depend on rustc. Instead, it includes an extra orig-dl source tarball
 that contains the official stage0 compiler, pre-downloaded from rust-lang.org
@@ -62,16 +65,72 @@ This way, other architectures will be omitted from the orig-dl tarball. You
 might want to do this e.g. if these other architectures are already present in
 your distro, but the $upstream_bootstrap_arch ones are not yet present.
 
-[*] We assume that you do this via a source upload, such that build daemons can
-recreate the binaries. We're not considering the scenario where you build a
-binary rustc locally, using bootstrapping steps that your distro's build
-daemons can't reproduce themselves. This latter scenario is not secure from the
-distro's perspective, since you could be uploading a backdoored binary. We
-expect that distros will eventually drop support for it with Reproducible
-Builds, so we don't bother to support it ourselves here.
+Notes
+-----
+
+The approach here is based on doing a *source-only upload*, where the building
+of the binary packages are done by automatic build daemons. We achieve this, by
+bundling the upstream bootstrapping binaries inside the Debian source package.
+This is a nasty hack that stretches the definition of "source package", but is
+unavoidable if we want to securely bootstrap self-hosted compilers.
+
+This differs from the traditional Debian way of bootstrapping compilers, which
+involves locally building a "stage0" Debian package using upstream binaries
+(instead of Debian build dependencies that don't yet exist), then using this
+stage0 Debian package to do a "standard" build that then forms part of a binary
+upload. This allows the source package to remain binary-free. However, both the
+original stage0 package and upstream binaries are lost, and Debian currently
+does not have any policy nor infrastructure that can try to reproduce what the
+uploader supposedly did.
+
+The advantage of our (non-traditional) approach is that anyone can download
+this source package if they want to build the binaries themselves - they can
+just follow the same automatic build processes that apply to every other Debian
+package. If the build process is reproducible [1] then they can be sure that
+*you* (as the Debian Developer that prepared the source-only upload) didn't
+backdoor the binaries, nor did the automatic build daemons even if they were
+compromised during the build.
+
+(The upstream binaries contained in the orig-dl tarball may still have been
+backdoored. However, this is true in both scenarios - our arrangement is still
+a strict improvement in security, because it reduces the set of "things that
+may have been backdoored". Furthermore, more people use the upstream binaries,
+so presumably any backdoors would be noticed more quickly.)
+
+In the future, both approaches are unifiable into a single secure process, as
+long as:
+
+1. We can trace the binaries that were *actually used* in the original
+   bootstrapping event.
+2. We can optionally *choose* to use a different bootstrapping binary, such as
+   an independently-written rustc.
+3. We have a unified well-defined process for both (1) or (2), that applies to
+   all bootstrapped packages (not just rustc). "Well-defined" means that it can
+   be automated by a program, and it can verify that both options result in the
+   same binary outputs (after the stage2 compilation step).
+
+This is otherwise known as Diverse Double-Compilation.
+
+[1] https://github.com/rust-lang/rust/issues/34902
+[2] http://www.dwheeler.com/trusting-trust/
 
 Bootstrapping a new architecture
+================================
+
+Compiling from upstream releases
 --------------------------------
+
+See the previous section, "Bootstrapping a new distro", specifically the part
+about how to "only bootstrap specific architectures".
+
+For Debian, we should be able to support armhf soon:
+
+Complete: armhf https://github.com/rust-lang/rust/issues/35590
+In-progress: ppc64, ppc64el, s390x: https://github.com/rust-lang/rust/issues/36006
+In-progress: mips, mipsel, mips64el: https://github.com/rust-lang/rust/issues/36015
+
+Cross-compiling from Debian packages
+------------------------------------
 
 WARNING: This does not work yet
 
@@ -92,13 +151,3 @@ WARNING: This does not work yet
     #apt-get source --compile --host-architecture=$new_arch rustc
 
  -- Angus Lees <gus@debian.org>, Sun,  1 Feb 2015 16:16:44 +1100
-
-Other notes
------------
-
-Rust now supports armhf https://github.com/rust-lang/rust/issues/35590
-
-This should be available in this Debian package in the next stable release.
-
-Rust is unlikely to support armel for the foreseeable future because that
-architecture does not have native atomic operations.
