@@ -1,8 +1,8 @@
-Index: rustc.git/src/librustdoc/html/render.rs
+Index: rust/src/librustdoc/html/render.rs
 ===================================================================
---- rustc.git.orig/src/librustdoc/html/render.rs
-+++ rustc.git/src/librustdoc/html/render.rs
-@@ -659,8 +659,16 @@ fn write_shared(cx: &Context,
+--- rust.orig/src/librustdoc/html/render.rs
++++ rust/src/librustdoc/html/render.rs
+@@ -653,8 +653,16 @@ fn write_shared(cx: &Context,
      // Add all the static files. These may already exist, but we just
      // overwrite them anyway to make sure that they're fresh and up-to-date.
  
@@ -20,4 +20,4 @@ Index: rustc.git/src/librustdoc/html/render.rs
 +    }
      write(cx.dst.join("main.js"),
            include_bytes!("static/main.js"))?;
-     write(cx.dst.join("playpen.js"),
+     write(cx.dst.join("rustdoc.css"),

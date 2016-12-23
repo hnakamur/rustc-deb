@@ -10,15 +10,15 @@ Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
-Index: rustc.git/configure
+Index: rust/configure
 ===================================================================
---- rustc.git.orig/configure
-+++ rustc.git/configure
-@@ -508,8 +508,19 @@ case $CFG_CPUTYPE in
+--- rust.orig/configure
++++ rust/configure
+@@ -513,8 +513,19 @@ case $CFG_CPUTYPE in
          ;;
  
      armv7l)
--        CFG_CPUTYPE=arm
+-        CFG_CPUTYPE=armv7
 -        CFG_OSTYPE="${CFG_OSTYPE}eabihf"
 +        case $DEB_HOST_ARCH in
 +        armhf)

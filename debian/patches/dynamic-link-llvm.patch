@@ -13,23 +13,31 @@ Index: rust/src/librustc_llvm/build.rs
 ===================================================================
 --- rust.orig/src/librustc_llvm/build.rs
 +++ rust/src/librustc_llvm/build.rs
-@@ -122,52 +122,11 @@ fn main() {
-        .cpp(true)
+@@ -123,63 +123,10 @@ fn main() {
         .cpp_link_stdlib(None) // we handle this below
         .compile("librustllvm.a");
--
+ 
 -    // Link in all LLVM libraries, if we're uwring the "wrong" llvm-config then
 -    // we don't pick up system libs because unfortunately they're for the host
 -    // of llvm-config, not the target that we're attempting to link.
 -    let mut cmd = Command::new(&llvm_config);
 -    cmd.arg("--libs");
+-
+-    // Force static linking with "--link-static" if available.
+-    let mut version_cmd = Command::new(&llvm_config);
+-    version_cmd.arg("--version");
+-    let version_output = output(&mut version_cmd);
+-    let mut parts = version_output.split('.');
+-    if let (Some(major), Some(minor)) = (parts.next().and_then(|s| s.parse::<u32>().ok()),
+-                                         parts.next().and_then(|s| s.parse::<u32>().ok())) {
+-        if major > 3 || (major == 3 && minor >= 8) {
+-            cmd.arg("--link-static");
+-        }
+-    }
+-
 -    if !is_crossed {
 -        cmd.arg("--system-libs");
-+       // Link in all LLVM libraries
-+       // Link in Debian full LLVM shared library.
-+       // TODO: not sure what to do in the cross-compiling case.
-+       println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.9");
-     }
+-    }
 -    cmd.args(&components[..]);
 -
 -    for lib in output(&mut cmd).split_whitespace() {
@@ -47,7 +55,7 @@ Index: rust/src/librustc_llvm/build.rs
 -            // that off
 -            lib.trim_right_matches(".lib")
 -        } else {
--            continue
+-            continue;
 -        };
 -
 -        // Don't need or want this library, but LLVM's CMake build system
@@ -56,7 +64,7 @@ Index: rust/src/librustc_llvm/build.rs
 -        // library and it otherwise may just pull in extra dependencies on
 -        // libedit which we don't want
 -        if name == "LLVMLineEditor" {
--            continue
+-            continue;
 -        }
 -
 -        let kind = if name.starts_with("LLVM") {
@@ -66,10 +74,13 @@ Index: rust/src/librustc_llvm/build.rs
 -        };
 -        println!("cargo:rustc-link-lib={}={}", kind, name);
 -    }
--
++     // Link in all LLVM libraries
++     // Link in Debian full LLVM shared library.
++     // TODO: not sure what to do in the cross-compiling case.
++     println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.9");
+ 
      // LLVM ldflags
      //
-     // If we're a cross-compile of LLVM then unfortunately we can't trust these
 Index: rust/src/etc/mklldeps.py
 ===================================================================
 --- rust.orig/src/etc/mklldeps.py
