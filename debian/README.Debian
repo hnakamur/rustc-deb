@@ -23,27 +23,16 @@ as the rustc being built; the build will fail if this is not the case.
 
   apt-get source --compile rustc
 
-Alternatively:
+Alternatively, you may give the "pkg.rustc.dlstage0" DEB_BUILD_PROFILE to
+instead use the process defined by Rust upstream. This downloads the "official"
+stage0 compiler for the version being built from rust-lang.org. At the time of
+writing "official" means "the previous stable version".
 
-a) You may give the "pkg.rustc.nolocal" DEB_BUILD_PROFILE to instead use the
-process defined by Rust upstream. This downloads the "official" stage0 compiler
-(for the version being built) from rust-lang.org. At the time of writing
-"official" means "the previous stable version".
+  apt-get source --compile --build-profiles=pkg.rustc.dlstage0 rustc
 
-  apt-get source --compile --build-profiles=pkg.rustc.nolocal rustc
-
-b) You may give the "pkg.rustc.nodistro" DEB_BUILD_PROFILE to use a custom
-local Rust installed into /usr/local. As with the system rustc, this must be
-either the previous or the current version.
-
-  [install a custom rustc into /usr/local]
-  apt-get source --compile --build-profiles=pkg.rustc.nodistro rustc
-
-After building, you might want to re-build the version you just built, this
-time using itself to bootstrap from:
-
-  dpkg -i rustc*.deb libstd-rust-*.deb
-  apt-get source --compile rustc
+If neither of these options are acceptable to you, (e.g. because your build
+process cannot access the network), see the below sections on "Bootstrapping"
+for more options.
 
 Bootstrapping a new distro
 ==========================
