@@ -10,7 +10,7 @@ rustc (1.14.0+dfsg1-1) unstable; urgency=medium
   * Make rust-gdb and rust-lldb arch:all packages.
   * Switch to debhelper 10.
 
- -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 23 Dec 2016 16:19:39 +0100
+ -- Ximin Luo <infinity0@debian.org>  Sat, 24 Dec 2016 18:03:03 +0100
 
 rustc (1.13.0+dfsg1-2) unstable; urgency=high
 
