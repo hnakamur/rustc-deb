@@ -1,7 +1,13 @@
 rustc (1.14.0+dfsg1-1) unstable; urgency=medium
 
+  [ Sylvestsre Ledru ]
   * New upstream release
   * Update debian/watch
+
+  [ Ximin Luo ]
+  * Try to bootstrap armhf ppc64 ppc64el s390x mips mipsel mips64el.
+  * Make rust-gdb and rust-lldb arch:all packages.
+  * Switch to debhelper 10.
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 23 Dec 2016 16:19:39 +0100
 
