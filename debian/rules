@@ -172,6 +172,8 @@ override_dh_install-arch:
 	dh_install
 	dh_install -p$(LIBSTD_PKG) usr/lib/$(DEB_HOST_MULTIARCH)/
 
+override_dh_install-indep:
+	dh_install
 	chmod -x \
 	  debian/rust-gdb/usr/share/rust-gdb/*.py \
 	  debian/rust-lldb/usr/share/rust-lldb/*.py
