@@ -20,4 +20,4 @@ sed -i -e "s|libstd-rust-${ORIG_R}|libstd-rust-$NEW|g" libstd-rust-$NEW.lintian-
 sed -i -e "s|libstd-rust-${ORIG_R}|libstd-rust-$NEW|g" source/lintian-overrides
 }
 
-update 1.12 1.13
+update 1.13 1.14
