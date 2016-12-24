@@ -1,6 +1,6 @@
 rustc (1.14.0+dfsg1-1) unstable; urgency=medium
 
-  [ Sylvestsre Ledru ]
+  [ Sylvestre Ledru ]
   * New upstream release
   * Update debian/watch
 
