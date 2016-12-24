@@ -33,7 +33,9 @@ Build-Depends: debhelper (>= 10),
                antlr4 <!nocheck>,
                bison <!nocheck>,
                flex <!nocheck>,
-               gdb <!nocheck>,
+# temporarily disabled because of https://github.com/rust-lang/rust/issues/36323
+# we should be able to re-enable it soon, it seems already fixed in rustc head + gdb trunk
+#               gdb <!nocheck>,
                default-jdk-headless <!nocheck>,
 Build-Depends-Indep: libjs-jquery <!nodoc>,
                      pandoc (>= 1.9),
