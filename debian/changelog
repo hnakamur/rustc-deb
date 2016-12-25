@@ -1,6 +1,7 @@
 rustc (1.14.0+dfsg1-2) UNRELEASED; urgency=medium
 
   * Update README.Debian, the old one was way out of date.
+  * Detect mips CPUs in ./configure.
 
  -- Ximin Luo <infinity0@debian.org>  Sat, 24 Dec 2016 19:09:01 +0100
 
