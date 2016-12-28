@@ -13,3 +13,4 @@ ignore-test-failing-arm64.diff
 #use-system-jquery-symlink.patch
 use-system-jquery.patch
 detect-mips-cpu.patch
+fill-in-mips-mk-rules.patch

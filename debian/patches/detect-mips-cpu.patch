@@ -2,7 +2,7 @@ Description: Detect mips CPUs in ./configure
  This basically recreates the logic that already exists in bootstrap.py
  Endianness test from https://stackoverflow.com/questions/26859098/testing-endianness-of-system-with-the-unix-shell
 Author: Ximin Luo <infinity0@debian.org>
-Forwarded: TODO
+Bug: https://github.com/rust-lang/rust/pull/38650
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/configure
