@@ -2,7 +2,7 @@ Description: Disable jemalloc tests and on s390x
 Author: Ximin Luo <infinity0@debian.org>
 Bug: https://github.com/rust-lang/rust/issues/38596
 Bug: https://github.com/rust-lang/rust/issues/38612
-Forwarded: TODO
+Bug: https://github.com/rust-lang/rust/pull/38675
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/librustc_back/target/s390x_unknown_linux_gnu.rs

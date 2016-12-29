@@ -11,6 +11,10 @@ include /usr/share/dpkg/buildflags.mk
 RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
 
+# see https://github.com/rust-lang/rust/issues/37320
+# it should be possible to remove this in the next Debian release
+export MALLOC_CONF = lg_dirty_mult:-1
+
 # Defines DEB_*_RUST_TYPE triples
 include debian/architecture.mk
 
