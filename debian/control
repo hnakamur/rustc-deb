@@ -26,8 +26,6 @@ Build-Depends: debhelper (>= 10),
                git <!nocheck>,
                procps <!nocheck>,
 # the tests require the docs to be built, which requires jquery
-# TODO: disable tests on docs if nodoc and nocheck are active,
-# and split tests into indep/arch rules
                libjs-jquery <!nocheck>,
 # below are optional tools even for 'make check'
                antlr4 <!nocheck>,
