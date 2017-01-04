@@ -10,11 +10,9 @@ Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
-Index: rust/configure
-===================================================================
---- rust.orig/configure
-+++ rust/configure
-@@ -513,8 +513,19 @@ case $CFG_CPUTYPE in
+--- a/configure
++++ b/configure
+@@ -514,8 +514,19 @@
          ;;
  
      armv7l)

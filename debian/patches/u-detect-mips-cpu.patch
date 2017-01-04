@@ -15,7 +15,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  
  if [ $CFG_OSTYPE = Darwin -a $CFG_CPUTYPE = i386 ]
  then
-@@ -552,6 +553,17 @@
+@@ -541,6 +542,17 @@
          CFG_CPUTYPE=x86_64
          ;;
  

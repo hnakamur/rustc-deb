@@ -7,8 +7,7 @@ Description: Disable reference.md "Items_and_attributes_14" doctest, hanging on 
  we should try to re-enable this test again when we switch on armhf again.
  still occurs then file a bug upstream.
 Author: Ximin Luo <infinity0@debian.org>
-Bug: TODO pending enabling armhf in Debian
-Forwarded: not-needed
+Forwarded: TODO pending enabling armhf in Debian
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 Index: rust/src/doc/reference.md
