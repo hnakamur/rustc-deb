@@ -191,10 +191,16 @@ override_dh_installdocs:
 override_dh_compress:
 	dh_compress -X.woff
 
-override_dh_auto_test:
+override_dh_auto_test-arch:
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	RUST_BACKTRACE=1 $(PMAKE) VERBOSE=1 check-notidy
 endif
+
+# No tests are applicable when only building arch:all packages.
+# More specifically: when we do an arch-all build, some crates are not built.
+# This makes some arch-dependent tests fail, so don't run them here.
+override_dh_auto_test-indep:
+	true
 
 override_dh_makeshlibs:
 	dh_makeshlibs -V

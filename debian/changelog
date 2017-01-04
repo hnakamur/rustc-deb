@@ -1,6 +1,7 @@
 rustc (1.14.0+dfsg1-3) UNRELEASED; urgency=medium
 
   * Fix mips64 Makefile patches.
+  * Don't run arch-dep tests in a arch-indep build.
 
  -- Ximin Luo <infinity0@debian.org>  Wed, 04 Jan 2017 16:23:22 +0100
 
