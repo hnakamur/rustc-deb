@@ -2,13 +2,13 @@
 # Ideally we would order these as follows:
 # [ applied already ], [ pending ], [ forwarded or to-be-forwarded ]
 u-reproducible-dl-stage0.patch
-u-ignore-failing-armhf-tests_02.patch
-u-ignore-failing-armhf-tests_03.patch
-u-ignore-stdcall-test-on-arm64.patch
-u-ignore-test-failing-i386.patch
-u-ignore-test-failing-arm64.patch
+u-ignoretest-armhf_02.patch
+u-ignoretest-armhf_03.patch
+u-ignoretest-arm64-stdcall.patch
+u-ignoretest-i386.patch
+u-ignoretest-arm64.patch
+u-ignoretest-jemalloc.patch
 u-detect-mips-cpu.patch
-u-jemalloc-disable-tests.patch
 
 # Debian-specific patches, not suitable for upstream
 d-rust-gdb-paths
