@@ -30,12 +30,13 @@ use rustc::ty::{self, Ty};
 use Disr;
 use rustc::hir;
 use syntax::ast;
-use syntax::parse::token;
+use syntax::symbol::Symbol;
 
 use rustc::session::Session;
 use syntax_pos::{Span, DUMMY_SP};
 
 use std::cmp::Ordering;
+use std::iter;
 
 fn get_simple_intrinsic(ccx: &CrateContext, name: &str) -> Option<ValueRef> {
     let llvm_name = match name {
@@ -105,9 +106,9 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
     };
 
     let sig = tcx.erase_late_bound_regions_and_normalize(&fty.sig);
-    let arg_tys = sig.inputs;
-    let ret_ty = sig.output;
-    let name = tcx.item_name(def_id).as_str();
+    let arg_tys = sig.inputs();
+    let ret_ty = sig.output();
+    let name = &*tcx.item_name(def_id).as_str();
 
     let span = match call_debug_location {
         DebugLoc::ScopeAt(_, span) => span,
@@ -123,15 +124,15 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
         Call(bcx, llfn, &[], call_debug_location);
         Unreachable(bcx);
         return Result::new(bcx, C_undef(Type::nil(ccx).ptr_to()));
-    } else if &name[..] == "unreachable" {
+    } else if name == "unreachable" {
         Unreachable(bcx);
         return Result::new(bcx, C_nil(ccx));
     }
 
     let llret_ty = type_of::type_of(ccx, ret_ty);
 
-    let simple = get_simple_intrinsic(ccx, &name);
-    let llval = match (simple, &name[..]) {
+    let simple = get_simple_intrinsic(ccx, name);
+    let llval = match (simple, name) {
         (Some(llfn), _) => {
             Call(bcx, llfn, &llargs, call_debug_location)
         }
@@ -208,7 +209,7 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
         }
         (_, "type_name") => {
             let tp_ty = substs.type_at(0);
-            let ty_name = token::intern_and_get_ident(&tp_ty.to_string());
+            let ty_name = Symbol::intern(&tp_ty.to_string()).as_str();
             C_str_slice(ccx, ty_name)
         }
         (_, "type_id") => {
@@ -340,7 +341,7 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
             let sty = &arg_tys[0].sty;
             match int_type_width_signed(sty, ccx) {
                 Some((width, signed)) =>
-                    match &*name {
+                    match name {
                         "ctlz" => count_zeros_intrinsic(bcx, &format!("llvm.ctlz.i{}", width),
                                                         llargs[0], call_debug_location),
                         "cttz" => count_zeros_intrinsic(bcx, &format!("llvm.cttz.i{}", width),
@@ -394,7 +395,7 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
             let sty = &arg_tys[0].sty;
             match float_type_width(sty) {
                 Some(_width) =>
-                    match &*name {
+                    match name {
                         "fadd_fast" => FAddFast(bcx, llargs[0], llargs[1], call_debug_location),
                         "fsub_fast" => FSubFast(bcx, llargs[0], llargs[1], call_debug_location),
                         "fmul_fast" => FMulFast(bcx, llargs[0], llargs[1], call_debug_location),
@@ -674,7 +675,7 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
                 // again to find them and extract the arguments
                 intr.inputs.iter()
                            .zip(llargs)
-                           .zip(&arg_tys)
+                           .zip(arg_tys)
                            .flat_map(|((t, llarg), ty)| modify_as_needed(bcx, t, ty, *llarg))
                            .collect()
             };
@@ -1012,11 +1013,7 @@ fn gen_fn<'a, 'tcx>(fcx: &FunctionContext<'a, 'tcx>,
                     trans: &mut for<'b> FnMut(Block<'b, 'tcx>))
                     -> ValueRef {
     let ccx = fcx.ccx;
-    let sig = ty::FnSig {
-        inputs: inputs,
-        output: output,
-        variadic: false,
-    };
+    let sig = ccx.tcx().mk_fn_sig(inputs.into_iter(), output, false);
     let fn_ty = FnType::new(ccx, Abi::Rust, &sig, &[]);
 
     let rust_fn_ty = ccx.tcx().mk_fn_ptr(ccx.tcx().mk_bare_fn(ty::BareFnTy {
@@ -1051,11 +1048,7 @@ fn get_rust_try_fn<'a, 'tcx>(fcx: &FunctionContext<'a, 'tcx>,
     let fn_ty = tcx.mk_fn_ptr(tcx.mk_bare_fn(ty::BareFnTy {
         unsafety: hir::Unsafety::Unsafe,
         abi: Abi::Rust,
-        sig: ty::Binder(ty::FnSig {
-            inputs: vec![i8p],
-            output: tcx.mk_nil(),
-            variadic: false,
-        }),
+        sig: ty::Binder(tcx.mk_fn_sig(iter::once(i8p), tcx.mk_nil(), false)),
     }));
     let output = tcx.types.i32;
     let rust_try = gen_fn(fcx, "__rust_try", vec![fn_ty, i8p, i8p], output, trans);
@@ -1108,7 +1101,7 @@ fn generic_simd_intrinsic<'blk, 'tcx, 'a>
 
     let tcx = bcx.tcx();
     let sig = tcx.erase_late_bound_regions_and_normalize(callee_ty.fn_sig());
-    let arg_tys = sig.inputs;
+    let arg_tys = sig.inputs();
 
     // every intrinsic takes a SIMD vector as its first argument
     require_simd!(arg_tys[0], "input");

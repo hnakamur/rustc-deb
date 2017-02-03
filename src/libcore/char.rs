@@ -10,7 +10,7 @@
 
 //! Character manipulation.
 //!
-//! For more details, see ::rustc_unicode::char (a.k.a. std::char)
+//! For more details, see ::std_unicode::char (a.k.a. std::char)
 
 #![allow(non_snake_case)]
 #![stable(feature = "core_char", since = "1.2.0")]
@@ -238,7 +238,7 @@ impl fmt::Display for CharTryFromError {
 /// A 'radix' here is sometimes also called a 'base'. A radix of two
 /// indicates a binary number, a radix of ten, decimal, and a radix of
 /// sixteen, hexadecimal, to give some common values. Arbitrary
-/// radicum are supported.
+/// radices are supported.
 ///
 /// `from_digit()` will return `None` if the input is not a digit in
 /// the given radix.
@@ -327,9 +327,9 @@ pub trait CharExt {
     fn len_utf8(self) -> usize;
     #[stable(feature = "core", since = "1.6.0")]
     fn len_utf16(self) -> usize;
-    #[unstable(feature = "unicode", issue = "27784")]
+    #[stable(feature = "unicode_encode_char", since = "1.15.0")]
     fn encode_utf8(self, dst: &mut [u8]) -> &mut str;
-    #[unstable(feature = "unicode", issue = "27784")]
+    #[stable(feature = "unicode_encode_char", since = "1.15.0")]
     fn encode_utf16(self, dst: &mut [u16]) -> &mut [u16];
 }
 

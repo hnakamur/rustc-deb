@@ -52,6 +52,9 @@ pub enum Def {
           ast::NodeId), // expr node that creates the closure
     Label(ast::NodeId),
 
+    // Macro namespace
+    Macro(DefId),
+
     // Both namespaces
     Err,
 }
@@ -80,14 +83,6 @@ impl PathResolution {
         PathResolution { base_def: def, depth: 0 }
     }
 
-    /// Get the definition, if fully resolved, otherwise panic.
-    pub fn full_def(&self) -> Def {
-        if self.depth != 0 {
-            bug!("path not fully resolved: {:?}", self);
-        }
-        self.base_def
-    }
-
     pub fn kind_name(&self) -> &'static str {
         if self.depth != 0 {
             "associated item"
@@ -103,7 +98,7 @@ pub type DefMap = NodeMap<PathResolution>;
 // within.
 pub type ExportMap = NodeMap<Vec<Export>>;
 
-#[derive(Copy, Clone, RustcEncodable, RustcDecodable)]
+#[derive(Copy, Clone, Debug, RustcEncodable, RustcDecodable)]
 pub struct Export {
     pub name: ast::Name, // The name of the target.
     pub def: Def, // The definition of the target.
@@ -133,7 +128,7 @@ impl Def {
             Def::Variant(id) | Def::VariantCtor(id, ..) | Def::Enum(id) | Def::TyAlias(id) |
             Def::AssociatedTy(id) | Def::TyParam(id) | Def::Struct(id) | Def::StructCtor(id, ..) |
             Def::Union(id) | Def::Trait(id) | Def::Method(id) | Def::Const(id) |
-            Def::AssociatedConst(id) | Def::Local(id) | Def::Upvar(id, ..) => {
+            Def::AssociatedConst(id) | Def::Local(id) | Def::Upvar(id, ..) | Def::Macro(id) => {
                 id
             }
 
@@ -173,6 +168,7 @@ impl Def {
             Def::Upvar(..) => "closure capture",
             Def::Label(..) => "label",
             Def::SelfTy(..) => "self type",
+            Def::Macro(..) => "macro",
             Def::Err => "unresolved item",
         }
     }

@@ -30,7 +30,7 @@ extern crate bootstrap;
 use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 
 fn main() {
     let args = env::args_os().skip(1).collect::<Vec<_>>();
@@ -125,6 +125,11 @@ fn main() {
             cmd.arg("-C").arg(format!("codegen-units={}", s));
         }
 
+        // Emit save-analysis info.
+        if env::var("RUSTC_SAVE_ANALYSIS") == Ok("api".to_string()) {
+            cmd.arg("-Zsave-analysis-api");
+        }
+
         // Dealing with rpath here is a little special, so let's go into some
         // detail. First off, `-rpath` is a linker option on Unix platforms
         // which adds to the runtime dynamic loader path when looking for
@@ -153,6 +158,15 @@ fn main() {
         // to change a flag in a binary?
         if env::var("RUSTC_RPATH") == Ok("true".to_string()) {
             let rpath = if target.contains("apple") {
+
+                // Note that we need to take one extra step on OSX to also pass
+                // `-Wl,-instal_name,@rpath/...` to get things to work right. To
+                // do that we pass a weird flag to the compiler to get it to do
+                // so. Note that this is definitely a hack, and we should likely
+                // flesh out rpath support more fully in the future.
+                if stage != "0" {
+                    cmd.arg("-Z").arg("osx-rpath-install-name");
+                }
                 Some("-Wl,-rpath,@loader_path/../lib")
             } else if !target.contains("windows") {
                 Some("-Wl,-rpath,$ORIGIN/../lib")
@@ -166,8 +180,19 @@ fn main() {
     }
 
     // Actually run the compiler!
-    std::process::exit(match cmd.status() {
-        Ok(s) => s.code().unwrap_or(1),
+    std::process::exit(match exec_cmd(&mut cmd) {
+        Ok(s) => s.code().unwrap_or(0xfe),
         Err(e) => panic!("\n\nfailed to run {:?}: {}\n\n", cmd, e),
     })
+}
+
+#[cfg(unix)]
+fn exec_cmd(cmd: &mut Command) -> ::std::io::Result<ExitStatus> {
+    use std::os::unix::process::CommandExt;
+    Err(cmd.exec())
+}
+
+#[cfg(not(unix))]
+fn exec_cmd(cmd: &mut Command) -> ::std::io::Result<ExitStatus> {
+    cmd.status()
 }

@@ -24,11 +24,12 @@
 
 #![feature(associated_consts)]
 #![feature(box_syntax)]
+#![feature(concat_idents)]
 #![feature(libc)]
 #![feature(link_args)]
+#![cfg_attr(stage0, feature(linked_from))]
 #![feature(staged_api)]
-#![feature(linked_from)]
-#![feature(concat_idents)]
+#![cfg_attr(not(stage0), feature(rustc_private))]
 
 extern crate libc;
 #[macro_use]
@@ -67,63 +68,15 @@ impl LLVMRustResult {
     }
 }
 
-#[derive(Copy, Clone, Default, Debug)]
-pub struct Attributes {
-    regular: Attribute,
-    dereferenceable_bytes: u64,
-}
-
-impl Attributes {
-    pub fn set(&mut self, attr: Attribute) -> &mut Self {
-        self.regular = self.regular | attr;
-        self
-    }
-
-    pub fn unset(&mut self, attr: Attribute) -> &mut Self {
-        self.regular = self.regular - attr;
-        self
-    }
-
-    pub fn set_dereferenceable(&mut self, bytes: u64) -> &mut Self {
-        self.dereferenceable_bytes = bytes;
-        self
-    }
-
-    pub fn unset_dereferenceable(&mut self) -> &mut Self {
-        self.dereferenceable_bytes = 0;
-        self
-    }
-
-    pub fn apply_llfn(&self, idx: AttributePlace, llfn: ValueRef) {
-        unsafe {
-            self.regular.apply_llfn(idx, llfn);
-            if self.dereferenceable_bytes != 0 {
-                LLVMRustAddDereferenceableAttr(llfn, idx.as_uint(), self.dereferenceable_bytes);
-            }
-        }
-    }
-
-    pub fn apply_callsite(&self, idx: AttributePlace, callsite: ValueRef) {
-        unsafe {
-            self.regular.apply_callsite(idx, callsite);
-            if self.dereferenceable_bytes != 0 {
-                LLVMRustAddDereferenceableCallSiteAttr(callsite,
-                                                       idx.as_uint(),
-                                                       self.dereferenceable_bytes);
-            }
-        }
-    }
-}
-
 pub fn AddFunctionAttrStringValue(llfn: ValueRef,
                                   idx: AttributePlace,
-                                  attr: &'static str,
-                                  value: &'static str) {
+                                  attr: &CStr,
+                                  value: &CStr) {
     unsafe {
         LLVMRustAddFunctionAttrStringValue(llfn,
                                            idx.as_uint(),
-                                           attr.as_ptr() as *const _,
-                                           value.as_ptr() as *const _)
+                                           attr.as_ptr(),
+                                           value.as_ptr())
     }
 }
 
@@ -139,7 +92,7 @@ impl AttributePlace {
         AttributePlace::Argument(0)
     }
 
-    fn as_uint(self) -> c_uint {
+    pub fn as_uint(self) -> c_uint {
         match self {
             AttributePlace::Function => !0,
             AttributePlace::Argument(i) => i,
@@ -228,15 +181,15 @@ pub fn set_thread_local(global: ValueRef, is_thread_local: bool) {
 
 impl Attribute {
     pub fn apply_llfn(&self, idx: AttributePlace, llfn: ValueRef) {
-        unsafe { LLVMRustAddFunctionAttribute(llfn, idx.as_uint(), self.bits()) }
+        unsafe { LLVMRustAddFunctionAttribute(llfn, idx.as_uint(), *self) }
     }
 
     pub fn apply_callsite(&self, idx: AttributePlace, callsite: ValueRef) {
-        unsafe { LLVMRustAddCallSiteAttribute(callsite, idx.as_uint(), self.bits()) }
+        unsafe { LLVMRustAddCallSiteAttribute(callsite, idx.as_uint(), *self) }
     }
 
     pub fn unapply_llfn(&self, idx: AttributePlace, llfn: ValueRef) {
-        unsafe { LLVMRustRemoveFunctionAttributes(llfn, idx.as_uint(), self.bits()) }
+        unsafe { LLVMRustRemoveFunctionAttributes(llfn, idx.as_uint(), *self) }
     }
 
     pub fn toggle_llfn(&self, idx: AttributePlace, llfn: ValueRef, set: bool) {
@@ -412,6 +365,11 @@ pub fn initialize_available_targets() {
                  LLVMInitializeJSBackendTargetInfo,
                  LLVMInitializeJSBackendTarget,
                  LLVMInitializeJSBackendTargetMC);
+    init_target!(llvm_component = "msp430",
+                 LLVMInitializeMSP430TargetInfo,
+                 LLVMInitializeMSP430Target,
+                 LLVMInitializeMSP430TargetMC,
+                 LLVMInitializeMSP430AsmPrinter);
 }
 
 pub fn last_error() -> Option<String> {

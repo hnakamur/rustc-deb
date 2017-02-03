@@ -11,8 +11,6 @@
 // force-host
 // no-prefer-dynamic
 
-#![feature(proc_macro)]
-#![feature(proc_macro_lib)]
 #![crate_type = "proc-macro"]
 
 extern crate proc_macro;
@@ -21,11 +19,8 @@ use proc_macro::TokenStream;
 
 #[proc_macro_derive(Append)]
 pub fn derive_a(input: TokenStream) -> TokenStream {
-    let mut input = input.to_string();
-    input.push_str("
-        impl Append for A {
-            fn foo(&self) {}
-        }
-    ");
-    input.parse().unwrap()
+    "impl Append for A {
+         fn foo(&self) {}
+     }
+    ".parse().unwrap()
 }

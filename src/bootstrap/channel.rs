@@ -15,12 +15,11 @@
 //! `package_vers`, and otherwise indicating to the compiler what it should
 //! print out as part of its version information.
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::prelude::*;
 use std::process::Command;
 
 use build_helper::output;
-use md5;
 
 use Build;
 
@@ -70,7 +69,7 @@ pub fn collect(build: &mut Build) {
 
     // If we have a git directory, add in some various SHA information of what
     // commit this compiler was compiled from.
-    if fs::metadata(build.src.join(".git")).is_ok() {
+    if build.src.join(".git").is_dir() {
         let ver_date = output(Command::new("git").current_dir(&build.src)
                                       .arg("log").arg("-1")
                                       .arg("--date=short")
@@ -90,21 +89,5 @@ pub fn collect(build: &mut Build) {
         build.ver_date = Some(ver_date.to_string());
         build.ver_hash = Some(ver_hash);
         build.short_ver_hash = Some(short_ver_hash);
-    }
-
-    // Calculate this compiler's bootstrap key, which is currently defined as
-    // the first 8 characters of the md5 of the release string.
-    let key = md5::compute(build.release.as_bytes());
-    build.bootstrap_key = format!("{:02x}{:02x}{:02x}{:02x}",
-                                  key[0], key[1], key[2], key[3]);
-
-    // Slurp up the stage0 bootstrap key as we're bootstrapping from an
-    // otherwise stable compiler.
-    let mut s = String::new();
-    t!(t!(File::open(build.src.join("src/stage0.txt"))).read_to_string(&mut s));
-    if let Some(line) = s.lines().find(|l| l.starts_with("rustc_key")) {
-        if let Some(key) = line.split(": ").nth(1) {
-            build.bootstrap_key_stage0 = key.to_string();
-        }
     }
 }

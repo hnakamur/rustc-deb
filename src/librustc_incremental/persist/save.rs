@@ -13,7 +13,7 @@ use rustc::hir::def_id::DefId;
 use rustc::hir::svh::Svh;
 use rustc::session::Session;
 use rustc::ty::TyCtxt;
-use rustc_data_structures::fnv::FnvHashMap;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_serialize::Encodable as RustcEncodable;
 use rustc_serialize::opaque::Encoder;
 use std::hash::Hash;
@@ -30,7 +30,7 @@ use super::preds::*;
 use super::fs::*;
 use super::dirty_clean;
 use super::file_format;
-use calculate_svh::hasher::IchHasher;
+use calculate_svh::IchHasher;
 
 pub fn save_dep_graph<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                 incremental_hashes_map: &IncrementalHashesMap,
@@ -46,7 +46,7 @@ pub fn save_dep_graph<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let query = tcx.dep_graph.query();
     let mut hcx = HashContext::new(tcx, incremental_hashes_map);
     let preds = Predecessors::new(&query, &mut hcx);
-    let mut current_metadata_hashes = FnvHashMap();
+    let mut current_metadata_hashes = FxHashMap();
 
     // IMPORTANT: We are saving the metadata hashes *before* the dep-graph,
     //            since metadata-encoding might add new entries to the
@@ -145,8 +145,8 @@ pub fn encode_dep_graph(preds: &Predecessors,
     for (&target, sources) in &preds.inputs {
         match *target {
             DepNode::MetaData(ref def_id) => {
-                // Metadata *targets* are always local metadata nodes. We handle
-                // those in `encode_metadata_hashes`, which comes later.
+                // Metadata *targets* are always local metadata nodes. We have
+                // already handled those in `encode_metadata_hashes`.
                 assert!(def_id.is_local());
                 continue;
             }
@@ -156,6 +156,12 @@ pub fn encode_dep_graph(preds: &Predecessors,
         for &source in sources {
             let source = builder.map(source);
             edges.push((source, target.clone()));
+        }
+    }
+
+    if tcx.sess.opts.debugging_opts.incremental_dump_hash {
+        for (dep_node, hash) in &preds.hashes {
+            println!("HIR hash for {:?} is {}", dep_node, hash);
         }
     }
 
@@ -186,7 +192,7 @@ pub fn encode_metadata_hashes(tcx: TyCtxt,
                               svh: Svh,
                               preds: &Predecessors,
                               builder: &mut DefIdDirectoryBuilder,
-                              current_metadata_hashes: &mut FnvHashMap<DefId, Fingerprint>,
+                              current_metadata_hashes: &mut FxHashMap<DefId, Fingerprint>,
                               encoder: &mut Encoder)
                               -> io::Result<()> {
     // For each `MetaData(X)` node where `X` is local, accumulate a
@@ -198,10 +204,10 @@ pub fn encode_metadata_hashes(tcx: TyCtxt,
     // (I initially wrote this with an iterator, but it seemed harder to read.)
     let mut serialized_hashes = SerializedMetadataHashes {
         hashes: vec![],
-        index_map: FnvHashMap()
+        index_map: FxHashMap()
     };
 
-    let mut def_id_hashes = FnvHashMap();
+    let mut def_id_hashes = FxHashMap();
 
     for (&target, sources) in &preds.inputs {
         let def_id = match *target {
@@ -248,6 +254,15 @@ pub fn encode_metadata_hashes(tcx: TyCtxt,
         let hash = state.finish();
 
         debug!("save: metadata hash for {:?} is {}", def_id, hash);
+
+        if tcx.sess.opts.debugging_opts.incremental_dump_hash {
+            println!("metadata hash for {:?} is {}", def_id, hash);
+            for dep_node in sources {
+                println!("metadata hash for {:?} depends on {:?} with hash {}",
+                         def_id, dep_node, preds.hashes[dep_node]);
+            }
+        }
+
         serialized_hashes.hashes.push(SerializedMetadataHash {
             def_index: def_id.index,
             hash: hash,

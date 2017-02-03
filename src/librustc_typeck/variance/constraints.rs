@@ -22,7 +22,7 @@ use rustc::ty::maps::ItemVariances;
 use rustc::hir::map as hir_map;
 use syntax::ast;
 use rustc::hir;
-use rustc::hir::intravisit::Visitor;
+use rustc::hir::itemlikevisit::ItemLikeVisitor;
 
 use super::terms::*;
 use super::terms::VarianceTerm::*;
@@ -65,13 +65,13 @@ pub fn add_constraints_from_crate<'a, 'tcx>(terms_cx: TermsContext<'a, 'tcx>)
     };
 
     // See README.md for a discussion on dep-graph management.
-    tcx.visit_all_items_in_krate(|def_id| ItemVariances::to_dep_node(&def_id),
-                                 &mut constraint_cx);
+    tcx.visit_all_item_likes_in_krate(|def_id| ItemVariances::to_dep_node(&def_id),
+                                      &mut constraint_cx);
 
     constraint_cx
 }
 
-impl<'a, 'tcx, 'v> Visitor<'v> for ConstraintContext<'a, 'tcx> {
+impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for ConstraintContext<'a, 'tcx> {
     fn visit_item(&mut self, item: &hir::Item) {
         let tcx = self.terms_cx.tcx;
         let did = tcx.map.local_def_id(item.id);
@@ -82,29 +82,33 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ConstraintContext<'a, 'tcx> {
             hir::ItemEnum(..) |
             hir::ItemStruct(..) |
             hir::ItemUnion(..) => {
-                let scheme = tcx.lookup_item_type(did);
+                let generics = tcx.item_generics(did);
 
                 // Not entirely obvious: constraints on structs/enums do not
                 // affect the variance of their type parameters. See discussion
                 // in comment at top of module.
                 //
-                // self.add_constraints_from_generics(&scheme.generics);
+                // self.add_constraints_from_generics(generics);
 
                 for field in tcx.lookup_adt_def(did).all_fields() {
-                    self.add_constraints_from_ty(&scheme.generics,
-                                                 field.unsubst_ty(),
+                    self.add_constraints_from_ty(generics,
+                                                 tcx.item_type(field.did),
                                                  self.covariant);
                 }
             }
             hir::ItemTrait(..) => {
-                let trait_def = tcx.lookup_trait_def(did);
-                self.add_constraints_from_trait_ref(&trait_def.generics,
-                                                    trait_def.trait_ref,
+                let generics = tcx.item_generics(did);
+                let trait_ref = ty::TraitRef {
+                    def_id: did,
+                    substs: Substs::identity_for_item(tcx, did)
+                };
+                self.add_constraints_from_trait_ref(generics,
+                                                    trait_ref,
                                                     self.invariant);
             }
 
             hir::ItemExternCrate(_) |
-            hir::ItemUse(_) |
+            hir::ItemUse(..) |
             hir::ItemStatic(..) |
             hir::ItemConst(..) |
             hir::ItemFn(..) |
@@ -114,6 +118,9 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ConstraintContext<'a, 'tcx> {
             hir::ItemImpl(..) |
             hir::ItemDefaultImpl(..) => {}
         }
+    }
+
+    fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem) {
     }
 }
 
@@ -276,7 +283,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                trait_ref,
                variance);
 
-        let trait_def = self.tcx().lookup_trait_def(trait_ref.def_id);
+        let trait_generics = self.tcx().item_generics(trait_ref.def_id);
 
         // This edge is actually implied by the call to
         // `lookup_trait_def`, but I'm trying to be future-proof. See
@@ -285,8 +292,8 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
 
         self.add_constraints_from_substs(generics,
                                          trait_ref.def_id,
-                                         &trait_def.generics.types,
-                                         &trait_def.generics.regions,
+                                         &trait_generics.types,
+                                         &trait_generics.regions,
                                          trait_ref.substs,
                                          variance);
     }
@@ -336,7 +343,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
             }
 
             ty::TyAdt(def, substs) => {
-                let item_type = self.tcx().lookup_item_type(def.did);
+                let adt_generics = self.tcx().item_generics(def.did);
 
                 // This edge is actually implied by the call to
                 // `lookup_trait_def`, but I'm trying to be future-proof. See
@@ -345,15 +352,15 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
 
                 self.add_constraints_from_substs(generics,
                                                  def.did,
-                                                 &item_type.generics.types,
-                                                 &item_type.generics.regions,
+                                                 &adt_generics.types,
+                                                 &adt_generics.regions,
                                                  substs,
                                                  variance);
             }
 
             ty::TyProjection(ref data) => {
                 let trait_ref = &data.trait_ref;
-                let trait_def = self.tcx().lookup_trait_def(trait_ref.def_id);
+                let trait_generics = self.tcx().item_generics(trait_ref.def_id);
 
                 // This edge is actually implied by the call to
                 // `lookup_trait_def`, but I'm trying to be future-proof. See
@@ -362,21 +369,23 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
 
                 self.add_constraints_from_substs(generics,
                                                  trait_ref.def_id,
-                                                 &trait_def.generics.types,
-                                                 &trait_def.generics.regions,
+                                                 &trait_generics.types,
+                                                 &trait_generics.regions,
                                                  trait_ref.substs,
                                                  variance);
             }
 
-            ty::TyTrait(ref data) => {
+            ty::TyDynamic(ref data, r) => {
                 // The type `Foo<T+'a>` is contravariant w/r/t `'a`:
                 let contra = self.contravariant(variance);
-                self.add_constraints_from_region(generics, data.region_bound, contra);
+                self.add_constraints_from_region(generics, r, contra);
 
-                let poly_trait_ref = data.principal.with_self_ty(self.tcx(), self.tcx().types.err);
-                self.add_constraints_from_trait_ref(generics, poly_trait_ref.0, variance);
+                if let Some(p) = data.principal() {
+                    let poly_trait_ref = p.with_self_ty(self.tcx(), self.tcx().types.err);
+                    self.add_constraints_from_trait_ref(generics, poly_trait_ref.0, variance);
+                }
 
-                for projection in &data.projection_bounds {
+                for projection in data.projection_bounds() {
                     self.add_constraints_from_ty(generics, projection.0.ty, self.invariant);
                 }
             }
@@ -458,10 +467,10 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                                 sig: &ty::PolyFnSig<'tcx>,
                                 variance: VarianceTermPtr<'a>) {
         let contra = self.contravariant(variance);
-        for &input in &sig.0.inputs {
+        for &input in sig.0.inputs() {
             self.add_constraints_from_ty(generics, input, contra);
         }
-        self.add_constraints_from_ty(generics, sig.0.output, variance);
+        self.add_constraints_from_ty(generics, sig.0.output(), variance);
     }
 
     /// Adds constraints appropriate for a region appearing in a

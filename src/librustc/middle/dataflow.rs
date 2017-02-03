@@ -193,6 +193,10 @@ fn build_nodeid_to_index(decl: Option<&hir::FnDecl>,
         let mut formals = Formals { entry: entry, index: index };
         intravisit::walk_fn_decl(&mut formals, decl);
         impl<'a, 'v> intravisit::Visitor<'v> for Formals<'a> {
+            fn nested_visit_map<'this>(&'this mut self) -> intravisit::NestedVisitorMap<'this, 'v> {
+                panic!("should not encounter fn bodies or items")
+            }
+
             fn visit_pat(&mut self, p: &hir::Pat) {
                 self.index.entry(p.id).or_insert(vec![]).push(self.entry);
                 intravisit::walk_pat(self, p)
@@ -498,7 +502,7 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
 
 impl<'a, 'tcx, O:DataFlowOperator+Clone+'static> DataFlowContext<'a, 'tcx, O> {
 //                                ^^^^^^^^^^^^^ only needed for pretty printing
-    pub fn propagate(&mut self, cfg: &cfg::CFG, blk: &hir::Block) {
+    pub fn propagate(&mut self, cfg: &cfg::CFG, body: &hir::Expr) {
         //! Performs the data flow analysis.
 
         if self.bits_per_id == 0 {
@@ -524,17 +528,17 @@ impl<'a, 'tcx, O:DataFlowOperator+Clone+'static> DataFlowContext<'a, 'tcx, O> {
         debug!("Dataflow result for {}:", self.analysis_name);
         debug!("{}", {
             let mut v = Vec::new();
-            self.pretty_print_to(box &mut v, blk).unwrap();
+            self.pretty_print_to(box &mut v, body).unwrap();
             String::from_utf8(v).unwrap()
         });
     }
 
     fn pretty_print_to<'b>(&self, wr: Box<io::Write + 'b>,
-                           blk: &hir::Block) -> io::Result<()> {
+                           body: &hir::Expr) -> io::Result<()> {
         let mut ps = pprust::rust_printer_annotated(wr, self, None);
         ps.cbox(pprust::indent_unit)?;
         ps.ibox(0)?;
-        ps.print_block(blk)?;
+        ps.print_expr(body)?;
         pp::eof(&mut ps.s)
     }
 }

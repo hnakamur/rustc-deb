@@ -18,9 +18,8 @@ use syntax::ast;
 use syntax::ast::{Expr, MetaItem, Mutability};
 use syntax::ext::base::{Annotatable, ExtCtxt};
 use syntax::ext::build::AstBuilder;
-use syntax::parse::token::InternedString;
-use syntax::parse::token;
 use syntax::ptr::P;
+use syntax::symbol::Symbol;
 use syntax_pos::Span;
 
 pub fn expand_deriving_rustc_decodable(cx: &mut ExtCtxt,
@@ -131,9 +130,9 @@ fn decodable_substructure(cx: &mut ExtCtxt,
             cx.expr_method_call(trait_span,
                                 decoder,
                                 cx.ident_of("read_struct"),
-                                vec![cx.expr_str(trait_span, substr.type_ident.name.as_str()),
+                                vec![cx.expr_str(trait_span, substr.type_ident.name),
                                      cx.expr_usize(trait_span, nfields),
-                                     cx.lambda_expr_1(trait_span, result, blkarg)])
+                                     cx.lambda1(trait_span, result, blkarg)])
         }
         StaticEnum(_, ref fields) => {
             let variant = cx.ident_of("i");
@@ -143,7 +142,7 @@ fn decodable_substructure(cx: &mut ExtCtxt,
             let rvariant_arg = cx.ident_of("read_enum_variant_arg");
 
             for (i, &(ident, v_span, ref parts)) in fields.iter().enumerate() {
-                variants.push(cx.expr_str(v_span, ident.name.as_str()));
+                variants.push(cx.expr_str(v_span, ident.name));
 
                 let path = cx.path(trait_span, vec![substr.type_ident, ident]);
                 let decoded = decode_static_fields(cx, v_span, path, parts, |cx, span, _, field| {
@@ -165,7 +164,7 @@ fn decodable_substructure(cx: &mut ExtCtxt,
             let result =
                 cx.expr_ok(trait_span,
                            cx.expr_match(trait_span, cx.expr_ident(trait_span, variant), arms));
-            let lambda = cx.lambda_expr(trait_span, vec![blkarg, variant], result);
+            let lambda = cx.lambda(trait_span, vec![blkarg, variant], result);
             let variant_vec = cx.expr_vec(trait_span, variants);
             let variant_vec = cx.expr_addr_of(trait_span, variant_vec);
             let result = cx.expr_method_call(trait_span,
@@ -175,8 +174,8 @@ fn decodable_substructure(cx: &mut ExtCtxt,
             cx.expr_method_call(trait_span,
                                 decoder,
                                 cx.ident_of("read_enum"),
-                                vec![cx.expr_str(trait_span, substr.type_ident.name.as_str()),
-                                     cx.lambda_expr_1(trait_span, result, blkarg)])
+                                vec![cx.expr_str(trait_span, substr.type_ident.name),
+                                     cx.lambda1(trait_span, result, blkarg)])
         }
         _ => cx.bug("expected StaticEnum or StaticStruct in derive(Decodable)"),
     };
@@ -191,7 +190,7 @@ fn decode_static_fields<F>(cx: &mut ExtCtxt,
                            fields: &StaticFields,
                            mut getarg: F)
                            -> P<Expr>
-    where F: FnMut(&mut ExtCtxt, Span, InternedString, usize) -> P<Expr>
+    where F: FnMut(&mut ExtCtxt, Span, Symbol, usize) -> P<Expr>
 {
     match *fields {
         Unnamed(ref fields, is_tuple) => {
@@ -202,10 +201,7 @@ fn decode_static_fields<F>(cx: &mut ExtCtxt,
                 let fields = fields.iter()
                     .enumerate()
                     .map(|(i, &span)| {
-                        getarg(cx,
-                               span,
-                               token::intern_and_get_ident(&format!("_field{}", i)),
-                               i)
+                        getarg(cx, span, Symbol::intern(&format!("_field{}", i)), i)
                     })
                     .collect();
 
@@ -217,7 +213,7 @@ fn decode_static_fields<F>(cx: &mut ExtCtxt,
             let fields = fields.iter()
                 .enumerate()
                 .map(|(i, &(ident, span))| {
-                    let arg = getarg(cx, span, ident.name.as_str(), i);
+                    let arg = getarg(cx, span, ident.name, i);
                     cx.field_imm(span, ident, arg)
                 })
                 .collect();

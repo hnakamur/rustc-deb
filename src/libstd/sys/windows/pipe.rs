@@ -29,20 +29,46 @@ pub struct AnonPipe {
     inner: Handle,
 }
 
-pub fn anon_pipe() -> io::Result<(AnonPipe, AnonPipe)> {
+pub struct Pipes {
+    pub ours: AnonPipe,
+    pub theirs: AnonPipe,
+}
+
+/// Although this looks similar to `anon_pipe` in the Unix module it's actually
+/// subtly different. Here we'll return two pipes in the `Pipes` return value,
+/// but one is intended for "us" where as the other is intended for "someone
+/// else".
+///
+/// Currently the only use case for this function is pipes for stdio on
+/// processes in the standard library, so "ours" is the one that'll stay in our
+/// process whereas "theirs" will be inherited to a child.
+///
+/// The ours/theirs pipes are *not* specifically readable or writable. Each
+/// one only supports a read or a write, but which is which depends on the
+/// boolean flag given. If `ours_readable` is true then `ours` is readable where
+/// `theirs` is writable. Conversely if `ours_readable` is false then `ours` is
+/// writable where `theirs` is readable.
+///
+/// Also note that the `ours` pipe is always a handle opened up in overlapped
+/// mode. This means that technically speaking it should only ever be used
+/// with `OVERLAPPED` instances, but also works out ok if it's only ever used
+/// once at a time (which we do indeed guarantee).
+pub fn anon_pipe(ours_readable: bool) -> io::Result<Pipes> {
     // Note that we specifically do *not* use `CreatePipe` here because
     // unfortunately the anonymous pipes returned do not support overlapped
-    // operations.
+    // operations. Instead, we create a "hopefully unique" name and create a
+    // named pipe which has overlapped operations enabled.
     //
-    // Instead, we create a "hopefully unique" name and create a named pipe
-    // which has overlapped operations enabled.
-    //
-    // Once we do this, we connect do it as usual via `CreateFileW`, and then we
-    // return those reader/writer halves.
+    // Once we do this, we connect do it as usual via `CreateFileW`, and then
+    // we return those reader/writer halves. Note that the `ours` pipe return
+    // value is always the named pipe, whereas `theirs` is just the normal file.
+    // This should hopefully shield us from child processes which assume their
+    // stdout is a named pipe, which would indeed be odd!
     unsafe {
-        let reader;
+        let ours;
         let mut name;
         let mut tries = 0;
+        let mut reject_remote_clients_flag = c::PIPE_REJECT_REMOTE_CLIENTS;
         loop {
             tries += 1;
             let key: u64 = rand::thread_rng().gen();
@@ -53,15 +79,20 @@ pub fn anon_pipe() -> io::Result<(AnonPipe, AnonPipe)> {
                                   .encode_wide()
                                   .chain(Some(0))
                                   .collect::<Vec<_>>();
+            let mut flags = c::FILE_FLAG_FIRST_PIPE_INSTANCE |
+                c::FILE_FLAG_OVERLAPPED;
+            if ours_readable {
+                flags |= c::PIPE_ACCESS_INBOUND;
+            } else {
+                flags |= c::PIPE_ACCESS_OUTBOUND;
+            }
 
             let handle = c::CreateNamedPipeW(wide_name.as_ptr(),
-                                             c::PIPE_ACCESS_INBOUND |
-                                              c::FILE_FLAG_FIRST_PIPE_INSTANCE |
-                                              c::FILE_FLAG_OVERLAPPED,
+                                             flags,
                                              c::PIPE_TYPE_BYTE |
-                                              c::PIPE_READMODE_BYTE |
-                                              c::PIPE_WAIT |
-                                              c::PIPE_REJECT_REMOTE_CLIENTS,
+                                             c::PIPE_READMODE_BYTE |
+                                             c::PIPE_WAIT |
+                                             reject_remote_clients_flag,
                                              1,
                                              4096,
                                              4096,
@@ -76,29 +107,52 @@ pub fn anon_pipe() -> io::Result<(AnonPipe, AnonPipe)> {
             //
             // Don't try again too much though as this could also perhaps be a
             // legit error.
+            // If ERROR_INVALID_PARAMETER is returned, this probably means we're
+            // running on pre-Vista version where PIPE_REJECT_REMOTE_CLIENTS is
+            // not supported, so we continue retrying without it. This implies
+            // reduced security on Windows versions older than Vista by allowing
+            // connections to this pipe from remote machines.
+            // Proper fix would increase the number of FFI imports and introduce
+            // significant amount of Windows XP specific code with no clean
+            // testing strategy
+            // for more info see https://github.com/rust-lang/rust/pull/37677
             if handle == c::INVALID_HANDLE_VALUE {
                 let err = io::Error::last_os_error();
-                if tries < 10 &&
-                   err.raw_os_error() == Some(c::ERROR_ACCESS_DENIED as i32) {
-                    continue
+                let raw_os_err = err.raw_os_error();
+                if tries < 10 {
+                    if raw_os_err == Some(c::ERROR_ACCESS_DENIED as i32) {
+                        continue
+                    } else if reject_remote_clients_flag != 0 &&
+                        raw_os_err == Some(c::ERROR_INVALID_PARAMETER as i32) {
+                        reject_remote_clients_flag = 0;
+                        tries -= 1;
+                        continue
+                    }
                 }
                 return Err(err)
             }
-            reader = Handle::new(handle);
+            ours = Handle::new(handle);
             break
         }
 
-        // Connect to the named pipe we just created in write-only mode (also
-        // overlapped for async I/O below).
+        // Connect to the named pipe we just created. This handle is going to be
+        // returned in `theirs`, so if `ours` is readable we want this to be
+        // writable, otherwise if `ours` is writable we want this to be
+        // readable.
+        //
+        // Additionally we don't enable overlapped mode on this because most
+        // client processes aren't enabled to work with that.
         let mut opts = OpenOptions::new();
-        opts.write(true);
-        opts.read(false);
+        opts.write(ours_readable);
+        opts.read(!ours_readable);
         opts.share_mode(0);
-        opts.attributes(c::FILE_FLAG_OVERLAPPED);
-        let writer = File::open(Path::new(&name), &opts)?;
-        let writer = AnonPipe { inner: writer.into_handle() };
+        let theirs = File::open(Path::new(&name), &opts)?;
+        let theirs = AnonPipe { inner: theirs.into_handle() };
 
-        Ok((AnonPipe { inner: reader }, AnonPipe { inner: writer.into_handle() }))
+        Ok(Pipes {
+            ours: AnonPipe { inner: ours },
+            theirs: AnonPipe { inner: theirs.into_handle() },
+        })
     }
 }
 

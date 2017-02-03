@@ -133,15 +133,13 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         }
                     },
                     _ => {
-                        // FIXME Shouldn't need to manually trigger closure instantiations.
-                        if let mir::AggregateKind::Closure(def_id, substs) = *kind {
-                            use closure;
-
-                            closure::trans_closure_body_via_mir(bcx.ccx(),
-                                                                def_id,
-                                                                bcx.monomorphize(&substs));
-                        }
-
+                        // If this is a tuple or closure, we need to translate GEP indices.
+                        let layout = bcx.ccx().layout_of(dest.ty.to_ty(bcx.tcx()));
+                        let translation = if let Layout::Univariant { ref variant, .. } = *layout {
+                            Some(&variant.memory_index)
+                        } else {
+                            None
+                        };
                         for (i, operand) in operands.iter().enumerate() {
                             let op = self.trans_operand(&bcx, operand);
                             // Do not generate stores and GEPis for zero-sized fields.
@@ -149,6 +147,11 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                                 // Note: perhaps this should be StructGep, but
                                 // note that in some cases the values here will
                                 // not be structs but arrays.
+                                let i = if let Some(ref t) = translation {
+                                    t[i] as usize
+                                } else {
+                                    i
+                                };
                                 let dest = bcx.gepi(dest.llval, &[0, i]);
                                 self.store_operand(&bcx, dest, op);
                             }
@@ -729,11 +732,13 @@ fn get_overflow_intrinsic(oop: OverflowOp, bcx: &BlockAndBuilder, ty: Ty) -> Val
 
     let new_sty = match ty.sty {
         TyInt(Is) => match &tcx.sess.target.target.target_pointer_width[..] {
+            "16" => TyInt(I16),
             "32" => TyInt(I32),
             "64" => TyInt(I64),
             _ => panic!("unsupported target word size")
         },
         TyUint(Us) => match &tcx.sess.target.target.target_pointer_width[..] {
+            "16" => TyUint(U16),
             "32" => TyUint(U32),
             "64" => TyUint(U64),
             _ => panic!("unsupported target word size")

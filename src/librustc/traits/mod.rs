@@ -15,10 +15,11 @@ pub use self::FulfillmentErrorCode::*;
 pub use self::Vtable::*;
 pub use self::ObligationCauseCode::*;
 
+use hir;
 use hir::def_id::DefId;
 use middle::free_region::FreeRegionMap;
 use ty::subst::Substs;
-use ty::{self, Ty, TyCtxt, TypeFoldable};
+use ty::{self, Ty, TyCtxt, TypeFoldable, ToPredicate};
 use infer::InferCtxt;
 
 use std::rc::Rc;
@@ -124,10 +125,6 @@ pub enum ObligationCauseCode<'tcx> {
     ReturnType,                // Return type must be Sized
     RepeatVec,                 // [T,..n] --> T must be Copy
 
-    // Captures of variable the given id by a closure (span is the
-    // span of the closure)
-    ClosureCapture(ast::NodeId, Span, ty::BuiltinBound),
-
     // Types of fields (other than the last) in a struct must be sized.
     FieldSized,
 
@@ -148,6 +145,35 @@ pub enum ObligationCauseCode<'tcx> {
         trait_item_def_id: DefId,
         lint_id: Option<ast::NodeId>,
     },
+
+    // Checking that this expression can be assigned where it needs to be
+    // FIXME(eddyb) #11161 is the original Expr required?
+    ExprAssignable,
+
+    // Computing common supertype in the arms of a match expression
+    MatchExpressionArm { arm_span: Span,
+                         source: hir::MatchSource },
+
+    // Computing common supertype in an if expression
+    IfExpression,
+
+    // Computing common supertype of an if expression with no else counter-part
+    IfExpressionWithNoElse,
+
+    // `where a == b`
+    EquatePredicate,
+
+    // `main` has wrong type
+    MainFunctionType,
+
+    // `start` has wrong type
+    StartFunctionType,
+
+    // intrinsic has wrong type
+    IntrinsicType,
+
+    // method receiver
+    MethodReceiver,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -339,27 +365,30 @@ pub fn predicates_for_generics<'tcx>(cause: ObligationCause<'tcx>,
 /// `bound` or is not known to meet bound (note that this is
 /// conservative towards *no impl*, which is the opposite of the
 /// `evaluate` methods).
-pub fn type_known_to_meet_builtin_bound<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
-                                                        ty: Ty<'tcx>,
-                                                        bound: ty::BuiltinBound,
-                                                        span: Span)
-                                                        -> bool
+pub fn type_known_to_meet_bound<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
+                                                ty: Ty<'tcx>,
+                                                def_id: DefId,
+                                                span: Span)
+-> bool
 {
-    debug!("type_known_to_meet_builtin_bound(ty={:?}, bound={:?})",
+    debug!("type_known_to_meet_bound(ty={:?}, bound={:?})",
            ty,
-           bound);
+           infcx.tcx.item_path_str(def_id));
 
-    let cause = ObligationCause::misc(span, ast::DUMMY_NODE_ID);
-    let obligation =
-        infcx.tcx.predicate_for_builtin_bound(cause, bound, 0, ty);
-    let obligation = match obligation {
-        Ok(o) => o,
-        Err(..) => return false
+    let trait_ref = ty::TraitRef {
+        def_id: def_id,
+        substs: infcx.tcx.mk_substs_trait(ty, &[]),
     };
+    let obligation = Obligation {
+        cause: ObligationCause::misc(span, ast::DUMMY_NODE_ID),
+        recursion_depth: 0,
+        predicate: trait_ref.to_predicate(),
+    };
+
     let result = SelectionContext::new(infcx)
         .evaluate_obligation_conservatively(&obligation);
-    debug!("type_known_to_meet_builtin_bound: ty={:?} bound={:?} => {:?}",
-           ty, bound, result);
+    debug!("type_known_to_meet_ty={:?} bound={} => {:?}",
+           ty, infcx.tcx.item_path_str(def_id), result);
 
     if result && (ty.has_infer_types() || ty.has_closure_types()) {
         // Because of inference "guessing", selection can sometimes claim
@@ -374,22 +403,22 @@ pub fn type_known_to_meet_builtin_bound<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'g
         // anyhow).
         let cause = ObligationCause::misc(span, ast::DUMMY_NODE_ID);
 
-        fulfill_cx.register_builtin_bound(infcx, ty, bound, cause);
+        fulfill_cx.register_bound(infcx, ty, def_id, cause);
 
         // Note: we only assume something is `Copy` if we can
         // *definitively* show that it implements `Copy`. Otherwise,
         // assume it is move; linear is always ok.
         match fulfill_cx.select_all_or_error(infcx) {
             Ok(()) => {
-                debug!("type_known_to_meet_builtin_bound: ty={:?} bound={:?} success",
+                debug!("type_known_to_meet_bound: ty={:?} bound={} success",
                        ty,
-                       bound);
+                       infcx.tcx.item_path_str(def_id));
                 true
             }
             Err(e) => {
-                debug!("type_known_to_meet_builtin_bound: ty={:?} bound={:?} errors={:?}",
+                debug!("type_known_to_meet_bound: ty={:?} bound={} errors={:?}",
                        ty,
-                       bound,
+                       infcx.tcx.item_path_str(def_id),
                        e);
                 false
             }
@@ -578,18 +607,14 @@ pub fn get_vtable_methods<'a, 'tcx>(
     supertraits(tcx, trait_ref).flat_map(move |trait_ref| {
         tcx.populate_implementations_for_trait_if_necessary(trait_ref.def_id());
 
-        let trait_item_def_ids = tcx.impl_or_trait_items(trait_ref.def_id());
-        let trait_methods = (0..trait_item_def_ids.len()).filter_map(move |i| {
-            match tcx.impl_or_trait_item(trait_item_def_ids[i]) {
-                ty::MethodTraitItem(m) => Some(m),
-                _ => None
-            }
-        });
+        let trait_methods = tcx.associated_items(trait_ref.def_id())
+            .filter(|item| item.kind == ty::AssociatedKind::Method);
 
         // Now list each method's DefId and Substs (for within its trait).
         // If the method can never be called from this object, produce None.
         trait_methods.map(move |trait_method| {
             debug!("get_vtable_methods: trait_method={:?}", trait_method);
+            let def_id = trait_method.def_id;
 
             // Some methods cannot be called on an object; skip those.
             if !tcx.is_vtable_safe_method(trait_ref.def_id(), &trait_method) {
@@ -599,21 +624,21 @@ pub fn get_vtable_methods<'a, 'tcx>(
 
             // the method may have some early-bound lifetimes, add
             // regions for those
-            let substs = Substs::for_item(tcx, trait_method.def_id,
-                                            |_, _| tcx.mk_region(ty::ReErased),
-                                            |def, _| trait_ref.substs().type_for_def(def));
+            let substs = Substs::for_item(tcx, def_id,
+                                          |_, _| tcx.mk_region(ty::ReErased),
+                                          |def, _| trait_ref.substs().type_for_def(def));
 
             // It's possible that the method relies on where clauses that
             // do not hold for this particular set of type parameters.
             // Note that this method could then never be called, so we
             // do not want to try and trans it, in that case (see #23435).
-            let predicates = trait_method.predicates.instantiate_own(tcx, substs);
+            let predicates = tcx.item_predicates(def_id).instantiate_own(tcx, substs);
             if !normalize_and_test_predicates(tcx, predicates.predicates) {
                 debug!("get_vtable_methods: predicates do not hold");
                 return None;
             }
 
-            Some((trait_method.def_id, substs))
+            Some((def_id, substs))
         })
     })
 }

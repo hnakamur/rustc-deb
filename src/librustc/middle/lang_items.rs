@@ -27,11 +27,11 @@ use session::Session;
 use hir::def_id::DefId;
 use ty;
 use middle::weak_lang_items;
-use util::nodemap::FnvHashMap;
+use util::nodemap::FxHashMap;
 
 use syntax::ast;
-use syntax::parse::token::InternedString;
-use hir::intravisit::Visitor;
+use syntax::symbol::Symbol;
+use hir::itemlikevisit::ItemLikeVisitor;
 use hir;
 
 // The actual lang items defined come at the end of this file in one handy table.
@@ -90,31 +90,6 @@ impl LanguageItems {
         self.require(OwnedBoxLangItem)
     }
 
-    pub fn from_builtin_kind(&self, bound: ty::BuiltinBound)
-                             -> Result<DefId, String>
-    {
-        match bound {
-            ty::BoundSend => self.require(SendTraitLangItem),
-            ty::BoundSized => self.require(SizedTraitLangItem),
-            ty::BoundCopy => self.require(CopyTraitLangItem),
-            ty::BoundSync => self.require(SyncTraitLangItem),
-        }
-    }
-
-    pub fn to_builtin_kind(&self, id: DefId) -> Option<ty::BuiltinBound> {
-        if Some(id) == self.send_trait() {
-            Some(ty::BoundSend)
-        } else if Some(id) == self.sized_trait() {
-            Some(ty::BoundSized)
-        } else if Some(id) == self.copy_trait() {
-            Some(ty::BoundCopy)
-        } else if Some(id) == self.sync_trait() {
-            Some(ty::BoundSync)
-        } else {
-            None
-        }
-    }
-
     pub fn fn_trait_kind(&self, id: DefId) -> Option<ty::ClosureKind> {
         let def_id_kinds = [
             (self.fn_trait(), ty::ClosureKind::Fn),
@@ -146,13 +121,13 @@ struct LanguageItemCollector<'a, 'tcx: 'a> {
 
     session: &'a Session,
 
-    item_refs: FnvHashMap<&'static str, usize>,
+    item_refs: FxHashMap<&'static str, usize>,
 }
 
-impl<'a, 'v, 'tcx> Visitor<'v> for LanguageItemCollector<'a, 'tcx> {
+impl<'a, 'v, 'tcx> ItemLikeVisitor<'v> for LanguageItemCollector<'a, 'tcx> {
     fn visit_item(&mut self, item: &hir::Item) {
         if let Some(value) = extract(&item.attrs) {
-            let item_index = self.item_refs.get(&value[..]).cloned();
+            let item_index = self.item_refs.get(&*value.as_str()).cloned();
 
             if let Some(item_index) = item_index {
                 self.collect_item(item_index, self.ast_map.local_def_id(item.id))
@@ -160,16 +135,20 @@ impl<'a, 'v, 'tcx> Visitor<'v> for LanguageItemCollector<'a, 'tcx> {
                 let span = self.ast_map.span(item.id);
                 span_err!(self.session, span, E0522,
                           "definition of an unknown language item: `{}`.",
-                          &value[..]);
+                          value);
             }
         }
+    }
+
+    fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem) {
+        // at present, lang items are always items, not impl items
     }
 }
 
 impl<'a, 'tcx> LanguageItemCollector<'a, 'tcx> {
     pub fn new(session: &'a Session, ast_map: &'a hir_map::Map<'tcx>)
                -> LanguageItemCollector<'a, 'tcx> {
-        let mut item_refs = FnvHashMap();
+        let mut item_refs = FxHashMap();
 
         $( item_refs.insert($name, $variant as usize); )*
 
@@ -219,7 +198,7 @@ impl<'a, 'tcx> LanguageItemCollector<'a, 'tcx> {
     }
 
     pub fn collect_local_language_items(&mut self, krate: &hir::Crate) {
-        krate.visit_all_items(self);
+        krate.visit_all_item_likes(self);
     }
 
     pub fn collect_external_language_items(&mut self) {
@@ -239,12 +218,10 @@ impl<'a, 'tcx> LanguageItemCollector<'a, 'tcx> {
     }
 }
 
-pub fn extract(attrs: &[ast::Attribute]) -> Option<InternedString> {
+pub fn extract(attrs: &[ast::Attribute]) -> Option<Symbol> {
     for attribute in attrs {
         match attribute.value_str() {
-            Some(ref value) if attribute.check_name("lang") => {
-                return Some(value.clone());
-            }
+            Some(value) if attribute.check_name("lang") => return Some(value),
             _ => {}
         }
     }
@@ -378,4 +355,12 @@ language_item_table! {
     NonZeroItem,                     "non_zero",                non_zero;
 
     DebugTraitLangItem,              "debug_trait",             debug_trait;
+}
+
+impl<'a, 'tcx, 'gcx> ty::TyCtxt<'a, 'tcx, 'gcx> {
+    pub fn require_lang_item(&self, lang_item: LangItem) -> DefId {
+        self.lang_items.require(lang_item).unwrap_or_else(|msg| {
+            self.sess.fatal(&msg)
+        })
+    }
 }

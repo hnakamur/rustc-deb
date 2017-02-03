@@ -21,6 +21,11 @@ separately by extracting documentation attributes from their source code. Many
 of the features that one might expect to be language features are library
 features in Rust, so what you're looking for may be there, not here.
 
+Finally, this document is not normative. It may include details that are
+specific to `rustc` itself, and should not be taken as a specification for
+the Rust language. We intend to produce such a document someday, but this
+is what we have for now.
+
 You may also be interested in the [grammar].
 
 [book]: book/index.html
@@ -550,26 +555,24 @@ mod a {
 # fn main() {}
 ```
 
-# Syntax extensions
+# Macros
 
 A number of minor features of Rust are not central enough to have their own
 syntax, and yet are not implementable as functions. Instead, they are given
 names, and invoked through a consistent syntax: `some_extension!(...)`.
 
-Users of `rustc` can define new syntax extensions in two ways:
-
-* [Compiler plugins][plugin] can include arbitrary Rust code that
-  manipulates syntax trees at compile time. Note that the interface
-  for compiler plugins is considered highly unstable.
+Users of `rustc` can define new macros in two ways:
 
 * [Macros](book/macros.html) define new syntax in a higher-level,
   declarative way.
+* [Procedural Macros][procedural macros] can be used to implement custom derive.
+
+And one unstable way: [compiler plugins][plugin].
 
 ## Macros
 
 `macro_rules` allows users to define syntax extension in a declarative way.  We
-call such extensions "macros by example" or simply "macros" — to be distinguished
-from the "procedural macros" defined in [compiler plugins][plugin].
+call such extensions "macros by example" or simply "macros".
 
 Currently, macros can expand to expressions, statements, items, or patterns.
 
@@ -598,7 +601,8 @@ syntax named by _designator_. Valid designators are:
 * `ty`: a [type](#types)
 * `ident`: an [identifier](#identifiers)
 * `path`: a [path](#paths)
-* `tt`: either side of the `=>` in macro rules
+* `tt`: a token tree (a single [token](#tokens) or a sequence of token trees surrounded
+  by matching `()`, `[]`, or `{}`)
 * `meta`: the contents of an [attribute](#attributes)
 
 In the transcriber, the
@@ -645,6 +649,28 @@ Rust syntax is restricted in two ways:
    requiring a distinctive token in front can solve the problem.
 
 [RFC 550]: https://github.com/rust-lang/rfcs/blob/master/text/0550-macro-future-proofing.md
+
+## Procedrual Macros
+
+"Procedrual macros" are the second way to implement a macro. For now, the only
+thing they can be used for is to implement derive on your own types. See
+[the book][procedural macros] for a tutorial.
+
+Procedural macros involve a few different parts of the language and its
+standard libraries. First is the `proc_macro` crate, included with Rust,
+that defines an interface for building a procedrual macro. The 
+`#[proc_macro_derive(Foo)]` attribute is used to mark the the deriving
+function. This function must have the type signature:
+
+```rust,ignore
+use proc_macro::TokenStream;
+
+#[proc_macro_derive(Hello)]
+pub fn hello_world(input: TokenStream) -> TokenStream
+```
+
+Finally, procedural macros must be in their own crate, with the `proc-macro`
+crate type.
 
 # Crates and source files
 
@@ -735,13 +761,14 @@ There are several kinds of item:
 * [`extern crate` declarations](#extern-crate-declarations)
 * [`use` declarations](#use-declarations)
 * [modules](#modules)
-* [functions](#functions)
+* [function definitions](#functions)
+* [`extern` blocks](#external-blocks)
 * [type definitions](grammar.html#type-definitions)
-* [structs](#structs)
-* [enumerations](#enumerations)
+* [struct definitions](#structs)
+* [enumeration definitions](#enumerations)
 * [constant items](#constant-items)
 * [static items](#static-items)
-* [traits](#traits)
+* [trait definitions](#traits)
 * [implementations](#implementations)
 
 Some items form an implicit scope for the declaration of sub-items. In other
@@ -2302,6 +2329,9 @@ impl<T: PartialEq> PartialEq for Foo<T> {
 }
 ```
 
+You can implement `derive` for your own type through [procedural
+macros](#procedural-macros).
+
 ### Compiler Features
 
 Certain aspects of Rust may be implemented in the compiler, but they're not
@@ -2457,11 +2487,6 @@ The currently implemented features of the reference compiler are:
 * `unboxed_closures` - Rust's new closure design, which is currently a work in
                        progress feature with many known bugs.
 
-* `unmarked_api` - Allows use of items within a `#![staged_api]` crate
-                   which have not been marked with a stability marker.
-                   Such items should not be allowed by the compiler to exist,
-                   so if you need this there probably is a compiler bug.
-
 * `allow_internal_unstable` - Allows `macro_rules!` macros to be tagged with the
                               `#[allow_internal_unstable]` attribute, designed
                               to allow `std` macros to call
@@ -2469,18 +2494,19 @@ The currently implemented features of the reference compiler are:
                               internally without imposing on callers
                               (i.e. making them behave like function calls in
                               terms of encapsulation).
-* - `default_type_parameter_fallback` - Allows type parameter defaults to
-                                        influence type inference.
 
-* - `stmt_expr_attributes` - Allows attributes on expressions.
+* `default_type_parameter_fallback` - Allows type parameter defaults to
+                                      influence type inference.
 
-* - `type_ascription` - Allows type ascription expressions `expr: Type`.
+* `stmt_expr_attributes` - Allows attributes on expressions.
 
-* - `abi_vectorcall` - Allows the usage of the vectorcall calling convention
-                             (e.g. `extern "vectorcall" func fn_();`)
+* `type_ascription` - Allows type ascription expressions `expr: Type`.
 
-* - `abi_sysv64` - Allows the usage of the system V AMD64 calling convention
-                             (e.g. `extern "sysv64" func fn_();`)
+* `abi_vectorcall` - Allows the usage of the vectorcall calling convention
+                     (e.g. `extern "vectorcall" func fn_();`)
+
+* `abi_sysv64` - Allows the usage of the system V AMD64 calling convention
+                 (e.g. `extern "sysv64" func fn_();`)
 
 If a feature is promoted to a language feature, then all existing programs will
 start to receive compilation warnings about `#![feature]` directives which enabled
@@ -4109,6 +4135,16 @@ be ignored in favor of only building the artifacts specified by command line.
   in dynamic libraries. This form of output is used to produce statically linked
   executables as well as `staticlib` outputs.
 
+* `--crate-type=proc-macro`, `#[crate_type = "proc-macro"]` - The output
+  produced is not specified, but if a `-L` path is provided to it then the
+  compiler will recognize the output artifacts as a macro and it can be loaded
+  for a program. If a crate is compiled with the `proc-macro` crate type it
+  will forbid exporting any items in the crate other than those functions
+  tagged `#[proc_macro_derive]` and those functions must also be placed at the
+  crate root. Finally, the compiler will automatically set the
+  `cfg(proc_macro)` annotation whenever any crate type of a compilation is the
+  `proc-macro` crate type.
+
 Note that these outputs are stackable in the sense that if multiple are
 specified, then the compiler will produce each form of output at once without
 having to recompile. However, this only applies for outputs specified by the
@@ -4286,3 +4322,4 @@ that have since been removed):
 
 [ffi]: book/ffi.html
 [plugin]: book/compiler-plugins.html
+[procedural macros]: book/procedural-macros.html

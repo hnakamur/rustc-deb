@@ -23,7 +23,7 @@ use std::io::Write;
 use std::path::{PathBuf, Path};
 use std::process::Command;
 
-use {Build, Compiler};
+use {Build, Compiler, Mode};
 use util::{cp_r, libdir, is_dylib, cp_filtered, copy};
 
 pub fn package_vers(build: &Build) -> &str {
@@ -48,6 +48,11 @@ pub fn tmpdir(build: &Build) -> PathBuf {
 /// Slurps up documentation from the `stage`'s `host`.
 pub fn docs(build: &Build, stage: u32, host: &str) {
     println!("Dist docs stage{} ({})", stage, host);
+    if !build.config.docs {
+        println!("\tskipping - docs disabled");
+        return
+    }
+
     let name = format!("rust-docs-{}", package_vers(build));
     let image = tmpdir(build).join(format!("{}-{}-image", name, name));
     let _ = fs::remove_dir_all(&image);
@@ -92,6 +97,7 @@ pub fn mingw(build: &Build, host: &str) {
     let name = format!("rust-mingw-{}", package_vers(build));
     let image = tmpdir(build).join(format!("{}-{}-image", name, host));
     let _ = fs::remove_dir_all(&image);
+    t!(fs::create_dir_all(&image));
 
     // The first argument to the script is a "temporary directory" which is just
     // thrown away (this contains the runtime DLLs included in the rustc package
@@ -99,7 +105,7 @@ pub fn mingw(build: &Build, host: &str) {
     // (which is what we want).
     //
     // FIXME: this script should be rewritten into Rust
-    let mut cmd = Command::new("python");
+    let mut cmd = Command::new(build.python());
     cmd.arg(build.src.join("src/etc/make-win-dist.py"))
        .arg(tmpdir(build))
        .arg(&image)
@@ -159,7 +165,7 @@ pub fn rustc(build: &Build, stage: u32, host: &str) {
     //
     // FIXME: this script should be rewritten into Rust
     if host.contains("pc-windows-gnu") {
-        let mut cmd = Command::new("python");
+        let mut cmd = Command::new(build.python());
         cmd.arg(build.src.join("src/etc/make-win-dist.py"))
            .arg(&image)
            .arg(tmpdir(build))
@@ -260,6 +266,14 @@ pub fn debugger_scripts(build: &Build,
 pub fn std(build: &Build, compiler: &Compiler, target: &str) {
     println!("Dist std stage{} ({} -> {})", compiler.stage, compiler.host,
              target);
+
+    // The only true set of target libraries came from the build triple, so
+    // let's reduce redundant work by only producing archives from that host.
+    if compiler.host != build.config.build {
+        println!("\tskipping, not a build host");
+        return
+    }
+
     let name = format!("rust-std-{}", package_vers(build));
     let image = tmpdir(build).join(format!("{}-{}-image", name, target));
     let _ = fs::remove_dir_all(&image);
@@ -279,6 +293,53 @@ pub fn std(build: &Build, compiler: &Compiler, target: &str) {
        .arg(format!("--output-dir={}", sanitize_sh(&distdir(build))))
        .arg(format!("--package-name={}-{}", name, target))
        .arg(format!("--component-name=rust-std-{}", target))
+       .arg("--legacy-manifest-dirs=rustlib,cargo");
+    build.run(&mut cmd);
+    t!(fs::remove_dir_all(&image));
+}
+
+pub fn rust_src_location(build: &Build) -> PathBuf {
+    let plain_name = format!("rustc-{}-src", package_vers(build));
+    distdir(build).join(&format!("{}.tar.gz", plain_name))
+}
+
+/// Creates a tarball of save-analysis metadata, if available.
+pub fn analysis(build: &Build, compiler: &Compiler, target: &str) {
+    println!("Dist analysis");
+
+    if build.config.channel != "nightly" {
+        println!("\tskipping - not on nightly channel");
+        return;
+    }
+    if compiler.host != build.config.build {
+        println!("\tskipping - not a build host");
+        return
+    }
+    if compiler.stage != 2 {
+        println!("\tskipping - not stage2");
+        return
+    }
+
+    let name = format!("rust-analysis-{}", package_vers(build));
+    let image = tmpdir(build).join(format!("{}-{}-image", name, target));
+
+    let src = build.stage_out(compiler, Mode::Libstd).join(target).join("release").join("deps");
+
+    let image_src = src.join("save-analysis");
+    let dst = image.join("lib/rustlib").join(target).join("analysis");
+    t!(fs::create_dir_all(&dst));
+    cp_r(&image_src, &dst);
+
+    let mut cmd = Command::new("sh");
+    cmd.arg(sanitize_sh(&build.src.join("src/rust-installer/gen-installer.sh")))
+       .arg("--product-name=Rust")
+       .arg("--rel-manifest-dir=rustlib")
+       .arg("--success-message=save-analysis-saved.")
+       .arg(format!("--image-dir={}", sanitize_sh(&image)))
+       .arg(format!("--work-dir={}", sanitize_sh(&tmpdir(build))))
+       .arg(format!("--output-dir={}", sanitize_sh(&distdir(build))))
+       .arg(format!("--package-name={}-{}", name, target))
+       .arg(format!("--component-name=rust-analysis-{}", target))
        .arg("--legacy-manifest-dirs=rustlib,cargo");
     build.run(&mut cmd);
     t!(fs::remove_dir_all(&image));
@@ -330,6 +391,13 @@ pub fn rust_src(build: &Build) {
             }
         }
 
+        // If we're inside the vendor directory then we need to preserve
+        // everything as Cargo's vendoring support tracks all checksums and we
+        // want to be sure we don't accidentally leave out a file.
+        if spath.contains("vendor") {
+            return true
+        }
+
         let excludes = [
             "CVS", "RCS", "SCCS", ".git", ".gitignore", ".gitmodules",
             ".gitattributes", ".cvsignore", ".svn", ".arch-ids", "{arch}",
@@ -374,7 +442,7 @@ pub fn rust_src(build: &Build) {
 
     // Create plain source tarball
     let mut cmd = Command::new("tar");
-    cmd.arg("-czf").arg(sanitize_sh(&distdir(build).join(&format!("{}.tar.gz", plain_name))))
+    cmd.arg("-czf").arg(sanitize_sh(&rust_src_location(build)))
        .arg(&plain_name)
        .current_dir(&dst);
     build.run(&mut cmd);

@@ -38,19 +38,22 @@ use util::push_exe_path;
 /// `src/bootstrap/config.toml.example`.
 #[derive(Default)]
 pub struct Config {
-    pub ccache: bool,
+    pub ccache: Option<String>,
     pub ninja: bool,
     pub verbose: bool,
     pub submodules: bool,
     pub compiler_docs: bool,
     pub docs: bool,
+    pub vendor: bool,
     pub target_config: HashMap<String, Target>,
 
     // llvm codegen options
     pub llvm_assertions: bool,
     pub llvm_optimize: bool,
+    pub llvm_release_debuginfo: bool,
     pub llvm_version_check: bool,
     pub llvm_static_stdcpp: bool,
+    pub llvm_link_shared: bool,
 
     // rust codegen options
     pub rust_optimize: bool,
@@ -58,6 +61,7 @@ pub struct Config {
     pub rust_debug_assertions: bool,
     pub rust_debuginfo: bool,
     pub rust_debuginfo_lines: bool,
+    pub rust_debuginfo_only_std: bool,
     pub rust_rpath: bool,
     pub rustc_default_linker: Option<String>,
     pub rustc_default_ar: Option<String>,
@@ -88,6 +92,7 @@ pub struct Config {
     pub codegen_tests: bool,
     pub nodejs: Option<PathBuf>,
     pub gdb: Option<PathBuf>,
+    pub python: Option<PathBuf>,
 }
 
 /// Per-target configuration stored in the global configuration structure.
@@ -126,17 +131,33 @@ struct Build {
     docs: Option<bool>,
     submodules: Option<bool>,
     gdb: Option<String>,
+    vendor: Option<bool>,
+    nodejs: Option<String>,
+    python: Option<String>,
 }
 
 /// TOML representation of how the LLVM build is configured.
 #[derive(RustcDecodable, Default)]
 struct Llvm {
-    ccache: Option<bool>,
+    ccache: Option<StringOrBool>,
     ninja: Option<bool>,
     assertions: Option<bool>,
     optimize: Option<bool>,
+    release_debuginfo: Option<bool>,
     version_check: Option<bool>,
     static_libstdcpp: Option<bool>,
+}
+
+#[derive(RustcDecodable)]
+enum StringOrBool {
+    String(String),
+    Bool(bool),
+}
+
+impl Default for StringOrBool {
+    fn default() -> StringOrBool {
+        StringOrBool::Bool(false)
+    }
 }
 
 /// TOML representation of how the Rust build is configured.
@@ -147,6 +168,7 @@ struct Rust {
     debug_assertions: Option<bool>,
     debuginfo: Option<bool>,
     debuginfo_lines: Option<bool>,
+    debuginfo_only_std: Option<bool>,
     debug_jemalloc: Option<bool>,
     use_jemalloc: Option<bool>,
     backtrace: Option<bool>,
@@ -230,16 +252,28 @@ impl Config {
         }
         config.rustc = build.rustc.map(PathBuf::from);
         config.cargo = build.cargo.map(PathBuf::from);
+        config.nodejs = build.nodejs.map(PathBuf::from);
         config.gdb = build.gdb.map(PathBuf::from);
+        config.python = build.python.map(PathBuf::from);
         set(&mut config.compiler_docs, build.compiler_docs);
         set(&mut config.docs, build.docs);
         set(&mut config.submodules, build.submodules);
+        set(&mut config.vendor, build.vendor);
 
         if let Some(ref llvm) = toml.llvm {
-            set(&mut config.ccache, llvm.ccache);
+            match llvm.ccache {
+                Some(StringOrBool::String(ref s)) => {
+                    config.ccache = Some(s.to_string())
+                }
+                Some(StringOrBool::Bool(true)) => {
+                    config.ccache = Some("ccache".to_string());
+                }
+                Some(StringOrBool::Bool(false)) | None => {}
+            }
             set(&mut config.ninja, llvm.ninja);
             set(&mut config.llvm_assertions, llvm.assertions);
             set(&mut config.llvm_optimize, llvm.optimize);
+            set(&mut config.llvm_release_debuginfo, llvm.release_debuginfo);
             set(&mut config.llvm_version_check, llvm.version_check);
             set(&mut config.llvm_static_stdcpp, llvm.static_libstdcpp);
         }
@@ -247,6 +281,7 @@ impl Config {
             set(&mut config.rust_debug_assertions, rust.debug_assertions);
             set(&mut config.rust_debuginfo, rust.debuginfo);
             set(&mut config.rust_debuginfo_lines, rust.debuginfo_lines);
+            set(&mut config.rust_debuginfo_only_std, rust.debuginfo_only_std);
             set(&mut config.rust_optimize, rust.optimize);
             set(&mut config.rust_optimize_tests, rust.optimize_tests);
             set(&mut config.rust_debuginfo_tests, rust.debuginfo_tests);
@@ -326,18 +361,20 @@ impl Config {
             }
 
             check! {
-                ("CCACHE", self.ccache),
                 ("MANAGE_SUBMODULES", self.submodules),
                 ("COMPILER_DOCS", self.compiler_docs),
                 ("DOCS", self.docs),
                 ("LLVM_ASSERTIONS", self.llvm_assertions),
+                ("LLVM_RELEASE_DEBUGINFO", self.llvm_release_debuginfo),
                 ("OPTIMIZE_LLVM", self.llvm_optimize),
                 ("LLVM_VERSION_CHECK", self.llvm_version_check),
                 ("LLVM_STATIC_STDCPP", self.llvm_static_stdcpp),
+                ("LLVM_LINK_SHARED", self.llvm_link_shared),
                 ("OPTIMIZE", self.rust_optimize),
                 ("DEBUG_ASSERTIONS", self.rust_debug_assertions),
                 ("DEBUGINFO", self.rust_debuginfo),
                 ("DEBUGINFO_LINES", self.rust_debuginfo_lines),
+                ("DEBUGINFO_ONLY_STD", self.rust_debuginfo_only_std),
                 ("JEMALLOC", self.use_jemalloc),
                 ("DEBUG_JEMALLOC", self.debug_jemalloc),
                 ("RPATH", self.rust_rpath),
@@ -347,6 +384,7 @@ impl Config {
                 ("LOCAL_REBUILD", self.local_rebuild),
                 ("NINJA", self.ninja),
                 ("CODEGEN_TESTS", self.codegen_tests),
+                ("VENDOR", self.vendor),
             }
 
             match key {
@@ -455,6 +493,16 @@ impl Config {
                     let path = parse_configure_path(value);
                     self.rustc = Some(push_exe_path(path.clone(), &["bin", "rustc"]));
                     self.cargo = Some(push_exe_path(path, &["bin", "cargo"]));
+                }
+                "CFG_PYTHON" if value.len() > 0 => {
+                    let path = parse_configure_path(value);
+                    self.python = Some(path);
+                }
+                "CFG_ENABLE_CCACHE" if value == "1" => {
+                    self.ccache = Some("ccache".to_string());
+                }
+                "CFG_ENABLE_SCCACHE" if value == "1" => {
+                    self.ccache = Some("sccache".to_string());
                 }
                 _ => {}
             }

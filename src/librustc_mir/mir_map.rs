@@ -30,16 +30,17 @@ use rustc::traits::Reveal;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::subst::Substs;
 use rustc::hir;
-use rustc::hir::intravisit::{self, FnKind, Visitor};
+use rustc::hir::intravisit::{self, FnKind, Visitor, NestedVisitorMap};
+use syntax::abi::Abi;
 use syntax::ast;
 use syntax_pos::Span;
 
 use std::mem;
 
 pub fn build_mir_for_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    tcx.visit_all_items_in_krate(DepNode::Mir, &mut BuildMir {
+    tcx.visit_all_item_likes_in_krate(DepNode::Mir, &mut BuildMir {
         tcx: tcx
-    });
+    }.as_deep_visitor());
 }
 
 /// A pass to lift all the types and substitutions in a Mir
@@ -102,11 +103,11 @@ impl<'a, 'gcx, 'tcx> BuildMir<'a, 'gcx> {
 
 impl<'a, 'gcx, 'tcx> CxBuilder<'a, 'gcx, 'tcx> {
     fn build<F>(&'tcx mut self, f: F)
-        where F: for<'b> FnOnce(Cx<'b, 'gcx, 'tcx>) -> (Mir<'tcx>, build::ScopeAuxiliaryVec)
+        where F: for<'b> FnOnce(Cx<'b, 'gcx, 'tcx>) -> Mir<'tcx>
     {
         let (src, def_id) = (self.src, self.def_id);
         self.infcx.enter(|infcx| {
-            let (mut mir, scope_auxiliary) = f(Cx::new(&infcx, src));
+            let mut mir = f(Cx::new(&infcx, src));
 
             // Convert the Mir to global types.
             let tcx = infcx.tcx.global_tcx();
@@ -119,7 +120,7 @@ impl<'a, 'gcx, 'tcx> CxBuilder<'a, 'gcx, 'tcx> {
                 mem::transmute::<Mir, Mir<'gcx>>(mir)
             };
 
-            pretty::dump_mir(tcx, "mir_map", &0, src, &mir, Some(&scope_auxiliary));
+            pretty::dump_mir(tcx, "mir_map", &0, src, &mir);
 
             let mir = tcx.alloc_mir(mir);
             assert!(tcx.mir_map.borrow_mut().insert(def_id, mir).is_none());
@@ -143,6 +144,10 @@ impl<'a, 'gcx> BuildMir<'a, 'gcx> {
 }
 
 impl<'a, 'tcx> Visitor<'tcx> for BuildMir<'a, 'tcx> {
+    fn nested_visit_map<'this>(&'this mut self) -> NestedVisitorMap<'this, 'tcx> {
+        NestedVisitorMap::OnlyBodies(&self.tcx.map)
+    }
+
     // Const and static items.
     fn visit_item(&mut self, item: &'tcx hir::Item) {
         match item.node {
@@ -209,7 +214,7 @@ impl<'a, 'tcx> Visitor<'tcx> for BuildMir<'a, 'tcx> {
     fn visit_fn(&mut self,
                 fk: FnKind<'tcx>,
                 decl: &'tcx hir::FnDecl,
-                body: &'tcx hir::Block,
+                body_id: hir::ExprId,
                 span: Span,
                 id: ast::NodeId) {
         // fetch the fully liberated fn signature (that is, all bound
@@ -221,10 +226,11 @@ impl<'a, 'tcx> Visitor<'tcx> for BuildMir<'a, 'tcx> {
             }
         };
 
-        let implicit_argument = if let FnKind::Closure(..) = fk {
-            Some((closure_self_ty(self.tcx, id, body.id), None))
+        let (abi, implicit_argument) = if let FnKind::Closure(..) = fk {
+            (Abi::Rust, Some((closure_self_ty(self.tcx, id, body_id.node_id()), None)))
         } else {
-            None
+            let def_id = self.tcx.map.local_def_id(id);
+            (self.tcx.item_type(def_id).fn_abi(), None)
         };
 
         let explicit_arguments =
@@ -232,15 +238,17 @@ impl<'a, 'tcx> Visitor<'tcx> for BuildMir<'a, 'tcx> {
                 .iter()
                 .enumerate()
                 .map(|(index, arg)| {
-                    (fn_sig.inputs[index], Some(&*arg.pat))
+                    (fn_sig.inputs()[index], Some(&*arg.pat))
                 });
+
+        let body = self.tcx.map.expr(body_id);
 
         let arguments = implicit_argument.into_iter().chain(explicit_arguments);
         self.cx(MirSource::Fn(id)).build(|cx| {
-            build::construct_fn(cx, id, arguments, fn_sig.output, body)
+            build::construct_fn(cx, id, arguments, abi, fn_sig.output(), body)
         });
 
-        intravisit::walk_fn(self, fk, decl, body, span, id);
+        intravisit::walk_fn(self, fk, decl, body_id, span, id);
     }
 }
 

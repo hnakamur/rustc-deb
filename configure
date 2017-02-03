@@ -621,19 +621,22 @@ opt llvm-assertions 0 "build LLVM with assertions"
 opt debug-assertions 0 "build with debugging assertions"
 opt fast-make 0 "use .gitmodules as timestamp for submodule deps"
 opt ccache 0 "invoke gcc/clang via ccache to reuse object files between builds"
+opt sccache 0 "invoke gcc/clang via sccache to reuse object files between builds"
 opt local-rust 0 "use an installed rustc rather than downloading a snapshot"
 opt local-rebuild 0 "assume local-rust matches the current version, for rebuilds; implies local-rust, and is implied if local-rust already matches the current version"
 opt llvm-static-stdcpp 0 "statically link to libstdc++ for LLVM"
+opt llvm-link-shared 0 "prefer shared linking to LLVM (llvm-config --link-shared)"
 opt rpath 1 "build rpaths into rustc itself"
 opt stage0-landing-pads 1 "enable landing pads during bootstrap with stage0"
 # This is used by the automation to produce single-target nightlies
 opt dist-host-only 0 "only install bins for the host architecture"
 opt inject-std-version 1 "inject the current compiler version of libstd into programs"
 opt llvm-version-check 1 "check if the LLVM version is supported, build anyway"
-opt rustbuild 0 "use the rust and cargo based build system"
+opt rustbuild 1 "use the rust and cargo based build system"
 opt codegen-tests 1 "run the src/test/codegen tests"
 opt option-checking 1 "complain about unrecognized options in this configure script"
 opt ninja 0 "build LLVM using the Ninja generator (for MSVC, requires building in the correct environment)"
+opt vendor 0 "enable usage of vendored Rust crates"
 
 # Optimization and debugging options. These may be overridden by the release channel, etc.
 opt_nosave optimize 1 "build optimized rust code"
@@ -641,8 +644,10 @@ opt_nosave optimize-cxx 1 "build optimized C++ code"
 opt_nosave optimize-llvm 1 "build optimized LLVM"
 opt_nosave llvm-assertions 0 "build LLVM with assertions"
 opt_nosave debug-assertions 0 "build with debugging assertions"
+opt_nosave llvm-release-debuginfo 0 "build LLVM with debugger metadata"
 opt_nosave debuginfo 0 "build with debugger metadata"
 opt_nosave debuginfo-lines 0 "build with line number debugger metadata"
+opt_nosave debuginfo-only-std 0 "build only libstd with debugging information"
 opt_nosave debug-jemalloc 0 "build jemalloc with --enable-debug --enable-fill"
 
 valopt localstatedir "/var/lib" "local state directory"
@@ -661,11 +666,11 @@ valopt armv7-linux-androideabi-ndk "" "armv7-linux-androideabi NDK standalone pa
 valopt aarch64-linux-android-ndk "" "aarch64-linux-android NDK standalone path"
 valopt nacl-cross-path  "" "NaCl SDK path (Pepper Canary is recommended). Must be absolute!"
 valopt musl-root "/usr/local" "MUSL root installation directory (deprecated)"
-valopt musl-root-x86_64 "/usr/local" "x86_64-unknown-linux-musl install directory"
-valopt musl-root-i686 "/usr/local" "i686-unknown-linux-musl install directory"
-valopt musl-root-arm "/usr/local" "arm-unknown-linux-musleabi install directory"
-valopt musl-root-armhf "/usr/local" "arm-unknown-linux-musleabihf install directory"
-valopt musl-root-armv7 "/usr/local" "armv7-unknown-linux-musleabihf install directory"
+valopt musl-root-x86_64 "" "x86_64-unknown-linux-musl install directory"
+valopt musl-root-i686 "" "i686-unknown-linux-musl install directory"
+valopt musl-root-arm "" "arm-unknown-linux-musleabi install directory"
+valopt musl-root-armhf "" "arm-unknown-linux-musleabihf install directory"
+valopt musl-root-armv7 "" "armv7-unknown-linux-musleabihf install directory"
 valopt extra-filename "" "Additional data that is hashed and passed to the -C extra-filename flag"
 
 if [ -e ${CFG_SRC_DIR}.git ]
@@ -728,15 +733,17 @@ case "$CFG_RELEASE_CHANNEL" in
     nightly )
 	msg "overriding settings for $CFG_RELEASE_CHANNEL"
 	CFG_ENABLE_LLVM_ASSERTIONS=1
-
-        # FIXME(#37364) shouldn't have to disable this on windows-gnu
+        # FIXME(stage0) re-enable this on the next stage0 now that #35566 is
+        # fixed
         case "$CFG_BUILD" in
           *-pc-windows-gnu)
             ;;
           *)
-	    CFG_ENABLE_DEBUGINFO_LINES=1
+            CFG_ENABLE_DEBUGINFO_LINES=1
+            CFG_ENABLE_DEBUGINFO_ONLY_STD=1
             ;;
         esac
+
 	;;
     beta | stable)
 	msg "overriding settings for $CFG_RELEASE_CHANNEL"
@@ -744,7 +751,8 @@ case "$CFG_RELEASE_CHANNEL" in
           *-pc-windows-gnu)
             ;;
           *)
-	    CFG_ENABLE_DEBUGINFO_LINES=1
+            CFG_ENABLE_DEBUGINFO_LINES=1
+            CFG_ENABLE_DEBUGINFO_ONLY_STD=1
             ;;
         esac
 	;;
@@ -777,8 +785,10 @@ if [ -n "$CFG_DISABLE_OPTIMIZE_CXX" ]; then putvar CFG_DISABLE_OPTIMIZE_CXX; fi
 if [ -n "$CFG_DISABLE_OPTIMIZE_LLVM" ]; then putvar CFG_DISABLE_OPTIMIZE_LLVM; fi
 if [ -n "$CFG_ENABLE_LLVM_ASSERTIONS" ]; then putvar CFG_ENABLE_LLVM_ASSERTIONS; fi
 if [ -n "$CFG_ENABLE_DEBUG_ASSERTIONS" ]; then putvar CFG_ENABLE_DEBUG_ASSERTIONS; fi
+if [ -n "$CFG_ENABLE_LLVM_RELEASE_DEBUGINFO" ]; then putvar CFG_ENABLE_LLVM_RELEASE_DEBUGINFO; fi
 if [ -n "$CFG_ENABLE_DEBUGINFO" ]; then putvar CFG_ENABLE_DEBUGINFO; fi
 if [ -n "$CFG_ENABLE_DEBUGINFO_LINES" ]; then putvar CFG_ENABLE_DEBUGINFO_LINES; fi
+if [ -n "$CFG_ENABLE_DEBUGINFO_ONLY_STD" ]; then putvar CFG_ENABLE_DEBUGINFO_ONLY_STD; fi
 if [ -n "$CFG_ENABLE_DEBUG_JEMALLOC" ]; then putvar CFG_ENABLE_DEBUG_JEMALLOC; fi
 
 step_msg "looking for build programs"
@@ -844,13 +854,22 @@ then
 fi
 
 # For building LLVM
-probe_need CFG_CMAKE cmake
+if [ -z "$CFG_LLVM_ROOT" ]
+then
+  probe_need CFG_CMAKE cmake
+fi
 
 # On MacOS X, invoking `javac` pops up a dialog if the JDK is not
 # installed. Since `javac` is only used if `antlr4` is available,
 # probe for it only in this case.
 if [ -n "$CFG_ANTLR4" ]
 then
+   CFG_ANTLR4_JAR="\"$(find /usr/ -name antlr-complete.jar 2>/dev/null | head -n 1)\""
+   if [ "x" = "x$CFG_ANTLR4_JAR" ]
+   then
+     CFG_ANTLR4_JAR="\"$(find ~ -name antlr-complete.jar 2>/dev/null | head -n 1)\""
+   fi
+   putvar CFG_ANTLR4_JAR      $CFG_ANTLR4_JAR
    probe CFG_JAVAC            javac
 fi
 
@@ -1361,7 +1380,7 @@ then
     fi
 fi
 
-if [ -z "$CFG_ENABLE_RUSTBUILD" ]; then
+if [ -n "$CFG_DISABLE_RUSTBUILD" ]; then
 
   step_msg "making directories"
 
@@ -1461,7 +1480,7 @@ fi
 step_msg "configuring submodules"
 
 # Have to be in the top of src directory for this
-if [ -z $CFG_DISABLE_MANAGE_SUBMODULES ] && [ -z $CFG_ENABLE_RUSTBUILD ]
+if [ -z "$CFG_DISABLE_MANAGE_SUBMODULES" ] && [ -n "$CFG_DISABLE_RUSTBUILD" ]
 then
     cd ${CFG_SRC_DIR}
 
@@ -1533,11 +1552,11 @@ do
         ;;
     esac
 
-    if [ -n "$CFG_ENABLE_RUSTBUILD" ]
+    if [ -z "$CFG_DISABLE_RUSTBUILD" ]
     then
         msg "not configuring LLVM, rustbuild in use"
         do_reconfigure=0
-    elif [ -z $CFG_LLVM_ROOT ]
+    elif [ -z "$CFG_LLVM_ROOT" ]
     then
         LLVM_BUILD_DIR=${CFG_BUILD_DIR}$t/llvm
         LLVM_INST_DIR=$LLVM_BUILD_DIR
@@ -1664,11 +1683,23 @@ do
             LLVM_CC_64_ARG1="gcc"
             ;;
         ("gcc")
-            LLVM_CXX_32="g++"
-            LLVM_CC_32="gcc"
+            if [ -z "$CFG_ENABLE_SCCACHE" ]; then
+                LLVM_CXX_32="g++"
+                LLVM_CC_32="gcc"
 
-            LLVM_CXX_64="g++"
-            LLVM_CC_64="gcc"
+                LLVM_CXX_64="g++"
+                LLVM_CC_64="gcc"
+            else
+                LLVM_CXX_32="sccache"
+                LLVM_CC_32="sccache"
+                LLVM_CXX_32_ARG1="g++"
+                LLVM_CC_32_ARG1="gcc"
+
+                LLVM_CXX_64="sccache"
+                LLVM_CC_64="sccache"
+                LLVM_CXX_64_ARG1="g++"
+                LLVM_CC_64_ARG1="gcc"
+            fi
             ;;
 
         (*)
@@ -1771,6 +1802,8 @@ do
 
     if [ -n "$CFG_DISABLE_OPTIMIZE_LLVM" ]; then
         CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug"
+    elif [ -n "$CFG_ENABLE_LLVM_RELEASE_DEBUGINFO" ]; then
+        CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_BUILD_TYPE=RelWithDebInfo"
     else
         CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release"
     fi
@@ -1781,7 +1814,7 @@ do
         CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_ASSERTIONS=ON"
     fi
 
-    CMAKE_ARGS="$CMAKE_ARGS -DLLVM_TARGETS_TO_BUILD='X86;ARM;AArch64;Mips;PowerPC;SystemZ;JSBackend'"
+    CMAKE_ARGS="$CMAKE_ARGS -DLLVM_TARGETS_TO_BUILD='X86;ARM;AArch64;Mips;PowerPC;SystemZ;JSBackend;MSP430'"
     CMAKE_ARGS="$CMAKE_ARGS -G '$CFG_CMAKE_GENERATOR'"
     CMAKE_ARGS="$CMAKE_ARGS $CFG_LLVM_SRC_DIR"
 
@@ -1856,7 +1889,7 @@ do
     putvar $CFG_LLVM_INST_DIR
 done
 
-if [ -n "$CFG_ENABLE_RUSTBUILD" ]
+if [ -z "$CFG_DISABLE_RUSTBUILD" ]
 then
     INPUT_MAKEFILE=src/bootstrap/mk/Makefile.in
 else
@@ -1875,5 +1908,28 @@ else
     step_msg "complete"
 fi
 
-msg "run \`make help\`"
+if [ "$CFG_SRC_DIR" = `pwd` ]; then
+    X_PY=x.py
+else
+    X_PY=${CFG_SRC_DIR_RELATIVE}x.py
+fi
+
+if [ -z "$CFG_DISABLE_RUSTBUILD" ]; then
+    msg "NOTE you have now configured rust to use a rewritten build system"
+    msg "     called rustbuild, and as a result this may have bugs that "
+    msg "     you did not see before. If you experience any issues you can"
+    msg "     go back to the old build system with --disable-rustbuild and"
+    msg "     please feel free to report any bugs!"
+    msg ""
+    msg "run \`python ${X_PY} --help\`"
+else
+    warn "the makefile-based build system is deprecated in favor of rustbuild"
+    msg ""
+    msg "It is recommended you avoid passing --disable-rustbuild to get your"
+    msg "build working as the makefiles will be deleted on 2017-02-02. If you"
+    msg "encounter bugs with rustbuild please file issues against rust-lang/rust"
+    msg ""
+    msg "run \`make help\`"
+fi
+
 msg

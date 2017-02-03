@@ -11,7 +11,7 @@
 use llvm::{self, ValueRef};
 use rustc_const_eval::{ErrKind, ConstEvalErr, note_const_eval_err};
 use rustc::middle::lang_items;
-use rustc::ty;
+use rustc::ty::{self, layout};
 use rustc::mir;
 use abi::{Abi, FnType, ArgType};
 use adt;
@@ -29,8 +29,8 @@ use type_of;
 use glue;
 use type_::Type;
 
-use rustc_data_structures::fnv::FnvHashMap;
-use syntax::parse::token;
+use rustc_data_structures::fx::FxHashMap;
+use syntax::symbol::Symbol;
 
 use super::{MirContext, LocalRef};
 use super::analyze::CleanupKind;
@@ -116,6 +116,9 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 if let Some(cleanup_pad) = cleanup_pad {
                     bcx.cleanup_ret(cleanup_pad, None);
                 } else {
+                    let llpersonality = bcx.fcx().eh_personality();
+                    bcx.set_personality_fn(llpersonality);
+
                     let ps = self.get_personality_slot(&bcx);
                     let lp = bcx.load(ps);
                     bcx.with_block(|bcx| {
@@ -144,7 +147,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     adt::trans_get_discr(bcx, ty, discr_lvalue.llval, None, true)
                 );
 
-                let mut bb_hist = FnvHashMap();
+                let mut bb_hist = FxHashMap();
                 for target in targets {
                     *bb_hist.entry(target).or_insert(0) += 1;
                 }
@@ -219,7 +222,11 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     load
                 } else {
                     let op = self.trans_consume(&bcx, &mir::Lvalue::Local(mir::RETURN_POINTER));
-                    op.pack_if_pair(&bcx).immediate()
+                    if let Ref(llval) = op.val {
+                        bcx.with_block(|bcx| base::load_ty(&bcx, llval, op.ty))
+                    } else {
+                        op.pack_if_pair(&bcx).immediate()
+                    }
                 };
                 bcx.ret(llval);
             }
@@ -321,7 +328,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
                 // Get the location information.
                 let loc = bcx.sess().codemap().lookup_char_pos(span.lo);
-                let filename = token::intern_and_get_ident(&loc.file.name);
+                let filename = Symbol::intern(&loc.file.name).as_str();
                 let filename = C_str_slice(bcx.ccx(), filename);
                 let line = C_u32(bcx.ccx(), loc.line as u32);
 
@@ -351,7 +358,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                          const_err)
                     }
                     mir::AssertMessage::Math(ref err) => {
-                        let msg_str = token::intern_and_get_ident(err.description());
+                        let msg_str = Symbol::intern(err.description()).as_str();
                         let msg_str = C_str_slice(bcx.ccx(), msg_str);
                         let msg_file_line = C_struct(bcx.ccx(),
                                                      &[msg_str, filename, line],
@@ -450,7 +457,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     return;
                 }
 
-                let extra_args = &args[sig.inputs.len()..];
+                let extra_args = &args[sig.inputs().len()..];
                 let extra_args = extra_args.iter().map(|op_arg| {
                     let op_ty = op_arg.ty(&self.mir, bcx.tcx());
                     bcx.monomorphize(&op_ty)
@@ -543,7 +550,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                             // Make a fake operand for store_return
                             let op = OperandRef {
                                 val: Ref(dst),
-                                ty: sig.output,
+                                ty: sig.output(),
                             };
                             self.store_return(&bcx, ret_dest, fn_ty.ret, op);
                         }
@@ -581,7 +588,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                             debug_loc.apply_to_bcx(ret_bcx);
                             let op = OperandRef {
                                 val: Immediate(invokeret),
-                                ty: sig.output,
+                                ty: sig.output(),
                             };
                             self.store_return(&ret_bcx, ret_dest, fn_ty.ret, op);
                         });
@@ -592,7 +599,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     if let Some((_, target)) = *destination {
                         let op = OperandRef {
                             val: Immediate(llret),
-                            ty: sig.output,
+                            ty: sig.output(),
                         };
                         self.store_return(&bcx, ret_dest, fn_ty.ret, op);
                         funclet_br(self, bcx, target);
@@ -719,8 +726,14 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
             }
             Immediate(llval) => {
+                let l = bcx.ccx().layout_of(tuple.ty);
+                let v = if let layout::Univariant { ref variant, .. } = *l {
+                    variant
+                } else {
+                    bug!("Not a tuple.");
+                };
                 for (n, &ty) in arg_types.iter().enumerate() {
-                    let mut elem = bcx.extract_value(llval, n);
+                    let mut elem = bcx.extract_value(llval, v.memory_index[n] as usize);
                     // Truncate bools to i1, if needed
                     if ty.is_bool() && common::val_ty(elem) != Type::i1(bcx.ccx()) {
                         elem = bcx.trunc(elem, Type::i1(bcx.ccx()));

@@ -119,6 +119,11 @@ s! {
         pub l_onoff: ::c_int,
         pub l_linger: ::c_int,
     }
+
+    pub struct sigval {
+        // Actually a union of an int and a void*
+        pub sival_ptr: *mut ::c_void
+    }
 }
 
 pub const SIG_DFL: sighandler_t = 0 as sighandler_t;
@@ -205,7 +210,8 @@ cfg_if! {
         // cargo build, don't pull in anything extra as the libstd  dep
         // already pulls in all libs.
     } else if #[cfg(any(all(target_env = "musl", not(target_arch = "mips"))))] {
-        #[link(name = "c", kind = "static")]
+        #[link(name = "c", kind = "static", cfg(target_feature = "crt-static"))]
+        #[link(name = "c", cfg(not(target_feature = "crt-static")))]
         extern {}
     } else if #[cfg(target_os = "emscripten")] {
         #[link(name = "c")]
@@ -425,6 +431,7 @@ extern {
     pub fn nanosleep(rqtp: *const timespec,
                      rmtp: *mut timespec) -> ::c_int;
     pub fn tcgetpgrp(fd: ::c_int) -> pid_t;
+    pub fn tcsetpgrp(fd: ::c_int, pgrp: ::pid_t) -> ::c_int;
     pub fn ttyname(fd: ::c_int) -> *mut c_char;
     pub fn unlink(c: *const c_char) -> ::c_int;
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),

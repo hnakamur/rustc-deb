@@ -99,8 +99,6 @@
 
 use common::SharedCrateContext;
 use monomorphize::Instance;
-use rustc_data_structures::fmt_wrap::FmtWrap;
-use rustc_data_structures::blake2b::Blake2bHasher;
 
 use rustc::middle::weak_lang_items;
 use rustc::hir::def_id::LOCAL_CRATE;
@@ -113,7 +111,7 @@ use rustc::hir::map::definitions::{DefPath, DefPathData};
 use rustc::util::common::record_time;
 
 use syntax::attr;
-use syntax::parse::token::{self, InternedString};
+use syntax::symbol::{Symbol, InternedString};
 
 fn get_symbol_hash<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
 
@@ -135,7 +133,7 @@ fn get_symbol_hash<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
 
     let tcx = scx.tcx();
 
-    let mut hasher = ty::util::TypeIdHasher::new(tcx, Blake2bHasher::new(8, &[]));
+    let mut hasher = ty::util::TypeIdHasher::<u64>::new(tcx);
 
     record_time(&tcx.sess.perf_stats.symbol_hash_time, || {
         // the main symbol name is not necessarily unique; hash in the
@@ -158,9 +156,7 @@ fn get_symbol_hash<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
     });
 
     // 64 bits should be enough to avoid collisions.
-    let mut hasher = hasher.into_inner();
-    let hash_bytes = hasher.finalize();
-    format!("h{:x}", FmtWrap(hash_bytes))
+    format!("h{:016x}", hasher.finish())
 }
 
 impl<'a, 'tcx> Instance<'tcx> {
@@ -231,7 +227,7 @@ impl<'a, 'tcx> Instance<'tcx> {
             match key.disambiguated_data.data {
                 DefPathData::TypeNs(_) |
                 DefPathData::ValueNs(_) => {
-                    instance_ty = scx.tcx().lookup_item_type(ty_def_id);
+                    instance_ty = scx.tcx().item_type(ty_def_id);
                     break;
                 }
                 _ => {
@@ -248,7 +244,7 @@ impl<'a, 'tcx> Instance<'tcx> {
 
         // Erase regions because they may not be deterministic when hashed
         // and should not matter anyhow.
-        let instance_ty = scx.tcx().erase_regions(&instance_ty.ty);
+        let instance_ty = scx.tcx().erase_regions(&instance_ty);
 
         let hash = get_symbol_hash(scx, &def_path, instance_ty, Some(substs));
 
@@ -275,7 +271,7 @@ impl ItemPathBuffer for SymbolPathBuffer {
     }
 
     fn push(&mut self, text: &str) {
-        self.names.push(token::intern(text).as_str());
+        self.names.push(Symbol::intern(text).as_str());
     }
 }
 
@@ -288,7 +284,7 @@ pub fn exported_name_from_type_and_prefix<'a, 'tcx>(scx: &SharedCrateContext<'a,
         krate: LOCAL_CRATE,
     };
     let hash = get_symbol_hash(scx, &empty_def_path, t, None);
-    let path = [token::intern_and_get_ident(prefix)];
+    let path = [Symbol::intern(prefix).as_str()];
     mangle(path.iter().cloned(), &hash)
 }
 

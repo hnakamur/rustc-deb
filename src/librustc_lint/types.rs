@@ -18,7 +18,7 @@ use rustc::traits::Reveal;
 use middle::const_val::ConstVal;
 use rustc_const_eval::eval_const_expr_partial;
 use rustc_const_eval::EvalHint::ExprTypeChecked;
-use util::nodemap::FnvHashSet;
+use util::nodemap::FxHashSet;
 use lint::{LateContext, LintContext, LintArray};
 use lint::{LintPass, LateLintPass};
 
@@ -103,7 +103,7 @@ impl LintPass for TypeLimits {
     }
 }
 
-impl LateLintPass for TypeLimits {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TypeLimits {
     fn check_expr(&mut self, cx: &LateContext, e: &hir::Expr) {
         match e.node {
             hir::ExprUnary(hir::UnNeg, ref expr) => {
@@ -219,9 +219,9 @@ impl LateLintPass for TypeLimits {
                     ty::TyFloat(t) => {
                         let (min, max) = float_ty_range(t);
                         let lit_val: f64 = match lit.node {
-                            ast::LitKind::Float(ref v, _) |
-                            ast::LitKind::FloatUnsuffixed(ref v) => {
-                                match v.parse() {
+                            ast::LitKind::Float(v, _) |
+                            ast::LitKind::FloatUnsuffixed(v) => {
+                                match v.as_str().parse() {
                                     Ok(f) => f,
                                     Err(_) => return,
                                 }
@@ -396,7 +396,7 @@ enum FfiResult {
 /// expanded to cover NonZero raw pointers and newtypes.
 /// FIXME: This duplicates code in trans.
 fn is_repr_nullable_ptr<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                  def: ty::AdtDef<'tcx>,
+                                  def: &'tcx ty::AdtDef,
                                   substs: &Substs<'tcx>)
                                   -> bool {
     if def.variants.len() == 2 {
@@ -428,7 +428,7 @@ fn is_repr_nullable_ptr<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
     /// Check if the given type is "ffi-safe" (has a stable, well-defined
     /// representation which can be exported to C code).
-    fn check_type_for_ffi(&self, cache: &mut FnvHashSet<Ty<'tcx>>, ty: Ty<'tcx>) -> FfiResult {
+    fn check_type_for_ffi(&self, cache: &mut FxHashSet<Ty<'tcx>>, ty: Ty<'tcx>) -> FfiResult {
         use self::FfiResult::*;
         let cx = self.cx.tcx;
 
@@ -572,7 +572,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
                            consider using a raw pointer instead")
             }
 
-            ty::TyTrait(..) => {
+            ty::TyDynamic(..) => {
                 FfiUnsafe("found Rust trait type in foreign module, \
                            consider using a raw pointer instead")
             }
@@ -603,8 +603,8 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
                 }
 
                 let sig = cx.erase_late_bound_regions(&bare_fn.sig);
-                if !sig.output.is_nil() {
-                    let r = self.check_type_for_ffi(cache, sig.output);
+                if !sig.output().is_nil() {
+                    let r = self.check_type_for_ffi(cache, sig.output());
                     match r {
                         FfiSafe => {}
                         _ => {
@@ -612,7 +612,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
                         }
                     }
                 }
-                for arg in sig.inputs {
+                for arg in sig.inputs() {
                     let r = self.check_type_for_ffi(cache, arg);
                     match r {
                         FfiSafe => {}
@@ -639,7 +639,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
         // any generic types right now:
         let ty = self.cx.tcx.normalize_associated_type(&ty);
 
-        match self.check_type_for_ffi(&mut FnvHashSet(), ty) {
+        match self.check_type_for_ffi(&mut FxHashSet(), ty) {
             FfiResult::FfiSafe => {}
             FfiResult::FfiUnsafe(s) => {
                 self.cx.span_lint(IMPROPER_CTYPES, sp, s);
@@ -675,16 +675,15 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
 
     fn check_foreign_fn(&mut self, id: ast::NodeId, decl: &hir::FnDecl) {
         let def_id = self.cx.tcx.map.local_def_id(id);
-        let scheme = self.cx.tcx.lookup_item_type(def_id);
-        let sig = scheme.ty.fn_sig();
+        let sig = self.cx.tcx.item_type(def_id).fn_sig();
         let sig = self.cx.tcx.erase_late_bound_regions(&sig);
 
-        for (&input_ty, input_hir) in sig.inputs.iter().zip(&decl.inputs) {
-            self.check_type_for_ffi_and_report_errors(input_hir.ty.span, &input_ty);
+        for (input_ty, input_hir) in sig.inputs().iter().zip(&decl.inputs) {
+            self.check_type_for_ffi_and_report_errors(input_hir.ty.span, input_ty);
         }
 
         if let hir::Return(ref ret_hir) = decl.output {
-            let ret_ty = sig.output;
+            let ret_ty = sig.output();
             if !ret_ty.is_nil() {
                 self.check_type_for_ffi_and_report_errors(ret_hir.span, ret_ty);
             }
@@ -693,8 +692,8 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
 
     fn check_foreign_static(&mut self, id: ast::NodeId, span: Span) {
         let def_id = self.cx.tcx.map.local_def_id(id);
-        let scheme = self.cx.tcx.lookup_item_type(def_id);
-        self.check_type_for_ffi_and_report_errors(span, scheme.ty);
+        let ty = self.cx.tcx.item_type(def_id);
+        self.check_type_for_ffi_and_report_errors(span, ty);
     }
 }
 
@@ -707,7 +706,7 @@ impl LintPass for ImproperCTypes {
     }
 }
 
-impl LateLintPass for ImproperCTypes {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ImproperCTypes {
     fn check_item(&mut self, cx: &LateContext, it: &hir::Item) {
         let mut vis = ImproperCTypesVisitor { cx: cx };
         if let hir::ItemForeignMod(ref nmod) = it.node {
@@ -735,22 +734,24 @@ impl LintPass for VariantSizeDifferences {
     }
 }
 
-impl LateLintPass for VariantSizeDifferences {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for VariantSizeDifferences {
     fn check_item(&mut self, cx: &LateContext, it: &hir::Item) {
         if let hir::ItemEnum(ref enum_definition, ref gens) = it.node {
             if gens.ty_params.is_empty() {
                 // sizes only make sense for non-generic types
-                let t = cx.tcx.tables().node_id_to_type(it.id);
+                let t = cx.tcx.item_type(cx.tcx.map.local_def_id(it.id));
                 let layout = cx.tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
                     let ty = cx.tcx.erase_regions(&t);
-                    ty.layout(&infcx)
-                        .unwrap_or_else(|e| bug!("failed to get layout for `{}`: {}", t, e))
+                    ty.layout(&infcx).unwrap_or_else(|e| {
+                        bug!("failed to get layout for `{}`: {}", t, e)
+                    })
                 });
 
                 if let Layout::General { ref variants, ref size, discr, .. } = *layout {
                     let discr_size = Primitive::Int(discr).size(&cx.tcx.data_layout).bytes();
 
-                    debug!("enum `{}` is {} bytes large", t, size.bytes());
+                    debug!("enum `{}` is {} bytes large with layout:\n{:#?}",
+                      t, size.bytes(), layout);
 
                     let (largest, slargest, largest_index) = enum_definition.variants
                         .iter()

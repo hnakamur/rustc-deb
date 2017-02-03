@@ -22,10 +22,8 @@ use self::source_loc::InternalDebugLocation::{self, UnknownLocation};
 
 use llvm;
 use llvm::{ModuleRef, ContextRef, ValueRef};
-use llvm::debuginfo::{DIFile, DIType, DIScope, DIBuilderRef, DISubprogram, DIArray,
-                      FlagPrototyped};
+use llvm::debuginfo::{DIFile, DIType, DIScope, DIBuilderRef, DISubprogram, DIArray, DIFlags};
 use rustc::hir::def_id::DefId;
-use rustc::hir::map::DefPathData;
 use rustc::ty::subst::Substs;
 
 use abi::Abi;
@@ -34,7 +32,7 @@ use monomorphize::{self, Instance};
 use rustc::ty::{self, Ty};
 use rustc::mir;
 use session::config::{self, FullDebugInfo, LimitedDebugInfo, NoDebugInfo};
-use util::nodemap::{DefIdMap, FnvHashMap, FnvHashSet};
+use util::nodemap::{DefIdMap, FxHashMap, FxHashSet};
 
 use libc::c_uint;
 use std::cell::{Cell, RefCell};
@@ -68,15 +66,15 @@ pub struct CrateDebugContext<'tcx> {
     llcontext: ContextRef,
     builder: DIBuilderRef,
     current_debug_location: Cell<InternalDebugLocation>,
-    created_files: RefCell<FnvHashMap<String, DIFile>>,
-    created_enum_disr_types: RefCell<FnvHashMap<(DefId, layout::Integer), DIType>>,
+    created_files: RefCell<FxHashMap<String, DIFile>>,
+    created_enum_disr_types: RefCell<FxHashMap<(DefId, layout::Integer), DIType>>,
 
     type_map: RefCell<TypeMap<'tcx>>,
     namespace_map: RefCell<DefIdMap<DIScope>>,
 
     // This collection is used to assert that composite types (structs, enums,
     // ...) have their members only set once:
-    composite_types_completed: RefCell<FnvHashSet<DIType>>,
+    composite_types_completed: RefCell<FxHashSet<DIType>>,
 }
 
 impl<'tcx> CrateDebugContext<'tcx> {
@@ -89,11 +87,11 @@ impl<'tcx> CrateDebugContext<'tcx> {
             llcontext: llcontext,
             builder: builder,
             current_debug_location: Cell::new(InternalDebugLocation::UnknownLocation),
-            created_files: RefCell::new(FnvHashMap()),
-            created_enum_disr_types: RefCell::new(FnvHashMap()),
+            created_files: RefCell::new(FxHashMap()),
+            created_enum_disr_types: RefCell::new(FxHashMap()),
             type_map: RefCell::new(TypeMap::new()),
             namespace_map: RefCell::new(DefIdMap()),
-            composite_types_completed: RefCell::new(FnvHashSet()),
+            composite_types_completed: RefCell::new(FxHashSet()),
         };
     }
 }
@@ -248,21 +246,19 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
     };
 
     // Find the enclosing function, in case this is a closure.
-    let mut fn_def_id = instance.def;
-    let mut def_key = cx.tcx().def_key(fn_def_id);
+    let def_key = cx.tcx().def_key(instance.def);
     let mut name = def_key.disambiguated_data.data.to_string();
     let name_len = name.len();
-    while def_key.disambiguated_data.data == DefPathData::ClosureExpr {
-        fn_def_id.index = def_key.parent.expect("closure without a parent?");
-        def_key = cx.tcx().def_key(fn_def_id);
-    }
+
+    let fn_def_id = cx.tcx().closure_base_def_id(instance.def);
 
     // Get_template_parameters() will append a `<...>` clause to the function
     // name if necessary.
-    let generics = cx.tcx().lookup_generics(fn_def_id);
+    let generics = cx.tcx().item_generics(fn_def_id);
+    let substs = instance.substs.truncate_to(cx.tcx(), generics);
     let template_parameters = get_template_parameters(cx,
                                                       &generics,
-                                                      instance.substs,
+                                                      substs,
                                                       file_metadata,
                                                       &mut name);
 
@@ -289,7 +285,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             is_local_to_unit,
             true,
             scope_line as c_uint,
-            FlagPrototyped as c_uint,
+            DIFlags::FlagPrototyped,
             cx.sess().opts.optimize != config::OptLevel::No,
             llfn,
             template_parameters,
@@ -312,18 +308,18 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             return create_DIArray(DIB(cx), &[]);
         }
 
-        let mut signature = Vec::with_capacity(sig.inputs.len() + 1);
+        let mut signature = Vec::with_capacity(sig.inputs().len() + 1);
 
         // Return type -- llvm::DIBuilder wants this at index 0
-        signature.push(match sig.output.sty {
+        signature.push(match sig.output().sty {
             ty::TyTuple(ref tys) if tys.is_empty() => ptr::null_mut(),
-            _ => type_metadata(cx, sig.output, syntax_pos::DUMMY_SP)
+            _ => type_metadata(cx, sig.output(), syntax_pos::DUMMY_SP)
         });
 
         let inputs = if abi == Abi::RustCall {
-            &sig.inputs[..sig.inputs.len()-1]
+            &sig.inputs()[..sig.inputs().len() - 1]
         } else {
-            &sig.inputs[..]
+            sig.inputs()
         };
 
         // Arguments types
@@ -331,8 +327,8 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             signature.push(type_metadata(cx, argument_type, syntax_pos::DUMMY_SP));
         }
 
-        if abi == Abi::RustCall && !sig.inputs.is_empty() {
-            if let ty::TyTuple(args) = sig.inputs[sig.inputs.len() - 1].sty {
+        if abi == Abi::RustCall && !sig.inputs().is_empty() {
+            if let ty::TyTuple(args) = sig.inputs()[sig.inputs().len() - 1].sty {
                 for &argument_type in args {
                     signature.push(type_metadata(cx, argument_type, syntax_pos::DUMMY_SP));
                 }
@@ -397,7 +393,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                                           generics: &ty::Generics<'tcx>)
                                           -> Vec<ast::Name> {
         let mut names = generics.parent.map_or(vec![], |def_id| {
-            get_type_parameter_names(cx, cx.tcx().lookup_generics(def_id))
+            get_type_parameter_names(cx, cx.tcx().item_generics(def_id))
         });
         names.extend(generics.types.iter().map(|param| param.name));
         names
@@ -412,7 +408,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
         let self_type = cx.tcx().impl_of_method(instance.def).and_then(|impl_def_id| {
             // If the method does *not* belong to a trait, proceed
             if cx.tcx().trait_id_of_impl(impl_def_id).is_none() {
-                let impl_self_ty = cx.tcx().lookup_item_type(impl_def_id).ty;
+                let impl_self_ty = cx.tcx().item_type(impl_def_id);
                 let impl_self_ty = cx.tcx().erase_regions(&impl_self_ty);
                 let impl_self_ty = monomorphize::apply_param_substs(cx.shared(),
                                                                     instance.substs,
@@ -466,6 +462,7 @@ pub fn declare_local<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         LocalVariable    |
         CapturedVariable => (0, DW_TAG_auto_variable)
     };
+    let align = ::type_of::align_of(cx, variable_type);
 
     let name = CString::new(variable_name.as_str().as_bytes()).unwrap();
     match (variable_access, &[][..]) {
@@ -481,8 +478,10 @@ pub fn declare_local<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                     loc.line as c_uint,
                     type_metadata,
                     cx.sess().opts.optimize != config::OptLevel::No,
-                    0,
-                    argument_index)
+                    DIFlags::FlagZero,
+                    argument_index,
+                    align as u64,
+                )
             };
             source_loc::set_debug_location(cx, None,
                 InternalDebugLocation::new(scope_metadata, loc.line, loc.col.to_usize()));

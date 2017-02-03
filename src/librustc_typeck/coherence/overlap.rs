@@ -14,11 +14,11 @@
 
 use hir::def_id::DefId;
 use rustc::traits::{self, Reveal};
-use rustc::ty::{self, TyCtxt};
+use rustc::ty::{self, TyCtxt, TypeFoldable};
 use syntax::ast;
 use rustc::dep_graph::DepNode;
 use rustc::hir;
-use rustc::hir::intravisit;
+use rustc::hir::itemlikevisit::ItemLikeVisitor;
 use util::nodemap::DefIdMap;
 use lint;
 
@@ -30,7 +30,7 @@ pub fn check<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
 
     // this secondary walk specifically checks for some other cases,
     // like defaulted traits, for which additional overlap rules exist
-    tcx.visit_all_items_in_krate(DepNode::CoherenceOverlapCheckSpecial, &mut overlap);
+    tcx.visit_all_item_likes_in_krate(DepNode::CoherenceOverlapCheckSpecial, &mut overlap);
 }
 
 struct OverlapChecker<'cx, 'tcx: 'cx> {
@@ -48,25 +48,23 @@ impl<'cx, 'tcx> OverlapChecker<'cx, 'tcx> {
             Value,
         }
 
-        fn name_and_namespace<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                        def_id: DefId)
-                                        -> (ast::Name, Namespace) {
-            let item = tcx.impl_or_trait_item(def_id);
-            (item.name(),
-             match item {
-                 ty::TypeTraitItem(..) => Namespace::Type,
-                 ty::ConstTraitItem(..) => Namespace::Value,
-                 ty::MethodTraitItem(..) => Namespace::Value,
-             })
-        }
+        let name_and_namespace = |def_id| {
+            let item = self.tcx.associated_item(def_id);
+            (item.name, match item.kind {
+                ty::AssociatedKind::Type => Namespace::Type,
+                ty::AssociatedKind::Const |
+                ty::AssociatedKind::Method => Namespace::Value,
+            })
+        };
 
-        let impl_items = self.tcx.impl_or_trait_item_def_ids.borrow();
+        let impl_items1 = self.tcx.associated_item_def_ids(impl1);
+        let impl_items2 = self.tcx.associated_item_def_ids(impl2);
 
-        for &item1 in &impl_items[&impl1][..] {
-            let (name, namespace) = name_and_namespace(self.tcx, item1);
+        for &item1 in &impl_items1[..] {
+            let (name, namespace) = name_and_namespace(item1);
 
-            for &item2 in &impl_items[&impl2][..] {
-                if (name, namespace) == name_and_namespace(self.tcx, item2) {
+            for &item2 in &impl_items2[..] {
+                if (name, namespace) == name_and_namespace(item2) {
                     let msg = format!("duplicate definitions with name `{}`", name);
                     let node_id = self.tcx.map.as_local_node_id(item1).unwrap();
                     self.tcx.sess.add_lint(lint::builtin::OVERLAPPING_INHERENT_IMPLS,
@@ -99,7 +97,7 @@ impl<'cx, 'tcx> OverlapChecker<'cx, 'tcx> {
     }
 }
 
-impl<'cx, 'tcx, 'v> intravisit::Visitor<'v> for OverlapChecker<'cx, 'tcx> {
+impl<'cx, 'tcx, 'v> ItemLikeVisitor<'v> for OverlapChecker<'cx, 'tcx> {
     fn visit_item(&mut self, item: &'v hir::Item) {
         match item.node {
             hir::ItemEnum(..) |
@@ -135,6 +133,12 @@ impl<'cx, 'tcx, 'v> intravisit::Visitor<'v> for OverlapChecker<'cx, 'tcx> {
                 let impl_def_id = self.tcx.map.local_def_id(item.id);
                 let trait_ref = self.tcx.impl_trait_ref(impl_def_id).unwrap();
                 let trait_def_id = trait_ref.def_id;
+
+                if trait_ref.references_error() {
+                    debug!("coherence: skipping impl {:?} with error {:?}",
+                           impl_def_id, trait_ref);
+                    return
+                }
 
                 let _task =
                     self.tcx.dep_graph.in_task(DepNode::CoherenceOverlapCheck(trait_def_id));
@@ -174,18 +178,17 @@ impl<'cx, 'tcx, 'v> intravisit::Visitor<'v> for OverlapChecker<'cx, 'tcx> {
                 }
 
                 // check for overlap with the automatic `impl Trait for Trait`
-                if let ty::TyTrait(ref data) = trait_ref.self_ty().sty {
+                if let ty::TyDynamic(ref data, ..) = trait_ref.self_ty().sty {
                     // This is something like impl Trait1 for Trait2. Illegal
                     // if Trait1 is a supertrait of Trait2 or Trait2 is not object safe.
 
-                    if !self.tcx.is_object_safe(data.principal.def_id()) {
-                        // This is an error, but it will be
-                        // reported by wfcheck.  Ignore it
-                        // here. This is tested by
-                        // `coherence-impl-trait-for-trait-object-safe.rs`.
+                    if data.principal().map_or(true, |p| !self.tcx.is_object_safe(p.def_id())) {
+                        // This is an error, but it will be reported by wfcheck.  Ignore it here.
+                        // This is tested by `coherence-impl-trait-for-trait-object-safe.rs`.
                     } else {
                         let mut supertrait_def_ids =
-                            traits::supertrait_def_ids(self.tcx, data.principal.def_id());
+                            traits::supertrait_def_ids(self.tcx,
+                                                       data.principal().unwrap().def_id());
                         if supertrait_def_ids.any(|d| d == trait_def_id) {
                             span_err!(self.tcx.sess,
                                       item.span,
@@ -200,5 +203,8 @@ impl<'cx, 'tcx, 'v> intravisit::Visitor<'v> for OverlapChecker<'cx, 'tcx> {
             }
             _ => {}
         }
+    }
+
+    fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem) {
     }
 }

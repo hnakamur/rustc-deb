@@ -145,6 +145,7 @@ supported_targets! {
     ("arm-unknown-linux-gnueabihf", arm_unknown_linux_gnueabihf),
     ("arm-unknown-linux-musleabi", arm_unknown_linux_musleabi),
     ("arm-unknown-linux-musleabihf", arm_unknown_linux_musleabihf),
+    ("armv5te-unknown-linux-gnueabi", armv5te_unknown_linux_gnueabi),
     ("armv7-unknown-linux-gnueabihf", armv7_unknown_linux_gnueabihf),
     ("armv7-unknown-linux-musleabihf", armv7_unknown_linux_musleabihf),
     ("aarch64-unknown-linux-gnu", aarch64_unknown_linux_gnu),
@@ -167,7 +168,10 @@ supported_targets! {
     ("x86_64-unknown-dragonfly", x86_64_unknown_dragonfly),
 
     ("x86_64-unknown-bitrig", x86_64_unknown_bitrig),
+
+    ("i686-unknown-openbsd", i686_unknown_openbsd),
     ("x86_64-unknown-openbsd", x86_64_unknown_openbsd),
+
     ("x86_64-unknown-netbsd", x86_64_unknown_netbsd),
     ("x86_64-rumprun-netbsd", x86_64_rumprun_netbsd),
 
@@ -298,6 +302,9 @@ pub struct TargetOptions {
     pub staticlib_suffix: String,
     /// OS family to use for conditional compilation. Valid options: "unix", "windows".
     pub target_family: Option<String>,
+    /// Whether the target toolchain is like OpenBSD's.
+    /// Only useful for compiling against OpenBSD, for configuring abi when returning a struct.
+    pub is_like_openbsd: bool,
     /// Whether the target toolchain is like OSX's. Only useful for compiling against iOS/OS X, in
     /// particular running dsymutil and some other stuff like `-dead_strip`. Defaults to false.
     pub is_like_osx: bool,
@@ -358,6 +365,11 @@ pub struct TargetOptions {
     // will 'just work'.
     pub obj_is_bitcode: bool,
 
+    // LLVM can't produce object files for this target. Instead, we'll make LLVM
+    // emit assembly and then use `gcc` to turn that assembly into an object
+    // file
+    pub no_integrated_as: bool,
+
     /// Don't use this field; instead use the `.max_atomic_width()` method.
     pub max_atomic_width: Option<u64>,
 
@@ -367,6 +379,9 @@ pub struct TargetOptions {
     /// A blacklist of ABIs unsupported by the current target. Note that generic
     /// ABIs are considered to be supported on all platforms and cannot be blacklisted.
     pub abi_blacklist: Vec<Abi>,
+
+    /// Whether or not the CRT is statically linked by default.
+    pub crt_static_default: bool,
 }
 
 impl Default for TargetOptions {
@@ -394,6 +409,7 @@ impl Default for TargetOptions {
             staticlib_prefix: "lib".to_string(),
             staticlib_suffix: ".a".to_string(),
             target_family: None,
+            is_like_openbsd: false,
             is_like_osx: false,
             is_like_solaris: false,
             is_like_windows: false,
@@ -415,9 +431,11 @@ impl Default for TargetOptions {
             allow_asm: true,
             has_elf_tls: false,
             obj_is_bitcode: false,
+            no_integrated_as: false,
             max_atomic_width: None,
             panic_strategy: PanicStrategy::Unwind,
             abi_blacklist: vec![],
+            crt_static_default: false,
         }
     }
 }
@@ -558,6 +576,7 @@ impl Target {
         key!(staticlib_prefix);
         key!(staticlib_suffix);
         key!(target_family, optional);
+        key!(is_like_openbsd, bool);
         key!(is_like_osx, bool);
         key!(is_like_solaris, bool);
         key!(is_like_windows, bool);
@@ -575,8 +594,10 @@ impl Target {
         key!(exe_allocation_crate);
         key!(has_elf_tls, bool);
         key!(obj_is_bitcode, bool);
+        key!(no_integrated_as, bool);
         key!(max_atomic_width, Option<u64>);
         try!(key!(panic_strategy, PanicStrategy));
+        key!(crt_static_default, bool);
 
         if let Some(array) = obj.find("abi-blacklist").and_then(Json::as_array) {
             for name in array.iter().filter_map(|abi| abi.as_string()) {
@@ -717,6 +738,7 @@ impl ToJson for Target {
         target_option_val!(staticlib_prefix);
         target_option_val!(staticlib_suffix);
         target_option_val!(target_family);
+        target_option_val!(is_like_openbsd);
         target_option_val!(is_like_osx);
         target_option_val!(is_like_solaris);
         target_option_val!(is_like_windows);
@@ -734,8 +756,10 @@ impl ToJson for Target {
         target_option_val!(exe_allocation_crate);
         target_option_val!(has_elf_tls);
         target_option_val!(obj_is_bitcode);
+        target_option_val!(no_integrated_as);
         target_option_val!(max_atomic_width);
         target_option_val!(panic_strategy);
+        target_option_val!(crt_static_default);
 
         if default.abi_blacklist != self.options.abi_blacklist {
             d.insert("abi-blacklist".to_string(), self.options.abi_blacklist.iter()

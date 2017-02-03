@@ -17,11 +17,16 @@
 # Indicates whether the LLVM build is a Release or Debug build
 #optimize = true
 
+# Indicates whether an LLVM Release build should include debug info
+#release-debuginfo = false
+
 # Indicates whether the LLVM assertions are enabled or not
 #assertions = false
 
 # Indicates whether ccache is used when building LLVM
 #ccache = false
+# or alternatively ...
+#ccache = "/path/to/ccache"
 
 # If an external LLVM root is specified, we automatically check the version by
 # default to make sure it's within the range that we're expecting, but setting
@@ -79,8 +84,21 @@
 # Indicate whether submodules are managed and updated automatically.
 #submodules = true
 
-# The path to (or name of) the GDB executable to use
+# The path to (or name of) the GDB executable to use. This is only used for
+# executing the debuginfo test suite.
 #gdb = "gdb"
+
+# The node.js executable to use. Note that this is only used for the emscripten
+# target when running tests, otherwise this can be omitted.
+#nodejs = "node"
+
+# Python interpreter to use for various tasks throughout the build, notably
+# rustdoc tests, the lldb python interpreter, and some dist bits and pieces.
+# Note that Python 2 is currently required.
+#python = "python2.7"
+
+# Indicate whether the vendored sources are used for Rust dependencies or not
+#vendor = false
 
 # =============================================================================
 # Options for compiling Rust code itself
@@ -104,6 +122,11 @@
 
 # Whether or not line number debug information is emitted
 #debuginfo-lines = false
+
+# Whether or not to only build debuginfo for the standard library if enabled.
+# If enabled, this will not compile the compiler with debuginfo, just the
+# standard library.
+#debuginfo-only-std = false
 
 # Whether or not jemalloc is built and enabled
 #use-jemalloc = true

@@ -8,10 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use rustc::hir::pat_util;
 use rustc::ty;
 use rustc::ty::adjustment;
-use util::nodemap::FnvHashMap;
+use util::nodemap::FxHashMap;
 use lint::{LateContext, EarlyContext, LintContext, LintArray};
 use lint::{LintPass, EarlyLintPass, LateLintPass};
 
@@ -19,8 +18,8 @@ use std::collections::hash_map::Entry::{Occupied, Vacant};
 
 use syntax::ast;
 use syntax::attr;
-use syntax::feature_gate::{KNOWN_ATTRIBUTES, AttributeType};
-use syntax::parse::token::keywords;
+use syntax::feature_gate::{BUILTIN_ATTRIBUTES, AttributeType};
+use syntax::symbol::keywords;
 use syntax::ptr::P;
 use syntax_pos::Span;
 
@@ -42,13 +41,13 @@ impl UnusedMut {
         // collect all mutable pattern and group their NodeIDs by their Identifier to
         // avoid false warnings in match arms with multiple patterns
 
-        let mut mutables = FnvHashMap();
+        let mut mutables = FxHashMap();
         for p in pats {
-            pat_util::pat_bindings(p, |mode, id, _, path1| {
+            p.each_binding(|mode, id, _, path1| {
                 let name = path1.node;
                 if let hir::BindByValue(hir::MutMutable) = mode {
                     if !name.as_str().starts_with("_") {
-                        match mutables.entry(name.0 as usize) {
+                        match mutables.entry(name) {
                             Vacant(entry) => {
                                 entry.insert(vec![id]);
                             }
@@ -78,7 +77,7 @@ impl LintPass for UnusedMut {
     }
 }
 
-impl LateLintPass for UnusedMut {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnusedMut {
     fn check_expr(&mut self, cx: &LateContext, e: &hir::Expr) {
         if let hir::ExprMatch(_, ref arms, _) = e.node {
             for a in arms {
@@ -99,7 +98,7 @@ impl LateLintPass for UnusedMut {
                 cx: &LateContext,
                 _: FnKind,
                 decl: &hir::FnDecl,
-                _: &hir::Block,
+                _: &hir::Expr,
                 _: Span,
                 _: ast::NodeId) {
         for a in &decl.inputs {
@@ -129,7 +128,7 @@ impl LintPass for UnusedResults {
     }
 }
 
-impl LateLintPass for UnusedResults {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnusedResults {
     fn check_stmt(&mut self, cx: &LateContext, s: &hir::Stmt) {
         let expr = match s.node {
             hir::StmtSemi(ref expr, _) => &**expr,
@@ -162,7 +161,7 @@ impl LateLintPass for UnusedResults {
                     // check for #[must_use="..."]
                     if let Some(s) = attr.value_str() {
                         msg.push_str(": ");
-                        msg.push_str(&s);
+                        msg.push_str(&s.as_str());
                     }
                     cx.span_lint(UNUSED_MUST_USE, sp, &msg);
                     return true;
@@ -188,7 +187,7 @@ impl LintPass for UnusedUnsafe {
     }
 }
 
-impl LateLintPass for UnusedUnsafe {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnusedUnsafe {
     fn check_expr(&mut self, cx: &LateContext, e: &hir::Expr) {
         if let hir::ExprBlock(ref blk) = e.node {
             // Don't warn about generated blocks, that'll just pollute the output.
@@ -215,10 +214,10 @@ impl LintPass for PathStatements {
     }
 }
 
-impl LateLintPass for PathStatements {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for PathStatements {
     fn check_stmt(&mut self, cx: &LateContext, s: &hir::Stmt) {
         if let hir::StmtSemi(ref expr, _) = s.node {
-            if let hir::ExprPath(..) = expr.node {
+            if let hir::ExprPath(_) = expr.node {
                 cx.span_lint(PATH_STATEMENTS, s.span, "path statement with no effect");
             }
         }
@@ -240,12 +239,12 @@ impl LintPass for UnusedAttributes {
     }
 }
 
-impl LateLintPass for UnusedAttributes {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnusedAttributes {
     fn check_attribute(&mut self, cx: &LateContext, attr: &ast::Attribute) {
         debug!("checking attribute: {:?}", attr);
 
         // Note that check_name() marks the attribute as used if it matches.
-        for &(ref name, ty, _) in KNOWN_ATTRIBUTES {
+        for &(ref name, ty, _) in BUILTIN_ATTRIBUTES {
             match ty {
                 AttributeType::Whitelisted if attr.check_name(name) => {
                     debug!("{:?} is Whitelisted", name);
@@ -267,17 +266,17 @@ impl LateLintPass for UnusedAttributes {
             debug!("Emitting warning for: {:?}", attr);
             cx.span_lint(UNUSED_ATTRIBUTES, attr.span, "unused attribute");
             // Is it a builtin attribute that must be used at the crate level?
-            let known_crate = KNOWN_ATTRIBUTES.iter()
+            let known_crate = BUILTIN_ATTRIBUTES.iter()
                 .find(|&&(name, ty, _)| attr.name() == name && ty == AttributeType::CrateLevel)
                 .is_some();
 
             // Has a plugin registered this attribute as one which must be used at
             // the crate level?
             let plugin_crate = plugin_attributes.iter()
-                .find(|&&(ref x, t)| &*attr.name() == x && AttributeType::CrateLevel == t)
+                .find(|&&(ref x, t)| attr.name() == &**x && AttributeType::CrateLevel == t)
                 .is_some();
             if known_crate || plugin_crate {
-                let msg = match attr.node.style {
+                let msg = match attr.style {
                     ast::AttrStyle::Outer => {
                         "crate-level attribute should be an inner attribute: add an exclamation \
                          mark: #![foo]"
@@ -406,11 +405,11 @@ impl LintPass for UnusedImportBraces {
     }
 }
 
-impl LateLintPass for UnusedImportBraces {
-    fn check_item(&mut self, cx: &LateContext, item: &hir::Item) {
-        if let hir::ItemUse(ref view_path) = item.node {
-            if let hir::ViewPathList(_, ref items) = view_path.node {
-                if items.len() == 1 && items[0].node.name != keywords::SelfValue.name() {
+impl EarlyLintPass for UnusedImportBraces {
+    fn check_item(&mut self, cx: &EarlyContext, item: &ast::Item) {
+        if let ast::ItemKind::Use(ref view_path) = item.node {
+            if let ast::ViewPathList(_, ref items) = view_path.node {
+                if items.len() == 1 && items[0].node.name.name != keywords::SelfValue.name() {
                     let msg = format!("braces around {} is unnecessary", items[0].node.name);
                     cx.span_lint(UNUSED_IMPORT_BRACES, item.span, &msg);
                 }
@@ -434,7 +433,7 @@ impl LintPass for UnusedAllocation {
     }
 }
 
-impl LateLintPass for UnusedAllocation {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnusedAllocation {
     fn check_expr(&mut self, cx: &LateContext, e: &hir::Expr) {
         match e.node {
             hir::ExprBox(_) => {}

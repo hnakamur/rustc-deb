@@ -14,8 +14,8 @@ use super::{SelectionContext, Obligation, ObligationCause};
 
 use hir::def_id::{DefId, LOCAL_CRATE};
 use ty::{self, Ty, TyCtxt};
-use infer::{InferCtxt, InferOk, TypeOrigin};
-use syntax_pos::DUMMY_SP;
+
+use infer::{InferCtxt, InferOk};
 
 #[derive(Copy, Clone)]
 struct InferIsLocal(bool);
@@ -55,8 +55,10 @@ fn overlap<'cx, 'gcx, 'tcx>(selcx: &mut SelectionContext<'cx, 'gcx, 'tcx>,
     debug!("overlap: b_impl_header={:?}", b_impl_header);
 
     // Do `a` and `b` unify? If not, no overlap.
-    match selcx.infcx().eq_impl_headers(true, TypeOrigin::Misc(DUMMY_SP), &a_impl_header,
-                                                                          &b_impl_header) {
+    match selcx.infcx().eq_impl_headers(true,
+                                        &ObligationCause::dummy(),
+                                        &a_impl_header,
+                                        &b_impl_header) {
         Ok(InferOk { obligations, .. }) => {
             // FIXME(#32730) propagate obligations
             assert!(obligations.is_empty());
@@ -223,14 +225,12 @@ fn ty_is_local(tcx: TyCtxt, ty: Ty, infer_is_local: InferIsLocal) -> bool {
 
 fn fundamental_ty(tcx: TyCtxt, ty: Ty) -> bool {
     match ty.sty {
-        ty::TyBox(..) | ty::TyRef(..) =>
-            true,
-        ty::TyAdt(def, _) =>
-            def.is_fundamental(),
-        ty::TyTrait(ref data) =>
-            tcx.has_attr(data.principal.def_id(), "fundamental"),
-        _ =>
-            false
+        ty::TyBox(..) | ty::TyRef(..) => true,
+        ty::TyAdt(def, _) => def.is_fundamental(),
+        ty::TyDynamic(ref data, ..) => {
+            data.principal().map_or(false, |p| tcx.has_attr(p.def_id(), "fundamental"))
+        }
+        _ => false
     }
 }
 
@@ -270,8 +270,8 @@ fn ty_is_local_constructor(tcx: TyCtxt, ty: Ty, infer_is_local: InferIsLocal)-> 
             krate == Some(LOCAL_CRATE)
         }
 
-        ty::TyTrait(ref tt) => {
-            tt.principal.def_id().is_local()
+        ty::TyDynamic(ref tt, ..) => {
+            tt.principal().map_or(false, |p| p.def_id().is_local())
         }
 
         ty::TyError => {

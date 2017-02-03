@@ -29,6 +29,7 @@ use step;
 pub struct Flags {
     pub verbose: bool,
     pub stage: Option<u32>,
+    pub keep_stage: Option<u32>,
     pub build: String,
     pub host: Vec<String>,
     pub target: Vec<String>,
@@ -49,6 +50,10 @@ pub enum Subcommand {
         paths: Vec<PathBuf>,
         test_args: Vec<String>,
     },
+    Bench {
+        paths: Vec<PathBuf>,
+        test_args: Vec<String>,
+    },
     Clean,
     Dist {
         install: bool,
@@ -64,6 +69,7 @@ impl Flags {
         opts.optmulti("", "host", "host targets to build", "HOST");
         opts.optmulti("", "target", "target targets to build", "TARGET");
         opts.optopt("", "stage", "stage to build", "N");
+        opts.optopt("", "keep-stage", "stage to keep without recompiling", "N");
         opts.optopt("", "src", "path to the root of the rust checkout", "DIR");
         opts.optopt("j", "jobs", "number of jobs to run in parallel", "JOBS");
         opts.optflag("h", "help", "print this help message");
@@ -104,7 +110,6 @@ Arguments:
     tests that should be compiled and run. For example:
 
         ./x.py test src/test/run-pass
-        ./x.py test src/test/run-pass/assert-*
         ./x.py test src/libstd --test-args hash_map
         ./x.py test src/libstd --stage 0
 
@@ -141,6 +146,7 @@ Arguments:
                    command == "dist" ||
                    command == "doc" ||
                    command == "test" ||
+                   command == "bench" ||
                    command == "clean"  {
                     println!("Available invocations:");
                     if args.iter().any(|a| a == "-v") {
@@ -163,6 +169,7 @@ println!("\
 Subcommands:
     build       Compile either the compiler or libraries
     test        Build and run some test suites
+    bench       Build and run some benchmarks
     doc         Build documentation
     clean       Clean out build directories
     dist        Build and/or install distribution artifacts
@@ -210,6 +217,14 @@ To learn more about a subcommand, run `./x.py <command> -h`
                     test_args: m.opt_strs("test-args"),
                 }
             }
+            "bench" => {
+                opts.optmulti("", "test-args", "extra arguments", "ARGS");
+                m = parse(&opts);
+                Subcommand::Bench {
+                    paths: remaining_as_path(&m),
+                    test_args: m.opt_strs("test-args"),
+                }
+            }
             "clean" => {
                 m = parse(&opts);
                 if m.free.len() > 0 {
@@ -225,6 +240,7 @@ To learn more about a subcommand, run `./x.py <command> -h`
                     install: m.opt_present("install"),
                 }
             }
+            "--help" => usage(0, &opts),
             cmd => {
                 println!("unknown command: {}", cmd);
                 usage(1, &opts);
@@ -243,6 +259,7 @@ To learn more about a subcommand, run `./x.py <command> -h`
         Flags {
             verbose: m.opt_present("v"),
             stage: m.opt_str("stage").map(|j| j.parse().unwrap()),
+            keep_stage: m.opt_str("keep-stage").map(|j| j.parse().unwrap()),
             build: m.opt_str("build").unwrap_or_else(|| {
                 env::var("BUILD").unwrap()
             }),
@@ -259,7 +276,8 @@ To learn more about a subcommand, run `./x.py <command> -h`
 impl Subcommand {
     pub fn test_args(&self) -> Vec<&str> {
         match *self {
-            Subcommand::Test { ref test_args, .. } => {
+            Subcommand::Test { ref test_args, .. } |
+            Subcommand::Bench { ref test_args, .. } => {
                 test_args.iter().flat_map(|s| s.split_whitespace()).collect()
             }
             _ => Vec::new(),

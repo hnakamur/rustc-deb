@@ -13,8 +13,9 @@
 use super::FnCtxt;
 use hir::def_id::DefId;
 use rustc::ty::{Ty, TypeFoldable, PreferMutLvalue};
+use rustc::infer::type_variable::TypeVariableOrigin;
 use syntax::ast;
-use syntax::parse::token;
+use syntax::symbol::Symbol;
 use rustc::hir;
 
 impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
@@ -75,8 +76,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         match BinOpCategory::from(op) {
             BinOpCategory::Shortcircuit => {
                 // && and || are a simple case.
+                let lhs_diverges = self.diverges.get();
                 self.demand_suptype(lhs_expr.span, tcx.mk_bool(), lhs_ty);
                 self.check_expr_coercable_to_type(rhs_expr, tcx.mk_bool());
+
+                // Depending on the LHS' value, the RHS can never execute.
+                self.diverges.set(lhs_diverges);
+
                 tcx.mk_bool()
             }
             _ => {
@@ -174,10 +180,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // using this variable as the expected type, which sometimes lets
         // us do better coercions than we would be able to do otherwise,
         // particularly for things like `String + &String`.
-        let rhs_ty_var = self.next_ty_var();
+        let rhs_ty_var = self.next_ty_var(TypeVariableOrigin::MiscVariable(rhs_expr.span));
 
         let return_ty = match self.lookup_op_method(expr, lhs_ty, vec![rhs_ty_var],
-                                                    token::intern(name), trait_def_id,
+                                                    Symbol::intern(name), trait_def_id,
                                                     lhs_expr) {
             Ok(return_ty) => return_ty,
             Err(()) => {
@@ -243,9 +249,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                            -> Ty<'tcx>
     {
         assert!(op.is_by_value());
-        match self.lookup_op_method(ex, operand_ty, vec![],
-                                    token::intern(mname), trait_did,
-                                    operand_expr) {
+        let mname = Symbol::intern(mname);
+        match self.lookup_op_method(ex, operand_ty, vec![], mname, trait_did, operand_expr) {
             Ok(t) => t,
             Err(()) => {
                 self.type_error_message(ex.span, |actual| {

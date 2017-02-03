@@ -21,12 +21,13 @@ use ext::base::*;
 use feature_gate::{self, Features};
 use fold;
 use fold::*;
-use parse::{ParseSess, PResult, lexer};
+use parse::{ParseSess, DirectoryOwnership, PResult, lexer};
 use parse::parser::Parser;
-use parse::token::{self, intern, keywords};
+use parse::token;
 use print::pprust;
 use ptr::P;
 use std_inject;
+use symbol::keywords;
 use tokenstream::{TokenTree, TokenStream};
 use util::small_vector::SmallVector;
 use visit::Visitor;
@@ -84,12 +85,12 @@ macro_rules! expansions {
                 }
             }
 
-            pub fn visit_with<V: Visitor>(&self, visitor: &mut V) {
+            pub fn visit_with<'a, V: Visitor<'a>>(&'a self, visitor: &mut V) {
                 match *self {
                     Expansion::OptExpr(Some(ref expr)) => visitor.visit_expr(expr),
                     Expansion::OptExpr(None) => {}
                     $($( Expansion::$kind(ref ast) => visitor.$visit(ast), )*)*
-                    $($( Expansion::$kind(ref ast) => for ast in ast.as_slice() {
+                    $($( Expansion::$kind(ref ast) => for ast in &ast[..] {
                         visitor.$visit_elt(ast);
                     }, )*)*
                 }
@@ -190,7 +191,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
     pub fn expand_crate(&mut self, mut krate: ast::Crate) -> ast::Crate {
         self.cx.crate_root = std_inject::injected_crate_name(&krate);
         let mut module = ModuleData {
-            mod_path: vec![token::str_to_ident(&self.cx.ecfg.crate_name)],
+            mod_path: vec![Ident::from_str(&self.cx.ecfg.crate_name)],
             directory: PathBuf::from(self.cx.codemap().span_to_filename(krate.span)),
         };
         module.directory.pop();
@@ -222,6 +223,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
         self.cx.current_expansion.depth = 0;
 
         let (expansion, mut invocations) = self.collect_invocations(expansion);
+        self.resolve_imports();
         invocations.reverse();
 
         let mut expansions = Vec::new();
@@ -230,9 +232,9 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
         loop {
             let invoc = if let Some(invoc) = invocations.pop() {
                 invoc
-            } else if undetermined_invocations.is_empty() {
-                break
             } else {
+                self.resolve_imports();
+                if undetermined_invocations.is_empty() { break }
                 invocations = mem::replace(&mut undetermined_invocations, Vec::new());
                 force = !mem::replace(&mut progress, false);
                 continue
@@ -245,7 +247,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                     self.cx.resolver.resolve_macro(scope, &mac.node.path, force)
                 }
                 InvocationKind::Attr { ref attr, .. } => {
-                    let ident = ast::Ident::with_empty_ctxt(intern(&*attr.name()));
+                    let ident = Ident::with_empty_ctxt(attr.name());
                     let path = ast::Path::from_ident(attr.span, ident);
                     self.cx.resolver.resolve_macro(scope, &path, force)
                 }
@@ -292,6 +294,14 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
         expansion.fold_with(&mut placeholder_expander)
     }
 
+    fn resolve_imports(&mut self) {
+        if self.monotonic {
+            let err_count = self.cx.parse_sess.span_diagnostic.err_count();
+            self.cx.resolver.resolve_imports();
+            self.cx.resolve_err_count += self.cx.parse_sess.span_diagnostic.err_count() - err_count;
+        }
+    }
+
     fn collect_invocations(&mut self, expansion: Expansion) -> (Expansion, Vec<Invocation>) {
         let result = {
             let mut collector = InvocationCollector {
@@ -332,7 +342,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
         };
 
         attr::mark_used(&attr);
-        let name = intern(&attr.name());
+        let name = attr.name();
         self.cx.bt_push(ExpnInfo {
             call_site: attr.span,
             callee: NameAndSpan {
@@ -344,12 +354,12 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
 
         match *ext {
             MultiModifier(ref mac) => {
-                let item = mac.expand(self.cx, attr.span, &attr.node.value, item);
+                let item = mac.expand(self.cx, attr.span, &attr.value, item);
                 kind.expect_from_annotatables(item)
             }
             MultiDecorator(ref mac) => {
                 let mut items = Vec::new();
-                mac.expand(self.cx, attr.span, &attr.node.value, &item,
+                mac.expand(self.cx, attr.span, &attr.value, &item,
                            &mut |item| items.push(item));
                 items.push(item);
                 kind.expect_from_annotatables(items)
@@ -390,12 +400,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                                           &self.cx.ecfg.features.unwrap());
         }
 
-        if path.segments.len() > 1 || path.global || !path.segments[0].parameters.is_empty() {
-            self.cx.span_err(path.span, "expected macro name without module separators");
-            return kind.dummy(span);
-        }
-
-        let extname = path.segments[0].identifier.name;
+        let extname = path.segments.last().unwrap().identifier.name;
         let ident = ident.unwrap_or(keywords::Invalid.ident());
         let marked_tts = mark_tts(&tts, mark);
         let opt_expanded = match *ext {
@@ -511,29 +516,31 @@ impl<'a> Parser<'a> {
                            -> PResult<'a, Expansion> {
         Ok(match kind {
             ExpansionKind::Items => {
-                let mut items = SmallVector::zero();
+                let mut items = SmallVector::new();
                 while let Some(item) = self.parse_item()? {
                     items.push(item);
                 }
                 Expansion::Items(items)
             }
             ExpansionKind::TraitItems => {
-                let mut items = SmallVector::zero();
+                let mut items = SmallVector::new();
                 while self.token != token::Eof {
                     items.push(self.parse_trait_item()?);
                 }
                 Expansion::TraitItems(items)
             }
             ExpansionKind::ImplItems => {
-                let mut items = SmallVector::zero();
+                let mut items = SmallVector::new();
                 while self.token != token::Eof {
                     items.push(self.parse_impl_item()?);
                 }
                 Expansion::ImplItems(items)
             }
             ExpansionKind::Stmts => {
-                let mut stmts = SmallVector::zero();
-                while self.token != token::Eof {
+                let mut stmts = SmallVector::new();
+                while self.token != token::Eof &&
+                      // won't make progress on a `}`
+                      self.token != token::CloseDelim(token::Brace) {
                     if let Some(stmt) = self.parse_full_stmt(macro_legacy_warnings)? {
                         stmts.push(stmt);
                     }
@@ -571,7 +578,7 @@ macro_rules! fully_configure {
     ($this:ident, $node:ident, $noop_fold:ident) => {
         match $noop_fold($node, &mut $this.cfg).pop() {
             Some(node) => node,
-            None => return SmallVector::zero(),
+            None => return SmallVector::new(),
         }
     }
 }
@@ -643,7 +650,7 @@ fn string_to_tts(text: String, parse_sess: &ParseSess) -> Vec<TokenTree> {
                             .new_filemap(String::from("<macro expansion>"), None, text);
 
     let lexer = lexer::StringReader::new(&parse_sess.span_diagnostic, filemap);
-    let mut parser = Parser::new(parse_sess, Box::new(lexer));
+    let mut parser = Parser::new(parse_sess, Box::new(lexer), None, false);
     panictry!(parser.parse_all_token_trees())
 }
 
@@ -687,7 +694,7 @@ impl<'a, 'b> Folder for InvocationCollector<'a, 'b> {
     fn fold_stmt(&mut self, stmt: ast::Stmt) -> SmallVector<ast::Stmt> {
         let stmt = match self.cfg.configure_stmt(stmt) {
             Some(stmt) => stmt,
-            None => return SmallVector::zero(),
+            None => return SmallVector::new(),
         };
 
         let (mac, style, attrs) = if let StmtKind::Mac(mac) = stmt.node {
@@ -715,9 +722,10 @@ impl<'a, 'b> Folder for InvocationCollector<'a, 'b> {
     }
 
     fn fold_block(&mut self, block: P<Block>) -> P<Block> {
-        let no_noninline_mod = mem::replace(&mut self.cx.current_expansion.no_noninline_mod, true);
+        let old_directory_ownership = self.cx.current_expansion.directory_ownership;
+        self.cx.current_expansion.directory_ownership = DirectoryOwnership::UnownedViaBlock;
         let result = noop_fold_block(block, self);
-        self.cx.current_expansion.no_noninline_mod = no_noninline_mod;
+        self.cx.current_expansion.directory_ownership = old_directory_ownership;
         result
     }
 
@@ -756,7 +764,7 @@ impl<'a, 'b> Folder for InvocationCollector<'a, 'b> {
                     return noop_fold_item(item, self);
                 }
 
-                let orig_no_noninline_mod = self.cx.current_expansion.no_noninline_mod;
+                let orig_directory_ownership = self.cx.current_expansion.directory_ownership;
                 let mut module = (*self.cx.current_expansion.module).clone();
                 module.mod_path.push(item.ident);
 
@@ -767,23 +775,28 @@ impl<'a, 'b> Folder for InvocationCollector<'a, 'b> {
 
                 if inline_module {
                     if let Some(path) = attr::first_attr_value_str_by_name(&item.attrs, "path") {
-                        self.cx.current_expansion.no_noninline_mod = false;
-                        module.directory.push(&*path);
+                        self.cx.current_expansion.directory_ownership = DirectoryOwnership::Owned;
+                        module.directory.push(&*path.as_str());
                     } else {
                         module.directory.push(&*item.ident.name.as_str());
                     }
                 } else {
-                    self.cx.current_expansion.no_noninline_mod = false;
-                    module.directory =
+                    let mut path =
                         PathBuf::from(self.cx.parse_sess.codemap().span_to_filename(inner));
-                    module.directory.pop();
+                    let directory_ownership = match path.file_name().unwrap().to_str() {
+                        Some("mod.rs") => DirectoryOwnership::Owned,
+                        _ => DirectoryOwnership::UnownedViaMod(false),
+                    };
+                    path.pop();
+                    module.directory = path;
+                    self.cx.current_expansion.directory_ownership = directory_ownership;
                 }
 
                 let orig_module =
                     mem::replace(&mut self.cx.current_expansion.module, Rc::new(module));
                 let result = noop_fold_item(item, self);
                 self.cx.current_expansion.module = orig_module;
-                self.cx.current_expansion.no_noninline_mod = orig_no_noninline_mod;
+                self.cx.current_expansion.directory_ownership = orig_directory_ownership;
                 return result;
             }
             // Ensure that test functions are accessible from the test harness.
@@ -910,7 +923,6 @@ impl<'feat> ExpansionConfig<'feat> {
         fn enable_allow_internal_unstable = allow_internal_unstable,
         fn enable_custom_derive = custom_derive,
         fn enable_pushpop_unsafe = pushpop_unsafe,
-        fn enable_proc_macro = proc_macro,
     }
 }
 

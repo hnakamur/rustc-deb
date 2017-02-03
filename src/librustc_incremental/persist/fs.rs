@@ -119,8 +119,8 @@ use rustc::hir::svh::Svh;
 use rustc::session::Session;
 use rustc::ty::TyCtxt;
 use rustc::util::fs as fs_util;
-use rustc_data_structures::flock;
-use rustc_data_structures::fnv::{FnvHashSet, FnvHashMap};
+use rustc_data_structures::{flock, base_n};
+use rustc_data_structures::fx::{FxHashSet, FxHashMap};
 
 use std::ffi::OsString;
 use std::fs as std_fs;
@@ -134,6 +134,12 @@ const LOCK_FILE_EXT: &'static str = ".lock";
 const DEP_GRAPH_FILENAME: &'static str = "dep-graph.bin";
 const WORK_PRODUCTS_FILENAME: &'static str = "work-products.bin";
 const METADATA_HASHES_FILENAME: &'static str = "metadata.bin";
+
+// We encode integers using the following base, so they are shorter than decimal
+// or hexadecimal numbers (we want short file and directory names). Since these
+// numbers will be used in file names, we choose an encoding that is not
+// case-sensitive (as opposed to base64, for example).
+const INT_ENCODE_BASE: u64 = 36;
 
 pub fn dep_graph_path(sess: &Session) -> PathBuf {
     in_incr_comp_dir_sess(sess, DEP_GRAPH_FILENAME)
@@ -195,7 +201,20 @@ pub fn prepare_session_directory(tcx: TyCtxt) -> Result<bool, ()> {
     debug!("crate-dir: {}", crate_dir.display());
     try!(create_dir(tcx.sess, &crate_dir, "crate"));
 
-    let mut source_directories_already_tried = FnvHashSet();
+    // Hack: canonicalize the path *after creating the directory*
+    // because, on windows, long paths can cause problems;
+    // canonicalization inserts this weird prefix that makes windows
+    // tolerate long paths.
+    let crate_dir = match crate_dir.canonicalize() {
+        Ok(v) => v,
+        Err(err) => {
+            tcx.sess.err(&format!("incremental compilation: error canonicalizing path `{}`: {}",
+                                  crate_dir.display(), err));
+            return Err(());
+        }
+    };
+
+    let mut source_directories_already_tried = FxHashSet();
 
     loop {
         // Generate a session directory of the form:
@@ -327,7 +346,7 @@ pub fn finalize_session_directory(sess: &Session, svh: Svh) {
     let mut new_sub_dir_name = String::from(&old_sub_dir_name[.. dash_indices[2] + 1]);
 
     // Append the svh
-    new_sub_dir_name.push_str(&encode_base_36(svh.as_u64()));
+    base_n::push_str(svh.as_u64(), INT_ENCODE_BASE, &mut new_sub_dir_name);
 
     // Create the full path
     let new_path = incr_comp_session_dir.parent().unwrap().join(new_sub_dir_name);
@@ -416,8 +435,8 @@ fn copy_files(target_dir: &Path,
     }
 
     if print_stats_on_success {
-        println!("incr. comp. session directory: {} files hard-linked", files_linked);
-        println!("incr. comp. session directory: {} files copied", files_copied);
+        println!("incremental: session directory: {} files hard-linked", files_linked);
+        println!("incremental: session directory: {} files copied", files_copied);
     }
 
     Ok(files_linked > 0 || files_copied == 0)
@@ -433,7 +452,8 @@ fn generate_session_dir_path(crate_dir: &Path) -> PathBuf {
 
     let directory_name = format!("s-{}-{}-working",
                                   timestamp,
-                                  encode_base_36(random_number as u64));
+                                  base_n::encode(random_number as u64,
+                                                 INT_ENCODE_BASE));
     debug!("generate_session_dir_path: directory_name = {}", directory_name);
     let directory_path = crate_dir.join(directory_name);
     debug!("generate_session_dir_path: directory_path = {}", directory_path.display());
@@ -490,7 +510,7 @@ fn delete_session_dir_lock_file(sess: &Session,
 /// Find the most recent published session directory that is not in the
 /// ignore-list.
 fn find_source_directory(crate_dir: &Path,
-                         source_directories_already_tried: &FnvHashSet<PathBuf>)
+                         source_directories_already_tried: &FxHashSet<PathBuf>)
                          -> Option<PathBuf> {
     let iter = crate_dir.read_dir()
                         .unwrap() // FIXME
@@ -500,7 +520,7 @@ fn find_source_directory(crate_dir: &Path,
 }
 
 fn find_source_directory_in_iter<I>(iter: I,
-                                    source_directories_already_tried: &FnvHashSet<PathBuf>)
+                                    source_directories_already_tried: &FxHashSet<PathBuf>)
                                     -> Option<PathBuf>
     where I: Iterator<Item=PathBuf>
 {
@@ -562,27 +582,11 @@ fn extract_timestamp_from_session_dir(directory_name: &str)
     string_to_timestamp(&directory_name[dash_indices[0]+1 .. dash_indices[1]])
 }
 
-const BASE_36: &'static [u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
-
-fn encode_base_36(mut n: u64) -> String {
-    let mut s = Vec::with_capacity(13);
-    loop {
-        s.push(BASE_36[(n % 36) as usize]);
-        n /= 36;
-
-        if n == 0 {
-            break;
-        }
-    }
-    s.reverse();
-    String::from_utf8(s).unwrap()
-}
-
 fn timestamp_to_string(timestamp: SystemTime) -> String {
     let duration = timestamp.duration_since(UNIX_EPOCH).unwrap();
     let micros = duration.as_secs() * 1_000_000 +
                 (duration.subsec_nanos() as u64) / 1000;
-    encode_base_36(micros)
+    base_n::encode(micros, INT_ENCODE_BASE)
 }
 
 fn string_to_timestamp(s: &str) -> Result<SystemTime, ()> {
@@ -600,7 +604,7 @@ fn string_to_timestamp(s: &str) -> Result<SystemTime, ()> {
 }
 
 fn crate_path_tcx(tcx: TyCtxt, cnum: CrateNum) -> PathBuf {
-    crate_path(tcx.sess, &tcx.crate_name(cnum), &tcx.crate_disambiguator(cnum))
+    crate_path(tcx.sess, &tcx.crate_name(cnum).as_str(), &tcx.crate_disambiguator(cnum).as_str())
 }
 
 /// Finds the session directory containing the correct metadata hashes file for
@@ -629,7 +633,7 @@ pub fn find_metadata_hashes_for(tcx: TyCtxt, cnum: CrateNum) -> Option<PathBuf> 
     };
 
     let target_svh = tcx.sess.cstore.crate_hash(cnum);
-    let target_svh = encode_base_36(target_svh.as_u64());
+    let target_svh = base_n::encode(target_svh.as_u64(), INT_ENCODE_BASE);
 
     let sub_dir = find_metadata_hashes_iter(&target_svh, dir_entries.filter_map(|e| {
         e.ok().map(|e| e.file_name().to_string_lossy().into_owned())
@@ -677,7 +681,9 @@ fn crate_path(sess: &Session,
     let mut hasher = DefaultHasher::new();
     crate_disambiguator.hash(&mut hasher);
 
-    let crate_name = format!("{}-{}", crate_name, encode_base_36(hasher.finish()));
+    let crate_name = format!("{}-{}",
+                             crate_name,
+                             base_n::encode(hasher.finish(), INT_ENCODE_BASE));
     incr_dir.join(crate_name)
 }
 
@@ -704,8 +710,8 @@ pub fn garbage_collect_session_directories(sess: &Session) -> io::Result<()> {
 
     // First do a pass over the crate directory, collecting lock files and
     // session directories
-    let mut session_directories = FnvHashSet();
-    let mut lock_files = FnvHashSet();
+    let mut session_directories = FxHashSet();
+    let mut lock_files = FxHashSet();
 
     for dir_entry in try!(crate_directory.read_dir()) {
         let dir_entry = match dir_entry {
@@ -731,7 +737,7 @@ pub fn garbage_collect_session_directories(sess: &Session) -> io::Result<()> {
     }
 
     // Now map from lock files to session directories
-    let lock_file_to_session_dir: FnvHashMap<String, Option<String>> =
+    let lock_file_to_session_dir: FxHashMap<String, Option<String>> =
         lock_files.into_iter()
                   .map(|lock_file_name| {
                         assert!(lock_file_name.ends_with(LOCK_FILE_EXT));
@@ -774,7 +780,7 @@ pub fn garbage_collect_session_directories(sess: &Session) -> io::Result<()> {
     }
 
     // Filter out `None` directories
-    let lock_file_to_session_dir: FnvHashMap<String, String> =
+    let lock_file_to_session_dir: FxHashMap<String, String> =
         lock_file_to_session_dir.into_iter()
                                 .filter_map(|(lock_file_name, directory_name)| {
                                     directory_name.map(|n| (lock_file_name, n))
@@ -898,7 +904,7 @@ pub fn garbage_collect_session_directories(sess: &Session) -> io::Result<()> {
 }
 
 fn all_except_most_recent(deletion_candidates: Vec<(SystemTime, PathBuf, Option<flock::Lock>)>)
-                          -> FnvHashMap<PathBuf, Option<flock::Lock>> {
+                          -> FxHashMap<PathBuf, Option<flock::Lock>> {
     let most_recent = deletion_candidates.iter()
                                          .map(|&(timestamp, ..)| timestamp)
                                          .max();
@@ -909,7 +915,7 @@ fn all_except_most_recent(deletion_candidates: Vec<(SystemTime, PathBuf, Option<
                            .map(|(_, path, lock)| (path, lock))
                            .collect()
     } else {
-        FnvHashMap()
+        FxHashMap()
     }
 }
 
@@ -946,19 +952,19 @@ fn test_all_except_most_recent() {
             (UNIX_EPOCH + Duration::new(5, 0), PathBuf::from("5"), None),
             (UNIX_EPOCH + Duration::new(3, 0), PathBuf::from("3"), None),
             (UNIX_EPOCH + Duration::new(2, 0), PathBuf::from("2"), None),
-        ]).keys().cloned().collect::<FnvHashSet<PathBuf>>(),
+        ]).keys().cloned().collect::<FxHashSet<PathBuf>>(),
         vec![
             PathBuf::from("1"),
             PathBuf::from("2"),
             PathBuf::from("3"),
             PathBuf::from("4"),
-        ].into_iter().collect::<FnvHashSet<PathBuf>>()
+        ].into_iter().collect::<FxHashSet<PathBuf>>()
     );
 
     assert_eq!(all_except_most_recent(
         vec![
-        ]).keys().cloned().collect::<FnvHashSet<PathBuf>>(),
-        FnvHashSet()
+        ]).keys().cloned().collect::<FxHashSet<PathBuf>>(),
+        FxHashSet()
     );
 }
 
@@ -973,7 +979,7 @@ fn test_timestamp_serialization() {
 
 #[test]
 fn test_find_source_directory_in_iter() {
-    let already_visited = FnvHashSet();
+    let already_visited = FxHashSet();
 
     // Find newest
     assert_eq!(find_source_directory_in_iter(
@@ -1048,22 +1054,4 @@ fn test_find_metadata_hashes_iter()
         ].into_iter()),
         None
     );
-}
-
-#[test]
-fn test_encode_base_36() {
-    fn test(n: u64) {
-        assert_eq!(Ok(n), u64::from_str_radix(&encode_base_36(n)[..], 36));
-    }
-
-    test(0);
-    test(1);
-    test(35);
-    test(36);
-    test(37);
-    test(u64::max_value());
-
-    for i in 0 .. 1_000 {
-        test(i * 983);
-    }
 }

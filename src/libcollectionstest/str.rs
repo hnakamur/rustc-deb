@@ -530,7 +530,7 @@ fn from_utf8_mostly_ascii() {
 
 #[test]
 fn test_is_utf16() {
-    use rustc_unicode::str::is_utf16;
+    use std_unicode::str::is_utf16;
 
     macro_rules! pos {
         ($($e:expr),*) => { { $(assert!(is_utf16($e));)* } }
@@ -767,6 +767,7 @@ fn test_iterator() {
         pos += 1;
     }
     assert_eq!(pos, v.len());
+    assert_eq!(s.chars().count(), v.len());
 }
 
 #[test]
@@ -812,6 +813,14 @@ fn test_iterator_clone() {
     let mut it = s.chars();
     it.next();
     assert!(it.clone().zip(it).all(|(x,y)| x == y));
+}
+
+#[test]
+fn test_iterator_last() {
+    let s = "ศไทย中华Việt Nam";
+    let mut it = s.chars();
+    it.next();
+    assert_eq!(it.last(), Some('m'));
 }
 
 #[test]
@@ -909,6 +918,14 @@ fn test_char_indices_revator() {
     }
     assert_eq!(pos, v.len());
     assert_eq!(pos, p.len());
+}
+
+#[test]
+fn test_char_indices_last() {
+    let s = "ศไทย中华Việt Nam";
+    let mut it = s.char_indices();
+    it.next();
+    assert_eq!(it.last(), Some((27, 'm')));
 }
 
 #[test]
@@ -1169,7 +1186,7 @@ fn test_rev_split_char_iterator_no_trailing() {
 
 #[test]
 fn test_utf16_code_units() {
-    use rustc_unicode::str::Utf16Encoder;
+    use std_unicode::str::Utf16Encoder;
     assert_eq!(Utf16Encoder::new(vec!['é', '\u{1F4A9}'].into_iter()).collect::<Vec<u16>>(),
                [0xE9, 0xD83D, 0xDCA9])
 }

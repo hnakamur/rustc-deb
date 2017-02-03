@@ -8,11 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// FIXME (#14132): Even this SVH computation still has implementation
-// artifacts: namely, the order of item declaration will affect the
-// hash computation, but for many kinds of items the order of
-// declaration should be irrelevant to the ABI.
-
 use self::SawExprComponent::*;
 use self::SawAbiComponent::*;
 use self::SawItemComponent::*;
@@ -23,10 +18,12 @@ use syntax::abi::Abi;
 use syntax::ast::{self, Name, NodeId};
 use syntax::attr;
 use syntax::parse::token;
+use syntax::symbol::{Symbol, InternedString};
 use syntax_pos::{Span, NO_EXPANSION, COMMAND_LINE_EXPN, BytePos};
+use syntax::tokenstream;
 use rustc::hir;
 use rustc::hir::*;
-use rustc::hir::def::{Def, PathResolution};
+use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
 use rustc::hir::intravisit as visit;
 use rustc::ty::TyCtxt;
@@ -35,7 +32,7 @@ use std::hash::Hash;
 
 use super::def_path_hash::DefPathHashes;
 use super::caching_codemap_view::CachingCodemapView;
-use super::hasher::IchHasher;
+use super::IchHasher;
 
 const IGNORED_ATTRIBUTES: &'static [&'static str] = &[
     "cfg",
@@ -55,6 +52,7 @@ pub struct StrictVersionHashVisitor<'a, 'hash: 'a, 'tcx: 'hash> {
     hash_spans: bool,
     codemap: &'a mut CachingCodemapView<'tcx>,
     overflow_checks_enabled: bool,
+    hash_bodies: bool,
 }
 
 impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
@@ -62,7 +60,8 @@ impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
                tcx: TyCtxt<'hash, 'tcx, 'tcx>,
                def_path_hashes: &'a mut DefPathHashes<'hash, 'tcx>,
                codemap: &'a mut CachingCodemapView<'tcx>,
-               hash_spans: bool)
+               hash_spans: bool,
+               hash_bodies: bool)
                -> Self {
         let check_overflow = tcx.sess.opts.debugging_opts.force_overflow_checks
             .unwrap_or(tcx.sess.opts.debug_assertions);
@@ -74,6 +73,7 @@ impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
             hash_spans: hash_spans,
             codemap: codemap,
             overflow_checks_enabled: check_overflow,
+            hash_bodies: hash_bodies,
         }
     }
 
@@ -173,8 +173,8 @@ enum SawAbiComponent<'a> {
 
     // FIXME (#14132): should we include (some function of)
     // ident.ctxt as well?
-    SawIdent(token::InternedString),
-    SawStructDef(token::InternedString),
+    SawIdent(InternedString),
+    SawStructDef(InternedString),
 
     SawLifetime,
     SawLifetimeDef(usize),
@@ -188,10 +188,10 @@ enum SawAbiComponent<'a> {
     SawImplItem(SawTraitOrImplItemComponent),
     SawStructField,
     SawVariant,
+    SawQPath,
     SawPath(bool),
     SawPathSegment,
     SawPathParameters,
-    SawPathListItem,
     SawBlock,
     SawPat(SawPatComponent),
     SawLocal,
@@ -199,6 +199,8 @@ enum SawAbiComponent<'a> {
     SawExpr(SawExprComponent<'a>),
     SawStmt,
     SawVis,
+    SawAssociatedItemKind(hir::AssociatedItemKind),
+    SawDefaultness(hir::Defaultness),
     SawWherePredicate,
     SawTyParamBound,
     SawPolyTraitRef,
@@ -234,11 +236,11 @@ enum SawAbiComponent<'a> {
 #[derive(Hash)]
 enum SawExprComponent<'a> {
 
-    SawExprLoop(Option<token::InternedString>),
-    SawExprField(token::InternedString),
+    SawExprLoop(Option<InternedString>),
+    SawExprField(InternedString),
     SawExprTupField(usize),
-    SawExprBreak(Option<token::InternedString>),
-    SawExprAgain(Option<token::InternedString>),
+    SawExprBreak(Option<InternedString>),
+    SawExprAgain(Option<InternedString>),
 
     SawExprBox,
     SawExprArray,
@@ -248,6 +250,8 @@ enum SawExprComponent<'a> {
     SawExprBinary(hir::BinOp_),
     SawExprUnary(hir::UnOp),
     SawExprLit(ast::LitKind),
+    SawExprLitStr(InternedString, ast::StrStyle),
+    SawExprLitFloat(InternedString, Option<ast::FloatTy>),
     SawExprCast,
     SawExprType,
     SawExprIf,
@@ -258,7 +262,7 @@ enum SawExprComponent<'a> {
     SawExprAssign,
     SawExprAssignOp(hir::BinOp_),
     SawExprIndex,
-    SawExprPath(Option<usize>),
+    SawExprPath,
     SawExprAddrOf(hir::Mutability),
     SawExprRet,
     SawExprInlineAsm(&'a hir::InlineAsm),
@@ -316,12 +320,12 @@ fn saw_expr<'a>(node: &'a Expr_,
         ExprUnary(op, _)         => {
             (SawExprUnary(op), unop_can_panic_at_runtime(op))
         }
-        ExprLit(ref lit)         => (SawExprLit(lit.node.clone()), false),
+        ExprLit(ref lit)         => (saw_lit(lit), false),
         ExprCast(..)             => (SawExprCast, false),
         ExprType(..)             => (SawExprType, false),
         ExprIf(..)               => (SawExprIf, false),
         ExprWhile(..)            => (SawExprWhile, false),
-        ExprLoop(_, id)          => (SawExprLoop(id.map(|id| id.node.as_str())), false),
+        ExprLoop(_, id, _)       => (SawExprLoop(id.map(|id| id.node.as_str())), false),
         ExprMatch(..)            => (SawExprMatch, false),
         ExprClosure(cc, _, _, _) => (SawExprClosure(cc), false),
         ExprBlock(..)            => (SawExprBlock, false),
@@ -332,10 +336,10 @@ fn saw_expr<'a>(node: &'a Expr_,
         ExprField(_, name)       => (SawExprField(name.node.as_str()), false),
         ExprTupField(_, id)      => (SawExprTupField(id.node), false),
         ExprIndex(..)            => (SawExprIndex, true),
-        ExprPath(ref qself, _)   => (SawExprPath(qself.as_ref().map(|q| q.position)), false),
+        ExprPath(_)              => (SawExprPath, false),
         ExprAddrOf(m, _)         => (SawExprAddrOf(m), false),
-        ExprBreak(id)            => (SawExprBreak(id.map(|id| id.node.as_str())), false),
-        ExprAgain(id)            => (SawExprAgain(id.map(|id| id.node.as_str())), false),
+        ExprBreak(label, _)      => (SawExprBreak(label.map(|l| l.name.as_str())), false),
+        ExprAgain(label)         => (SawExprAgain(label.map(|l| l.name.as_str())), false),
         ExprRet(..)              => (SawExprRet, false),
         ExprInlineAsm(ref a,..)  => (SawExprInlineAsm(a), false),
         ExprStruct(..)           => (SawExprStruct, false),
@@ -343,10 +347,19 @@ fn saw_expr<'a>(node: &'a Expr_,
     }
 }
 
+fn saw_lit(lit: &ast::Lit) -> SawExprComponent<'static> {
+    match lit.node {
+        ast::LitKind::Str(s, style) => SawExprLitStr(s.as_str(), style),
+        ast::LitKind::Float(s, ty) => SawExprLitFloat(s.as_str(), Some(ty)),
+        ast::LitKind::FloatUnsuffixed(s) => SawExprLitFloat(s.as_str(), None),
+        ref node @ _ => SawExprLit(node.clone()),
+    }
+}
+
 #[derive(Hash)]
 enum SawItemComponent {
     SawItemExternCrate,
-    SawItemUse,
+    SawItemUse(UseKind),
     SawItemStatic(Mutability),
     SawItemConst,
     SawItemFn(Unsafety, Constness, Abi),
@@ -364,7 +377,7 @@ enum SawItemComponent {
 fn saw_item(node: &Item_) -> SawItemComponent {
     match *node {
         ItemExternCrate(..) => SawItemExternCrate,
-        ItemUse(..) => SawItemUse,
+        ItemUse(_, kind) => SawItemUse(kind),
         ItemStatic(_, mutability, _) => SawItemStatic(mutability),
         ItemConst(..) =>SawItemConst,
         ItemFn(_, unsafety, constness, abi, _, _) => SawItemFn(unsafety, constness, abi),
@@ -401,7 +414,7 @@ fn saw_pat(node: &PatKind) -> SawPatComponent {
         PatKind::Binding(bindingmode, ..) => SawPatBinding(bindingmode),
         PatKind::Struct(..) => SawPatStruct,
         PatKind::TupleStruct(..) => SawPatTupleStruct,
-        PatKind::Path(..) => SawPatPath,
+        PatKind::Path(_) => SawPatPath,
         PatKind::Tuple(..) => SawPatTuple,
         PatKind::Box(..) => SawPatBox,
         PatKind::Ref(_, mutability) => SawPatRef(mutability),
@@ -437,7 +450,7 @@ fn saw_ty(node: &Ty_) -> SawTyComponent {
       TyBareFn(ref barefnty) => SawTyBareFn(barefnty.unsafety, barefnty.abi),
       TyNever => SawTyNever,
       TyTup(..) => SawTyTup,
-      TyPath(..) => SawTyPath,
+      TyPath(_) => SawTyPath,
       TyObjectSum(..) => SawTyObjectSum,
       TyPolyTraitRef(..) => SawTyPolyTraitRef,
       TyImplTrait(..) => SawTyImplTrait,
@@ -449,15 +462,16 @@ fn saw_ty(node: &Ty_) -> SawTyComponent {
 #[derive(Hash)]
 enum SawTraitOrImplItemComponent {
     SawTraitOrImplItemConst,
-    SawTraitOrImplItemMethod(Unsafety, Constness, Abi),
+    // The boolean signifies whether a body is present
+    SawTraitOrImplItemMethod(Unsafety, Constness, Abi, bool),
     SawTraitOrImplItemType
 }
 
 fn saw_trait_item(ti: &TraitItem_) -> SawTraitOrImplItemComponent {
     match *ti {
         ConstTraitItem(..) => SawTraitOrImplItemConst,
-        MethodTraitItem(ref sig, _) =>
-            SawTraitOrImplItemMethod(sig.unsafety, sig.constness, sig.abi),
+        MethodTraitItem(ref sig, ref body) =>
+            SawTraitOrImplItemMethod(sig.unsafety, sig.constness, sig.abi, body.is_some()),
         TypeTraitItem(..) => SawTraitOrImplItemType
     }
 }
@@ -466,7 +480,7 @@ fn saw_impl_item(ii: &ImplItemKind) -> SawTraitOrImplItemComponent {
     match *ii {
         ImplItemKind::Const(..) => SawTraitOrImplItemConst,
         ImplItemKind::Method(ref sig, _) =>
-            SawTraitOrImplItemMethod(sig.unsafety, sig.constness, sig.abi),
+            SawTraitOrImplItemMethod(sig.unsafety, sig.constness, sig.abi, true),
         ImplItemKind::Type(..) => SawTraitOrImplItemType
     }
 }
@@ -499,8 +513,12 @@ macro_rules! hash_span {
 }
 
 impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'hash, 'tcx> {
-    fn visit_nested_item(&mut self, _: ItemId) {
-        // Each item is hashed independently; ignore nested items.
+    fn nested_visit_map<'this>(&'this mut self) -> visit::NestedVisitorMap<'this, 'tcx> {
+        if self.hash_bodies {
+            visit::NestedVisitorMap::OnlyBodies(&self.tcx.map)
+        } else {
+            visit::NestedVisitorMap::None
+        }
     }
 
     fn visit_variant_data(&mut self,
@@ -601,9 +619,11 @@ impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'has
         visit::walk_item(self, i)
     }
 
-    fn visit_mod(&mut self, m: &'tcx Mod, _s: Span, n: NodeId) {
+    fn visit_mod(&mut self, m: &'tcx Mod, span: Span, n: NodeId) {
         debug!("visit_mod: st={:?}", self.st);
-        SawMod.hash(self.st); visit::walk_mod(self, m, n)
+        SawMod.hash(self.st);
+        hash_span!(self, span);
+        visit::walk_mod(self, m, n)
     }
 
     fn visit_ty(&mut self, t: &'tcx Ty) {
@@ -649,11 +669,22 @@ impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'has
         visit::walk_struct_field(self, s)
     }
 
+    fn visit_qpath(&mut self, qpath: &'tcx QPath, id: NodeId, span: Span) {
+        debug!("visit_qpath: st={:?}", self.st);
+        SawQPath.hash(self.st);
+        self.hash_discriminant(qpath);
+        visit::walk_qpath(self, qpath, id, span)
+    }
+
     fn visit_path(&mut self, path: &'tcx Path, _: ast::NodeId) {
         debug!("visit_path: st={:?}", self.st);
         SawPath(path.global).hash(self.st);
         hash_span!(self, path.span);
         visit::walk_path(self, path)
+    }
+
+    fn visit_def_mention(&mut self, def: Def) {
+        self.hash_def(def);
     }
 
     fn visit_block(&mut self, b: &'tcx Block) {
@@ -697,6 +728,18 @@ impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'has
         visit::walk_vis(self, v)
     }
 
+    fn visit_associated_item_kind(&mut self, kind: &'tcx AssociatedItemKind) {
+        debug!("visit_associated_item_kind: st={:?}", self.st);
+        SawAssociatedItemKind(*kind).hash(self.st);
+        visit::walk_associated_item_kind(self, kind);
+    }
+
+    fn visit_defaultness(&mut self, defaultness: &'tcx Defaultness) {
+        debug!("visit_associated_item_kind: st={:?}", self.st);
+        SawDefaultness(*defaultness).hash(self.st);
+        visit::walk_defaultness(self, defaultness);
+    }
+
     fn visit_where_predicate(&mut self, predicate: &'tcx WherePredicate) {
         debug!("visit_where_predicate: st={:?}", self.st);
         SawWherePredicate.hash(self.st);
@@ -719,14 +762,6 @@ impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'has
         SawPolyTraitRef.hash(self.st);
         m.hash(self.st);
         visit::walk_poly_trait_ref(self, t, m)
-    }
-
-    fn visit_path_list_item(&mut self, prefix: &'tcx Path, item: &'tcx PathListItem) {
-        debug!("visit_path_list_item: st={:?}", self.st);
-        SawPathListItem.hash(self.st);
-        self.hash_discriminant(&item.node);
-        hash_span!(self, item.span);
-        visit::walk_path_list_item(self, prefix, item)
     }
 
     fn visit_path_segment(&mut self, path_span: Span, path_segment: &'tcx PathSegment) {
@@ -759,9 +794,10 @@ impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'has
         debug!("visit_macro_def: st={:?}", self.st);
         SawMacroDef.hash(self.st);
         hash_attrs!(self, &macro_def.attrs);
+        for tt in &macro_def.body {
+            self.hash_token_tree(tt);
+        }
         visit::walk_macro_def(self, macro_def)
-        // FIXME(mw): We should hash the body of the macro too but we don't
-        //            have a stable way of doing so yet.
     }
 }
 
@@ -780,11 +816,6 @@ impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
         // solely on expr variant etc, we don't need to hash whether
         // or not an entry was present (we are already hashing what
         // variant it is above when we visit the HIR).
-
-        if let Some(def) = self.tcx.def_map.borrow().get(&id) {
-            debug!("hash_resolve: id={:?} def={:?} st={:?}", id, def, self.st);
-            self.hash_partial_def(def);
-        }
 
         if let Some(traits) = self.tcx.trait_map.get(&id) {
             debug!("hash_resolve: id={:?} traits={:?} st={:?}", id, traits, self.st);
@@ -805,11 +836,6 @@ impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
 
     fn hash_def_id(&mut self, def_id: DefId) {
         self.compute_def_id_hash(def_id).hash(self.st);
-    }
-
-    fn hash_partial_def(&mut self, def: &PathResolution) {
-        self.hash_def(def.base_def);
-        def.depth.hash(self.st);
     }
 
     fn hash_def(&mut self, def: Def) {
@@ -834,7 +860,8 @@ impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
             Def::Const(..) |
             Def::AssociatedConst(..) |
             Def::Local(..) |
-            Def::Upvar(..) => {
+            Def::Upvar(..) |
+            Def::Macro(..) => {
                 DefHash::SawDefId.hash(self.st);
                 self.hash_def_id(def.def_id());
             }
@@ -866,22 +893,16 @@ impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
 
         // ignoring span information, it doesn't matter here
         self.hash_discriminant(&meta_item.node);
+        meta_item.name.as_str().len().hash(self.st);
+        meta_item.name.as_str().hash(self.st);
+
         match meta_item.node {
-            ast::MetaItemKind::Word(ref s) => {
-                s.len().hash(self.st);
-                s.hash(self.st);
-            }
-            ast::MetaItemKind::NameValue(ref s, ref lit) => {
-                s.len().hash(self.st);
-                s.hash(self.st);
-                lit.node.hash(self.st);
-            }
-            ast::MetaItemKind::List(ref s, ref items) => {
-                s.len().hash(self.st);
-                s.hash(self.st);
+            ast::MetaItemKind::Word => {}
+            ast::MetaItemKind::NameValue(ref lit) => saw_lit(lit).hash(self.st),
+            ast::MetaItemKind::List(ref items) => {
                 // Sort subitems so the hash does not depend on their order
                 let indices = self.indices_sorted_by(&items, |p| {
-                    (p.name(), fnv::hash(&p.literal().map(|i| &i.node)))
+                    (p.name().map(Symbol::as_str), fnv::hash(&p.literal().map(saw_lit)))
                 });
                 items.len().hash(self.st);
                 for (index, &item_index) in indices.iter().enumerate() {
@@ -893,7 +914,7 @@ impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
                             self.hash_meta_item(meta_item);
                         }
                         ast::NestedMetaItemKind::Literal(ref lit) => {
-                            lit.node.hash(self.st);
+                            saw_lit(lit).hash(self.st);
                         }
                     }
                 }
@@ -906,11 +927,11 @@ impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
         let indices = self.indices_sorted_by(attributes, |attr| attr.name());
 
         for i in indices {
-            let attr = &attributes[i].node;
+            let attr = &attributes[i];
             if !attr.is_sugared_doc &&
-               !IGNORED_ATTRIBUTES.contains(&&*attr.value.name()) {
+               !IGNORED_ATTRIBUTES.contains(&&*attr.value.name().as_str()) {
                 SawAttribute(attr.style).hash(self.st);
-                self.hash_meta_item(&*attr.value);
+                self.hash_meta_item(&attr.value);
             }
         }
     }
@@ -929,5 +950,159 @@ impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
         if attr::contains_name(item_attrs, "rustc_inherit_overflow_checks") {
             self.overflow_checks_enabled = true;
         }
+    }
+
+    fn hash_token_tree(&mut self, tt: &tokenstream::TokenTree) {
+        self.hash_discriminant(tt);
+        match *tt {
+            tokenstream::TokenTree::Token(span, ref token) => {
+                hash_span!(self, span);
+                self.hash_token(token, span);
+            }
+            tokenstream::TokenTree::Delimited(span, ref delimited) => {
+                hash_span!(self, span);
+                let tokenstream::Delimited {
+                    ref delim,
+                    open_span,
+                    ref tts,
+                    close_span,
+                } = **delimited;
+
+                delim.hash(self.st);
+                hash_span!(self, open_span);
+                tts.len().hash(self.st);
+                for sub_tt in tts {
+                    self.hash_token_tree(sub_tt);
+                }
+                hash_span!(self, close_span);
+            }
+            tokenstream::TokenTree::Sequence(span, ref sequence_repetition) => {
+                hash_span!(self, span);
+                let tokenstream::SequenceRepetition {
+                    ref tts,
+                    ref separator,
+                    op,
+                    num_captures,
+                } = **sequence_repetition;
+
+                tts.len().hash(self.st);
+                for sub_tt in tts {
+                    self.hash_token_tree(sub_tt);
+                }
+                self.hash_discriminant(separator);
+                if let Some(ref separator) = *separator {
+                    self.hash_token(separator, span);
+                }
+                op.hash(self.st);
+                num_captures.hash(self.st);
+            }
+        }
+    }
+
+    fn hash_token(&mut self,
+                  token: &token::Token,
+                  error_reporting_span: Span) {
+        self.hash_discriminant(token);
+        match *token {
+            token::Token::Eq |
+            token::Token::Lt |
+            token::Token::Le |
+            token::Token::EqEq |
+            token::Token::Ne |
+            token::Token::Ge |
+            token::Token::Gt |
+            token::Token::AndAnd |
+            token::Token::OrOr |
+            token::Token::Not |
+            token::Token::Tilde |
+            token::Token::At |
+            token::Token::Dot |
+            token::Token::DotDot |
+            token::Token::DotDotDot |
+            token::Token::Comma |
+            token::Token::Semi |
+            token::Token::Colon |
+            token::Token::ModSep |
+            token::Token::RArrow |
+            token::Token::LArrow |
+            token::Token::FatArrow |
+            token::Token::Pound |
+            token::Token::Dollar |
+            token::Token::Question |
+            token::Token::Underscore |
+            token::Token::Whitespace |
+            token::Token::Comment |
+            token::Token::Eof => {}
+
+            token::Token::BinOp(bin_op_token) |
+            token::Token::BinOpEq(bin_op_token) => bin_op_token.hash(self.st),
+
+            token::Token::OpenDelim(delim_token) |
+            token::Token::CloseDelim(delim_token) => delim_token.hash(self.st),
+
+            token::Token::Literal(ref lit, ref opt_name) => {
+                self.hash_discriminant(lit);
+                match *lit {
+                    token::Lit::Byte(val) |
+                    token::Lit::Char(val) |
+                    token::Lit::Integer(val) |
+                    token::Lit::Float(val) |
+                    token::Lit::Str_(val) |
+                    token::Lit::ByteStr(val) => val.as_str().hash(self.st),
+                    token::Lit::StrRaw(val, n) |
+                    token::Lit::ByteStrRaw(val, n) => {
+                        val.as_str().hash(self.st);
+                        n.hash(self.st);
+                    }
+                };
+                opt_name.map(ast::Name::as_str).hash(self.st);
+            }
+
+            token::Token::Ident(ident) |
+            token::Token::Lifetime(ident) |
+            token::Token::SubstNt(ident) => ident.name.as_str().hash(self.st),
+            token::Token::MatchNt(ident1, ident2) => {
+                ident1.name.as_str().hash(self.st);
+                ident2.name.as_str().hash(self.st);
+            }
+
+            token::Token::Interpolated(ref non_terminal) => {
+                // FIXME(mw): This could be implemented properly. It's just a
+                //            lot of work, since we would need to hash the AST
+                //            in a stable way, in addition to the HIR.
+                //            Since this is hardly used anywhere, just emit a
+                //            warning for now.
+                if self.tcx.sess.opts.debugging_opts.incremental.is_some() {
+                    let msg = format!("Quasi-quoting might make incremental \
+                                       compilation very inefficient: {:?}",
+                                      non_terminal);
+                    self.tcx.sess.span_warn(error_reporting_span, &msg[..]);
+                }
+
+                non_terminal.hash(self.st);
+            }
+
+            token::Token::DocComment(val) |
+            token::Token::Shebang(val) => val.as_str().hash(self.st),
+        }
+    }
+
+    pub fn hash_crate_root_module(&mut self, krate: &'tcx Crate) {
+        let hir::Crate {
+            ref module,
+            ref attrs,
+            span,
+
+            // These fields are handled separately:
+            exported_macros: _,
+            items: _,
+            impl_items: _,
+            exprs: _,
+        } = *krate;
+
+        visit::Visitor::visit_mod(self, module, span, ast::CRATE_NODE_ID);
+        // Crate attributes are not copied over to the root `Mod`, so hash them
+        // explicitly here.
+        hash_attrs!(self, attrs);
     }
 }

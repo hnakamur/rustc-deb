@@ -11,8 +11,6 @@
 // no-prefer-dynamic
 
 #![crate_type = "proc-macro"]
-#![feature(proc_macro)]
-#![feature(proc_macro_lib)]
 
 extern crate proc_macro;
 
@@ -23,5 +21,5 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let input = input.to_string();
     assert!(input.contains("struct A;"));
     assert!(input.contains("#[derive(Debug, PartialEq, Eq, Copy, Clone)]"));
-    "#[derive(Debug, PartialEq, Eq, Copy, Clone)] struct A;".parse().unwrap()
+    "".parse().unwrap()
 }

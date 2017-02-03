@@ -18,6 +18,7 @@ use llvm::{ValueRef, BasicBlockRef, BuilderRef, ContextRef, TypeKind};
 use llvm::{True, False, Bool, OperandBundleDef};
 use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
+use rustc::hir::map::DefPathData;
 use rustc::infer::TransNormalize;
 use rustc::mir::Mir;
 use rustc::util::common::MemoizationMap;
@@ -44,13 +45,14 @@ use rustc::hir;
 
 use arena::TypedArena;
 use libc::{c_uint, c_char};
+use std::borrow::Cow;
+use std::iter;
 use std::ops::Deref;
 use std::ffi::CString;
 use std::cell::{Cell, RefCell, Ref};
 
 use syntax::ast;
-use syntax::parse::token::InternedString;
-use syntax::parse::token;
+use syntax::symbol::{Symbol, InternedString};
 use syntax_pos::{DUMMY_SP, Span};
 
 pub use context::{CrateContext, SharedCrateContext};
@@ -109,7 +111,16 @@ pub fn type_pair_fields<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>)
             Some([monomorphize::field_ty(ccx.tcx(), substs, &fields[0]),
                   monomorphize::field_ty(ccx.tcx(), substs, &fields[1])])
         }
-        ty::TyClosure(_, ty::ClosureSubsts { upvar_tys: tys, .. }) |
+        ty::TyClosure(def_id, substs) => {
+            let mut tys = substs.upvar_tys(def_id, ccx.tcx());
+            tys.next().and_then(|first_ty| tys.next().and_then(|second_ty| {
+                if tys.next().is_some() {
+                    None
+                } else {
+                    Some([first_ty, second_ty])
+                }
+            }))
+        }
         ty::TyTuple(tys) => {
             if tys.len() != 2 {
                 return None;
@@ -213,7 +224,7 @@ impl<'a, 'tcx> VariantInfo<'tcx> {
                 VariantInfo {
                     discr: Disr(0),
                     fields: v.iter().enumerate().map(|(i, &t)| {
-                        Field(token::intern(&i.to_string()), t)
+                        Field(Symbol::intern(&i.to_string()), t)
                     }).collect()
                 }
             }
@@ -407,11 +418,11 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         let ty = tcx.mk_fn_ptr(tcx.mk_bare_fn(ty::BareFnTy {
             unsafety: hir::Unsafety::Unsafe,
             abi: Abi::C,
-            sig: ty::Binder(ty::FnSig {
-                inputs: vec![tcx.mk_mut_ptr(tcx.types.u8)],
-                output: tcx.types.never,
-                variadic: false
-            }),
+            sig: ty::Binder(tcx.mk_fn_sig(
+                iter::once(tcx.mk_mut_ptr(tcx.types.u8)),
+                tcx.types.never,
+                false
+            )),
         }));
 
         let unwresume = ccx.eh_unwind_resume();
@@ -815,7 +826,7 @@ pub fn C_cstr(cx: &CrateContext, s: InternedString, null_terminated: bool) -> Va
 pub fn C_str_slice(cx: &CrateContext, s: InternedString) -> ValueRef {
     let len = s.len();
     let cs = consts::ptrcast(C_cstr(cx, s, false), Type::i8p(cx));
-    C_named_struct(cx.tn().find_type("str_slice").unwrap(), &[cs, C_uint(cx, len)])
+    C_named_struct(cx.str_slice_type(), &[cs, C_uint(cx, len)])
 }
 
 pub fn C_struct(cx: &CrateContext, elts: &[ValueRef], packed: bool) -> ValueRef {
@@ -1059,4 +1070,38 @@ pub fn shift_mask_val<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         },
         _ => bug!("shift_mask_val: expected Integer or Vector, found {:?}", kind),
     }
+}
+
+pub fn ty_fn_ty<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+                          ty: Ty<'tcx>)
+                          -> Cow<'tcx, ty::BareFnTy<'tcx>>
+{
+    match ty.sty {
+        ty::TyFnDef(_, _, fty) => Cow::Borrowed(fty),
+        // Shims currently have type TyFnPtr. Not sure this should remain.
+        ty::TyFnPtr(fty) => Cow::Borrowed(fty),
+        ty::TyClosure(def_id, substs) => {
+            let tcx = ccx.tcx();
+            let ty::ClosureTy { unsafety, abi, sig } = tcx.closure_type(def_id, substs);
+
+            let env_region = ty::ReLateBound(ty::DebruijnIndex::new(1), ty::BrEnv);
+            let env_ty = match tcx.closure_kind(def_id) {
+                ty::ClosureKind::Fn => tcx.mk_imm_ref(tcx.mk_region(env_region), ty),
+                ty::ClosureKind::FnMut => tcx.mk_mut_ref(tcx.mk_region(env_region), ty),
+                ty::ClosureKind::FnOnce => ty,
+            };
+
+            let sig = sig.map_bound(|sig| tcx.mk_fn_sig(
+                iter::once(env_ty).chain(sig.inputs().iter().cloned()),
+                sig.output(),
+                sig.variadic
+            ));
+            Cow::Owned(ty::BareFnTy { unsafety: unsafety, abi: abi, sig: sig })
+        }
+        _ => bug!("unexpected type {:?} to ty_fn_sig", ty)
+    }
+}
+
+pub fn is_closure(tcx: TyCtxt, def_id: DefId) -> bool {
+    tcx.def_key(def_id).disambiguated_data.data == DefPathData::ClosureExpr
 }

@@ -24,6 +24,7 @@ use middle::free_region::FreeRegionMap;
 use middle::mem_categorization as mc;
 use middle::mem_categorization::McResult;
 use middle::region::CodeExtent;
+use middle::lang_items;
 use mir::tcx::LvalueTy;
 use ty::subst::{Kind, Subst, Substs};
 use ty::adjustment;
@@ -32,24 +33,26 @@ use ty::{self, Ty, TyCtxt};
 use ty::error::{ExpectedFound, TypeError, UnconstrainedNumeric};
 use ty::fold::{TypeFoldable, TypeFolder, TypeVisitor};
 use ty::relate::{Relate, RelateResult, TypeRelation};
-use traits::{self, PredicateObligations, Reveal};
+use traits::{self, ObligationCause, PredicateObligations, Reveal};
 use rustc_data_structures::unify::{self, UnificationTable};
 use std::cell::{Cell, RefCell, Ref, RefMut};
 use std::fmt;
 use syntax::ast;
 use errors::DiagnosticBuilder;
 use syntax_pos::{self, Span, DUMMY_SP};
-use util::nodemap::{FnvHashMap, FnvHashSet, NodeMap};
+use util::nodemap::{FxHashMap, FxHashSet, NodeMap};
 
 use self::combine::CombineFields;
 use self::higher_ranked::HrMatchResult;
 use self::region_inference::{RegionVarBindings, RegionSnapshot};
+use self::type_variable::TypeVariableOrigin;
 use self::unify_key::ToType;
 
 mod bivariate;
 mod combine;
 mod equate;
 pub mod error_reporting;
+mod fudge;
 mod glb;
 mod higher_ranked;
 pub mod lattice;
@@ -112,7 +115,7 @@ pub struct InferCtxt<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     // We instantiate UnificationTable with bounds<Ty> because the
     // types that might instantiate a general type variable have an
     // order, represented by its upper and lower bounds.
-    type_variables: RefCell<type_variable::TypeVariableTable<'tcx>>,
+    pub type_variables: RefCell<type_variable::TypeVariableTable<'tcx>>,
 
     // Map from integral variable to the kind of integer it represents
     int_unification_table: RefCell<UnificationTable<ty::IntVid>>,
@@ -134,7 +137,7 @@ pub struct InferCtxt<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
 
     // the set of predicates on which errors have been reported, to
     // avoid reporting the same error twice.
-    pub reported_trait_errors: RefCell<FnvHashSet<traits::TraitErrorKey<'tcx>>>,
+    pub reported_trait_errors: RefCell<FxHashSet<traits::TraitErrorKey<'tcx>>>,
 
     // Sadly, the behavior of projection varies a bit depending on the
     // stage of compilation. The specifics are given in the
@@ -170,91 +173,7 @@ pub struct InferCtxt<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
 
 /// A map returned by `skolemize_late_bound_regions()` indicating the skolemized
 /// region that each late-bound region was replaced with.
-pub type SkolemizationMap<'tcx> = FnvHashMap<ty::BoundRegion, &'tcx ty::Region>;
-
-/// Why did we require that the two types be related?
-///
-/// See `error_reporting.rs` for more details
-#[derive(Clone, Copy, Debug)]
-pub enum TypeOrigin {
-    // Not yet categorized in a better way
-    Misc(Span),
-
-    // Checking that method of impl is compatible with trait
-    MethodCompatCheck(Span),
-
-    // Checking that this expression can be assigned where it needs to be
-    // FIXME(eddyb) #11161 is the original Expr required?
-    ExprAssignable(Span),
-
-    // Relating trait type parameters to those found in impl etc
-    RelateOutputImplTypes(Span),
-
-    // Computing common supertype in the arms of a match expression
-    MatchExpressionArm(Span, Span, hir::MatchSource),
-
-    // Computing common supertype in an if expression
-    IfExpression(Span),
-
-    // Computing common supertype of an if expression with no else counter-part
-    IfExpressionWithNoElse(Span),
-
-    // `where a == b`
-    EquatePredicate(Span),
-
-    // `main` has wrong type
-    MainFunctionType(Span),
-
-    // `start` has wrong type
-    StartFunctionType(Span),
-
-    // intrinsic has wrong type
-    IntrinsicType(Span),
-
-    // method receiver
-    MethodReceiver(Span),
-}
-
-impl TypeOrigin {
-    fn as_failure_str(&self) -> &'static str {
-        match self {
-            &TypeOrigin::Misc(_) |
-            &TypeOrigin::RelateOutputImplTypes(_) |
-            &TypeOrigin::ExprAssignable(_) => "mismatched types",
-            &TypeOrigin::MethodCompatCheck(_) => "method not compatible with trait",
-            &TypeOrigin::MatchExpressionArm(.., source) => match source {
-                hir::MatchSource::IfLetDesugar{..} => "`if let` arms have incompatible types",
-                _ => "match arms have incompatible types",
-            },
-            &TypeOrigin::IfExpression(_) => "if and else have incompatible types",
-            &TypeOrigin::IfExpressionWithNoElse(_) => "if may be missing an else clause",
-            &TypeOrigin::EquatePredicate(_) => "equality predicate not satisfied",
-            &TypeOrigin::MainFunctionType(_) => "main function has wrong type",
-            &TypeOrigin::StartFunctionType(_) => "start function has wrong type",
-            &TypeOrigin::IntrinsicType(_) => "intrinsic has wrong type",
-            &TypeOrigin::MethodReceiver(_) => "mismatched method receiver",
-        }
-    }
-
-    fn as_requirement_str(&self) -> &'static str {
-        match self {
-            &TypeOrigin::Misc(_) => "types are compatible",
-            &TypeOrigin::MethodCompatCheck(_) => "method type is compatible with trait",
-            &TypeOrigin::ExprAssignable(_) => "expression is assignable",
-            &TypeOrigin::RelateOutputImplTypes(_) => {
-                "trait type parameters matches those specified on the impl"
-            }
-            &TypeOrigin::MatchExpressionArm(..) => "match arms have compatible types",
-            &TypeOrigin::IfExpression(_) => "if and else have compatible types",
-            &TypeOrigin::IfExpressionWithNoElse(_) => "if missing an else returns ()",
-            &TypeOrigin::EquatePredicate(_) => "equality where clause is satisfied",
-            &TypeOrigin::MainFunctionType(_) => "`main` function has the correct type",
-            &TypeOrigin::StartFunctionType(_) => "`start` function has the correct type",
-            &TypeOrigin::IntrinsicType(_) => "intrinsic has the correct type",
-            &TypeOrigin::MethodReceiver(_) => "method receiver has the correct type",
-        }
-    }
-}
+pub type SkolemizationMap<'tcx> = FxHashMap<ty::BoundRegion, &'tcx ty::Region>;
 
 /// See `error_reporting.rs` for more details
 #[derive(Clone, Debug)]
@@ -270,7 +189,7 @@ pub enum ValuePairs<'tcx> {
 /// See `error_reporting.rs` for more details.
 #[derive(Clone)]
 pub struct TypeTrace<'tcx> {
-    origin: TypeOrigin,
+    cause: ObligationCause<'tcx>,
     values: ValuePairs<'tcx>,
 }
 
@@ -492,7 +411,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'gcx> {
             selection_cache: traits::SelectionCache::new(),
             evaluation_cache: traits::EvaluationCache::new(),
             projection_cache: RefCell::new(traits::ProjectionCache::new()),
-            reported_trait_errors: RefCell::new(FnvHashSet()),
+            reported_trait_errors: RefCell::new(FxHashSet()),
             projection_mode: Reveal::NotSpecializable,
             tainted_by_errors_flag: Cell::new(false),
             err_count_on_creation: self.sess.err_count(),
@@ -531,7 +450,7 @@ impl<'a, 'gcx, 'tcx> InferCtxtBuilder<'a, 'gcx, 'tcx> {
             parameter_environment: param_env,
             selection_cache: traits::SelectionCache::new(),
             evaluation_cache: traits::EvaluationCache::new(),
-            reported_trait_errors: RefCell::new(FnvHashSet()),
+            reported_trait_errors: RefCell::new(FxHashSet()),
             projection_mode: projection_mode,
             tainted_by_errors_flag: Cell::new(false),
             err_count_on_creation: tcx.sess.err_count(),
@@ -986,49 +905,6 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         r
     }
 
-    /// Execute `f` and commit only the region bindings if successful.
-    /// The function f must be very careful not to leak any non-region
-    /// variables that get created.
-    pub fn commit_regions_if_ok<T, E, F>(&self, f: F) -> Result<T, E> where
-        F: FnOnce() -> Result<T, E>
-    {
-        debug!("commit_regions_if_ok()");
-        let CombinedSnapshot { projection_cache_snapshot,
-                               type_snapshot,
-                               int_snapshot,
-                               float_snapshot,
-                               region_vars_snapshot,
-                               obligations_in_snapshot } = self.start_snapshot();
-
-        let r = self.commit_if_ok(|_| f());
-
-        debug!("commit_regions_if_ok: rolling back everything but regions");
-
-        assert!(!self.obligations_in_snapshot.get());
-        self.obligations_in_snapshot.set(obligations_in_snapshot);
-
-        // Roll back any non-region bindings - they should be resolved
-        // inside `f`, with, e.g. `resolve_type_vars_if_possible`.
-        self.projection_cache
-            .borrow_mut()
-            .rollback_to(projection_cache_snapshot);
-        self.type_variables
-            .borrow_mut()
-            .rollback_to(type_snapshot);
-        self.int_unification_table
-            .borrow_mut()
-            .rollback_to(int_snapshot);
-        self.float_unification_table
-            .borrow_mut()
-            .rollback_to(float_snapshot);
-
-        // Commit region vars that may escape through resolved types.
-        self.region_vars
-            .commit(region_vars_snapshot);
-
-        r
-    }
-
     /// Execute `f` then unroll any bindings it creates
     pub fn probe<R, F>(&self, f: F) -> R where
         F: FnOnce(&CombinedSnapshot) -> R,
@@ -1049,14 +925,14 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
     pub fn sub_types(&self,
                      a_is_expected: bool,
-                     origin: TypeOrigin,
+                     cause: &ObligationCause<'tcx>,
                      a: Ty<'tcx>,
                      b: Ty<'tcx>)
         -> InferResult<'tcx, ()>
     {
         debug!("sub_types({:?} <: {:?})", a, b);
         self.commit_if_ok(|_| {
-            let trace = TypeTrace::types(origin, a_is_expected, a, b);
+            let trace = TypeTrace::types(cause, a_is_expected, a, b);
             self.sub(a_is_expected, trace, &a, &b).map(|ok| ok.unit())
         })
     }
@@ -1067,7 +943,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                          -> UnitResult<'tcx>
     {
         self.probe(|_| {
-            let origin = TypeOrigin::Misc(syntax_pos::DUMMY_SP);
+            let origin = &ObligationCause::dummy();
             let trace = TypeTrace::types(origin, true, a, b);
             self.sub(true, trace, &a, &b).map(|InferOk { obligations, .. }| {
                 // FIXME(#32730) propagate obligations
@@ -1078,20 +954,20 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
     pub fn eq_types(&self,
                     a_is_expected: bool,
-                    origin: TypeOrigin,
+                    cause: &ObligationCause<'tcx>,
                     a: Ty<'tcx>,
                     b: Ty<'tcx>)
         -> InferResult<'tcx, ()>
     {
         self.commit_if_ok(|_| {
-            let trace = TypeTrace::types(origin, a_is_expected, a, b);
+            let trace = TypeTrace::types(cause, a_is_expected, a, b);
             self.equate(a_is_expected, trace, &a, &b).map(|ok| ok.unit())
         })
     }
 
     pub fn eq_trait_refs(&self,
                           a_is_expected: bool,
-                          origin: TypeOrigin,
+                          cause: &ObligationCause<'tcx>,
                           a: ty::TraitRef<'tcx>,
                           b: ty::TraitRef<'tcx>)
         -> InferResult<'tcx, ()>
@@ -1099,7 +975,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         debug!("eq_trait_refs({:?} = {:?})", a, b);
         self.commit_if_ok(|_| {
             let trace = TypeTrace {
-                origin: origin,
+                cause: cause.clone(),
                 values: TraitRefs(ExpectedFound::new(a_is_expected, a, b))
             };
             self.equate(a_is_expected, trace, &a, &b).map(|ok| ok.unit())
@@ -1108,22 +984,22 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
     pub fn eq_impl_headers(&self,
                            a_is_expected: bool,
-                           origin: TypeOrigin,
+                           cause: &ObligationCause<'tcx>,
                            a: &ty::ImplHeader<'tcx>,
                            b: &ty::ImplHeader<'tcx>)
                            -> InferResult<'tcx, ()>
     {
         debug!("eq_impl_header({:?} = {:?})", a, b);
         match (a.trait_ref, b.trait_ref) {
-            (Some(a_ref), Some(b_ref)) => self.eq_trait_refs(a_is_expected, origin, a_ref, b_ref),
-            (None, None) => self.eq_types(a_is_expected, origin, a.self_ty, b.self_ty),
+            (Some(a_ref), Some(b_ref)) => self.eq_trait_refs(a_is_expected, cause, a_ref, b_ref),
+            (None, None) => self.eq_types(a_is_expected, cause, a.self_ty, b.self_ty),
             _ => bug!("mk_eq_impl_headers given mismatched impl kinds"),
         }
     }
 
     pub fn sub_poly_trait_refs(&self,
                                a_is_expected: bool,
-                               origin: TypeOrigin,
+                               cause: ObligationCause<'tcx>,
                                a: ty::PolyTraitRef<'tcx>,
                                b: ty::PolyTraitRef<'tcx>)
         -> InferResult<'tcx, ()>
@@ -1131,7 +1007,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         debug!("sub_poly_trait_refs({:?} <: {:?})", a, b);
         self.commit_if_ok(|_| {
             let trace = TypeTrace {
-                origin: origin,
+                cause: cause,
                 values: PolyTraitRefs(ExpectedFound::new(a_is_expected, a, b))
             };
             self.sub(a_is_expected, trace, &a, &b).map(|ok| ok.unit())
@@ -1147,16 +1023,16 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     }
 
     pub fn equality_predicate(&self,
-                              span: Span,
+                              cause: &ObligationCause<'tcx>,
                               predicate: &ty::PolyEquatePredicate<'tcx>)
         -> InferResult<'tcx, ()>
     {
         self.commit_if_ok(|snapshot| {
             let (ty::EquatePredicate(a, b), skol_map) =
                 self.skolemize_late_bound_regions(predicate, snapshot);
-            let origin = TypeOrigin::EquatePredicate(span);
-            let eqty_ok = self.eq_types(false, origin, a, b)?;
-            self.leak_check(false, span, &skol_map, snapshot)?;
+            let cause_span = cause.span;
+            let eqty_ok = self.eq_types(false, cause, a, b)?;
+            self.leak_check(false, cause_span, &skol_map, snapshot)?;
             self.pop_skolemized(skol_map, snapshot);
             Ok(eqty_ok.unit())
         })
@@ -1179,22 +1055,18 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         })
     }
 
-    pub fn next_ty_var_id(&self, diverging: bool) -> TyVid {
+    pub fn next_ty_var_id(&self, diverging: bool, origin: TypeVariableOrigin) -> TyVid {
         self.type_variables
             .borrow_mut()
-            .new_var(diverging, None)
+            .new_var(diverging, origin, None)
     }
 
-    pub fn next_ty_var(&self) -> Ty<'tcx> {
-        self.tcx.mk_var(self.next_ty_var_id(false))
+    pub fn next_ty_var(&self, origin: TypeVariableOrigin) -> Ty<'tcx> {
+        self.tcx.mk_var(self.next_ty_var_id(false, origin))
     }
 
-    pub fn next_diverging_ty_var(&self) -> Ty<'tcx> {
-        self.tcx.mk_var(self.next_ty_var_id(true))
-    }
-
-    pub fn next_ty_vars(&self, n: usize) -> Vec<Ty<'tcx>> {
-        (0..n).map(|_i| self.next_ty_var()).collect()
+    pub fn next_diverging_ty_var(&self, origin: TypeVariableOrigin) -> Ty<'tcx> {
+        self.tcx.mk_var(self.next_ty_var_id(true, origin))
     }
 
     pub fn next_int_var_id(&self) -> IntVid {
@@ -1247,7 +1119,9 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
         let ty_var_id = self.type_variables
                             .borrow_mut()
-                            .new_var(false, default);
+                            .new_var(false,
+                                     TypeVariableOrigin::TypeParameterDefinition(span, def.name),
+                                     default);
 
         self.tcx.mk_var(ty_var_id)
     }
@@ -1490,26 +1364,21 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     }
 
     pub fn report_mismatched_types(&self,
-                                   origin: TypeOrigin,
+                                   cause: &ObligationCause<'tcx>,
                                    expected: Ty<'tcx>,
                                    actual: Ty<'tcx>,
                                    err: TypeError<'tcx>) {
-        let trace = TypeTrace {
-            origin: origin,
-            values: Types(ExpectedFound {
-                expected: expected,
-                found: actual
-            })
-        };
+        let trace = TypeTrace::types(cause, true, expected, actual);
         self.report_and_explain_type_error(trace, &err).emit();
     }
 
     pub fn report_conflicting_default_types(&self,
                                             span: Span,
+                                            body_id: ast::NodeId,
                                             expected: type_variable::Default<'tcx>,
                                             actual: type_variable::Default<'tcx>) {
         let trace = TypeTrace {
-            origin: TypeOrigin::Misc(span),
+            cause: ObligationCause::misc(span, body_id),
             values: Types(ExpectedFound {
                 expected: expected.ty,
                 found: actual.ty
@@ -1530,7 +1399,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         span: Span,
         lbrct: LateBoundRegionConversionTime,
         value: &ty::Binder<T>)
-        -> (T, FnvHashMap<ty::BoundRegion, &'tcx ty::Region>)
+        -> (T, FxHashMap<ty::BoundRegion, &'tcx ty::Region>)
         where T : TypeFoldable<'tcx>
     {
         self.tcx.replace_late_bound_regions(
@@ -1554,15 +1423,15 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     /// See `higher_ranked_match` in `higher_ranked/mod.rs` for more
     /// details.
     pub fn match_poly_projection_predicate(&self,
-                                           origin: TypeOrigin,
+                                           cause: ObligationCause<'tcx>,
                                            match_a: ty::PolyProjectionPredicate<'tcx>,
                                            match_b: ty::TraitRef<'tcx>)
                                            -> InferResult<'tcx, HrMatchResult<Ty<'tcx>>>
     {
-        let span = origin.span();
+        let span = cause.span;
         let match_trait_ref = match_a.skip_binder().projection_ty.trait_ref;
         let trace = TypeTrace {
-            origin: origin,
+            cause: cause,
             values: TraitRefs(ExpectedFound::new(true, match_trait_ref, match_b))
         };
 
@@ -1627,11 +1496,13 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             }
         }
 
+        let copy_def_id = self.tcx.require_lang_item(lang_items::CopyTraitLangItem);
+
         // this can get called from typeck (by euv), and moves_by_default
         // rightly refuses to work with inference variables, but
         // moves_by_default has a cache, which we want to use in other
         // cases.
-        !traits::type_known_to_meet_builtin_bound(self, ty, ty::BoundCopy, span)
+        !traits::type_known_to_meet_bound(self, ty, copy_def_id, span)
     }
 
     pub fn node_method_ty(&self, method_call: ty::MethodCall)
@@ -1700,7 +1571,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     {
         if let InferTables::Local(tables) = self.tables {
             if let Some(ty) = tables.borrow().closure_tys.get(&def_id) {
-                return ty.subst(self.tcx, substs.func_substs);
+                return ty.subst(self.tcx, substs.substs);
             }
         }
 
@@ -1711,23 +1582,23 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
 impl<'a, 'gcx, 'tcx> TypeTrace<'tcx> {
     pub fn span(&self) -> Span {
-        self.origin.span()
+        self.cause.span
     }
 
-    pub fn types(origin: TypeOrigin,
+    pub fn types(cause: &ObligationCause<'tcx>,
                  a_is_expected: bool,
                  a: Ty<'tcx>,
                  b: Ty<'tcx>)
                  -> TypeTrace<'tcx> {
         TypeTrace {
-            origin: origin,
+            cause: cause.clone(),
             values: Types(ExpectedFound::new(a_is_expected, a, b))
         }
     }
 
     pub fn dummy(tcx: TyCtxt<'a, 'gcx, 'tcx>) -> TypeTrace<'tcx> {
         TypeTrace {
-            origin: TypeOrigin::Misc(syntax_pos::DUMMY_SP),
+            cause: ObligationCause::dummy(),
             values: Types(ExpectedFound {
                 expected: tcx.types.err,
                 found: tcx.types.err,
@@ -1738,26 +1609,7 @@ impl<'a, 'gcx, 'tcx> TypeTrace<'tcx> {
 
 impl<'tcx> fmt::Debug for TypeTrace<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "TypeTrace({:?})", self.origin)
-    }
-}
-
-impl TypeOrigin {
-    pub fn span(&self) -> Span {
-        match *self {
-            TypeOrigin::MethodCompatCheck(span) => span,
-            TypeOrigin::ExprAssignable(span) => span,
-            TypeOrigin::Misc(span) => span,
-            TypeOrigin::RelateOutputImplTypes(span) => span,
-            TypeOrigin::MatchExpressionArm(match_span, ..) => match_span,
-            TypeOrigin::IfExpression(span) => span,
-            TypeOrigin::IfExpressionWithNoElse(span) => span,
-            TypeOrigin::EquatePredicate(span) => span,
-            TypeOrigin::MainFunctionType(span) => span,
-            TypeOrigin::StartFunctionType(span) => span,
-            TypeOrigin::IntrinsicType(span) => span,
-            TypeOrigin::MethodReceiver(span) => span,
-        }
+        write!(f, "TypeTrace({:?})", self.cause)
     }
 }
 
@@ -1834,16 +1686,6 @@ impl RegionVariableOrigin {
     }
 }
 
-impl<'tcx> TypeFoldable<'tcx> for TypeOrigin {
-    fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, _folder: &mut F) -> Self {
-        self.clone()
-    }
-
-    fn super_visit_with<V: TypeVisitor<'tcx>>(&self, _visitor: &mut V) -> bool {
-        false
-    }
-}
-
 impl<'tcx> TypeFoldable<'tcx> for ValuePairs<'tcx> {
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
         match *self {
@@ -1871,12 +1713,12 @@ impl<'tcx> TypeFoldable<'tcx> for ValuePairs<'tcx> {
 impl<'tcx> TypeFoldable<'tcx> for TypeTrace<'tcx> {
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
         TypeTrace {
-            origin: self.origin.fold_with(folder),
+            cause: self.cause.fold_with(folder),
             values: self.values.fold_with(folder)
         }
     }
 
     fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
-        self.origin.visit_with(visitor) || self.values.visit_with(visitor)
+        self.cause.visit_with(visitor) || self.values.visit_with(visitor)
     }
 }

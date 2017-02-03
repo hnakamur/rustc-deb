@@ -10,7 +10,8 @@
 
 use llvm;
 use llvm::{ContextRef, ModuleRef, ValueRef, BuilderRef};
-use rustc::dep_graph::{DepNode, DepTrackingMap, DepTrackingMapConfig, WorkProduct};
+use rustc::dep_graph::{DepGraph, DepNode, DepTrackingMap, DepTrackingMapConfig,
+                       WorkProduct};
 use middle::cstore::LinkMeta;
 use rustc::hir::def::ExportMap;
 use rustc::hir::def_id::DefId;
@@ -25,14 +26,15 @@ use monomorphize::Instance;
 
 use partitioning::CodegenUnit;
 use trans_item::TransItem;
-use type_::{Type, TypeNames};
+use type_::Type;
+use rustc_data_structures::base_n;
 use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty, TyCtxt};
 use session::config::NoDebugInfo;
 use session::Session;
 use session::config;
 use symbol_map::SymbolMap;
-use util::nodemap::{NodeSet, DefIdMap, FnvHashMap, FnvHashSet};
+use util::nodemap::{NodeSet, DefIdMap, FxHashMap, FxHashSet};
 
 use std::ffi::{CStr, CString};
 use std::cell::{Cell, RefCell};
@@ -41,7 +43,7 @@ use std::ptr;
 use std::rc::Rc;
 use std::str;
 use syntax::ast;
-use syntax::parse::token::InternedString;
+use syntax::symbol::InternedString;
 use abi::FnType;
 
 pub struct Stats {
@@ -52,7 +54,7 @@ pub struct Stats {
     pub n_inlines: Cell<usize>,
     pub n_closures: Cell<usize>,
     pub n_llvm_insns: Cell<usize>,
-    pub llvm_insns: RefCell<FnvHashMap<String, usize>>,
+    pub llvm_insns: RefCell<FxHashMap<String, usize>>,
     // (ident, llvm-instructions)
     pub fn_stats: RefCell<Vec<(String, usize)> >,
 }
@@ -66,7 +68,7 @@ pub struct SharedCrateContext<'a, 'tcx: 'a> {
     metadata_llcx: ContextRef,
 
     export_map: ExportMap,
-    reachable: NodeSet,
+    exported_symbols: NodeSet,
     link_meta: LinkMeta,
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     stats: Stats,
@@ -74,7 +76,7 @@ pub struct SharedCrateContext<'a, 'tcx: 'a> {
 
     use_dll_storage_attrs: bool,
 
-    translation_items: RefCell<FnvHashSet<TransItem<'tcx>>>,
+    translation_items: RefCell<FxHashSet<TransItem<'tcx>>>,
     trait_cache: RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>>,
     project_cache: RefCell<DepTrackingMap<ProjectionCache<'tcx>>>,
 }
@@ -87,17 +89,17 @@ pub struct LocalCrateContext<'tcx> {
     llmod: ModuleRef,
     llcx: ContextRef,
     previous_work_product: Option<WorkProduct>,
-    tn: TypeNames, // FIXME: This seems to be largely unused.
     codegen_unit: CodegenUnit<'tcx>,
-    needs_unwind_cleanup_cache: RefCell<FnvHashMap<Ty<'tcx>, bool>>,
-    fn_pointer_shims: RefCell<FnvHashMap<Ty<'tcx>, ValueRef>>,
-    drop_glues: RefCell<FnvHashMap<DropGlueKind<'tcx>, (ValueRef, FnType)>>,
+    needs_unwind_cleanup_cache: RefCell<FxHashMap<Ty<'tcx>, bool>>,
+    fn_pointer_shims: RefCell<FxHashMap<Ty<'tcx>, ValueRef>>,
+    drop_glues: RefCell<FxHashMap<DropGlueKind<'tcx>, (ValueRef, FnType)>>,
     /// Cache instances of monomorphic and polymorphic items
-    instances: RefCell<FnvHashMap<Instance<'tcx>, ValueRef>>,
+    instances: RefCell<FxHashMap<Instance<'tcx>, ValueRef>>,
     /// Cache generated vtables
-    vtables: RefCell<FnvHashMap<ty::PolyTraitRef<'tcx>, ValueRef>>,
+    vtables: RefCell<FxHashMap<(ty::Ty<'tcx>,
+                                Option<ty::PolyExistentialTraitRef<'tcx>>), ValueRef>>,
     /// Cache of constant strings,
-    const_cstr_cache: RefCell<FnvHashMap<InternedString, ValueRef>>,
+    const_cstr_cache: RefCell<FxHashMap<InternedString, ValueRef>>,
 
     /// Reverse-direction for const ptrs cast from globals.
     /// Key is a ValueRef holding a *T,
@@ -107,24 +109,24 @@ pub struct LocalCrateContext<'tcx> {
     /// when we ptrcast, and we have to ptrcast during translation
     /// of a [T] const because we form a slice, a (*T,usize) pair, not
     /// a pointer to an LLVM array type. Similar for trait objects.
-    const_unsized: RefCell<FnvHashMap<ValueRef, ValueRef>>,
+    const_unsized: RefCell<FxHashMap<ValueRef, ValueRef>>,
 
     /// Cache of emitted const globals (value -> global)
-    const_globals: RefCell<FnvHashMap<ValueRef, ValueRef>>,
+    const_globals: RefCell<FxHashMap<ValueRef, ValueRef>>,
 
     /// Cache of emitted const values
-    const_values: RefCell<FnvHashMap<(ast::NodeId, &'tcx Substs<'tcx>), ValueRef>>,
+    const_values: RefCell<FxHashMap<(ast::NodeId, &'tcx Substs<'tcx>), ValueRef>>,
 
     /// Cache of external const values
     extern_const_values: RefCell<DefIdMap<ValueRef>>,
 
     /// Mapping from static definitions to their DefId's.
-    statics: RefCell<FnvHashMap<ValueRef, DefId>>,
+    statics: RefCell<FxHashMap<ValueRef, DefId>>,
 
-    impl_method_cache: RefCell<FnvHashMap<(DefId, ast::Name), DefId>>,
+    impl_method_cache: RefCell<FxHashMap<(DefId, ast::Name), DefId>>,
 
     /// Cache of closure wrappers for bare fn's.
-    closure_bare_wrapper_cache: RefCell<FnvHashMap<ValueRef, ValueRef>>,
+    closure_bare_wrapper_cache: RefCell<FxHashMap<ValueRef, ValueRef>>,
 
     /// List of globals for static variables which need to be passed to the
     /// LLVM function ReplaceAllUsesWith (RAUW) when translation is complete.
@@ -132,15 +134,16 @@ pub struct LocalCrateContext<'tcx> {
     /// to constants.)
     statics_to_rauw: RefCell<Vec<(ValueRef, ValueRef)>>,
 
-    lltypes: RefCell<FnvHashMap<Ty<'tcx>, Type>>,
-    llsizingtypes: RefCell<FnvHashMap<Ty<'tcx>, Type>>,
-    type_hashcodes: RefCell<FnvHashMap<Ty<'tcx>, String>>,
+    lltypes: RefCell<FxHashMap<Ty<'tcx>, Type>>,
+    llsizingtypes: RefCell<FxHashMap<Ty<'tcx>, Type>>,
+    type_hashcodes: RefCell<FxHashMap<Ty<'tcx>, String>>,
     int_type: Type,
     opaque_vec_type: Type,
+    str_slice_type: Type,
     builder: BuilderRef_res,
 
     /// Holds the LLVM values for closure IDs.
-    closure_vals: RefCell<FnvHashMap<Instance<'tcx>, ValueRef>>,
+    closure_vals: RefCell<FxHashMap<Instance<'tcx>, ValueRef>>,
 
     dbg_cx: Option<debuginfo::CrateDebugContext<'tcx>>,
 
@@ -148,7 +151,7 @@ pub struct LocalCrateContext<'tcx> {
     eh_unwind_resume: Cell<Option<ValueRef>>,
     rust_try_fn: Cell<Option<ValueRef>>,
 
-    intrinsics: RefCell<FnvHashMap<&'static str, ValueRef>>,
+    intrinsics: RefCell<FxHashMap<&'static str, ValueRef>>,
 
     /// Number of LLVM instructions translated into this `LocalCrateContext`.
     /// This is used to perform some basic load-balancing to keep all LLVM
@@ -435,7 +438,7 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
     pub fn new(tcx: TyCtxt<'b, 'tcx, 'tcx>,
                export_map: ExportMap,
                link_meta: LinkMeta,
-               reachable: NodeSet,
+               exported_symbols: NodeSet,
                check_overflow: bool)
                -> SharedCrateContext<'b, 'tcx> {
         let (metadata_llcx, metadata_llmod) = unsafe {
@@ -452,7 +455,7 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
         // they're not available to be linked against. This poses a few problems
         // for the compiler, some of which are somewhat fundamental, but we use
         // the `use_dll_storage_attrs` variable below to attach the `dllexport`
-        // attribute to all LLVM functions that are reachable (e.g. they're
+        // attribute to all LLVM functions that are exported e.g. they're
         // already tagged with external linkage). This is suboptimal for a few
         // reasons:
         //
@@ -491,7 +494,7 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
             metadata_llmod: metadata_llmod,
             metadata_llcx: metadata_llcx,
             export_map: export_map,
-            reachable: reachable,
+            exported_symbols: exported_symbols,
             link_meta: link_meta,
             tcx: tcx,
             stats: Stats {
@@ -502,12 +505,12 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
                 n_inlines: Cell::new(0),
                 n_closures: Cell::new(0),
                 n_llvm_insns: Cell::new(0),
-                llvm_insns: RefCell::new(FnvHashMap()),
+                llvm_insns: RefCell::new(FxHashMap()),
                 fn_stats: RefCell::new(Vec::new()),
             },
             check_overflow: check_overflow,
             use_dll_storage_attrs: use_dll_storage_attrs,
-            translation_items: RefCell::new(FnvHashSet()),
+            translation_items: RefCell::new(FxHashSet()),
             trait_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
             project_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
         }
@@ -525,8 +528,8 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
         &self.export_map
     }
 
-    pub fn reachable<'a>(&'a self) -> &'a NodeSet {
-        &self.reachable
+    pub fn exported_symbols<'a>(&'a self) -> &'a NodeSet {
+        &self.exported_symbols
     }
 
     pub fn trait_cache(&self) -> &RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>> {
@@ -549,6 +552,10 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
         &self.tcx.sess
     }
 
+    pub fn dep_graph<'a>(&'a self) -> &'a DepGraph {
+        &self.tcx.dep_graph
+    }
+
     pub fn stats<'a>(&'a self) -> &'a Stats {
         &self.stats
     }
@@ -557,7 +564,7 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
         self.use_dll_storage_attrs
     }
 
-    pub fn translation_items(&self) -> &RefCell<FnvHashSet<TransItem<'tcx>>> {
+    pub fn translation_items(&self) -> &RefCell<FxHashSet<TransItem<'tcx>>> {
         &self.translation_items
     }
 
@@ -611,33 +618,33 @@ impl<'tcx> LocalCrateContext<'tcx> {
                 llcx: llcx,
                 previous_work_product: previous_work_product,
                 codegen_unit: codegen_unit,
-                tn: TypeNames::new(),
-                needs_unwind_cleanup_cache: RefCell::new(FnvHashMap()),
-                fn_pointer_shims: RefCell::new(FnvHashMap()),
-                drop_glues: RefCell::new(FnvHashMap()),
-                instances: RefCell::new(FnvHashMap()),
-                vtables: RefCell::new(FnvHashMap()),
-                const_cstr_cache: RefCell::new(FnvHashMap()),
-                const_unsized: RefCell::new(FnvHashMap()),
-                const_globals: RefCell::new(FnvHashMap()),
-                const_values: RefCell::new(FnvHashMap()),
+                needs_unwind_cleanup_cache: RefCell::new(FxHashMap()),
+                fn_pointer_shims: RefCell::new(FxHashMap()),
+                drop_glues: RefCell::new(FxHashMap()),
+                instances: RefCell::new(FxHashMap()),
+                vtables: RefCell::new(FxHashMap()),
+                const_cstr_cache: RefCell::new(FxHashMap()),
+                const_unsized: RefCell::new(FxHashMap()),
+                const_globals: RefCell::new(FxHashMap()),
+                const_values: RefCell::new(FxHashMap()),
                 extern_const_values: RefCell::new(DefIdMap()),
-                statics: RefCell::new(FnvHashMap()),
-                impl_method_cache: RefCell::new(FnvHashMap()),
-                closure_bare_wrapper_cache: RefCell::new(FnvHashMap()),
+                statics: RefCell::new(FxHashMap()),
+                impl_method_cache: RefCell::new(FxHashMap()),
+                closure_bare_wrapper_cache: RefCell::new(FxHashMap()),
                 statics_to_rauw: RefCell::new(Vec::new()),
-                lltypes: RefCell::new(FnvHashMap()),
-                llsizingtypes: RefCell::new(FnvHashMap()),
-                type_hashcodes: RefCell::new(FnvHashMap()),
+                lltypes: RefCell::new(FxHashMap()),
+                llsizingtypes: RefCell::new(FxHashMap()),
+                type_hashcodes: RefCell::new(FxHashMap()),
                 int_type: Type::from_ref(ptr::null_mut()),
                 opaque_vec_type: Type::from_ref(ptr::null_mut()),
+                str_slice_type: Type::from_ref(ptr::null_mut()),
                 builder: BuilderRef_res(llvm::LLVMCreateBuilderInContext(llcx)),
-                closure_vals: RefCell::new(FnvHashMap()),
+                closure_vals: RefCell::new(FxHashMap()),
                 dbg_cx: dbg_cx,
                 eh_personality: Cell::new(None),
                 eh_unwind_resume: Cell::new(None),
                 rust_try_fn: Cell::new(None),
-                intrinsics: RefCell::new(FnvHashMap()),
+                intrinsics: RefCell::new(FxHashMap()),
                 n_llvm_insns: Cell::new(0),
                 type_of_depth: Cell::new(0),
                 symbol_map: symbol_map,
@@ -662,7 +669,7 @@ impl<'tcx> LocalCrateContext<'tcx> {
 
             local_ccx.int_type = int_type;
             local_ccx.opaque_vec_type = opaque_vec_type;
-            local_ccx.tn.associate_type("str_slice", &str_slice_ty);
+            local_ccx.str_slice_type = str_slice_ty;
 
             if shared.tcx.sess.count_llvm_insns() {
                 base::init_insn_ctxt()
@@ -698,22 +705,6 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
 
     pub fn local(&self) -> &'b LocalCrateContext<'tcx> {
         &self.local_ccxs[self.index]
-    }
-
-    /// Get a (possibly) different `CrateContext` from the same
-    /// `SharedCrateContext`.
-    pub fn rotate(&'b self) -> CrateContext<'b, 'tcx> {
-        let (_, index) =
-            self.local_ccxs
-                .iter()
-                .zip(0..self.local_ccxs.len())
-                .min_by_key(|&(local_ccx, _idx)| local_ccx.n_llvm_insns.get())
-                .unwrap();
-        CrateContext {
-            shared: self.shared,
-            index: index,
-            local_ccxs: &self.local_ccxs[..],
-        }
     }
 
     /// Either iterate over only `self`, or iterate over all `CrateContext`s in
@@ -778,32 +769,28 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         unsafe { llvm::LLVMRustGetModuleDataLayout(self.llmod()) }
     }
 
-    pub fn tn<'a>(&'a self) -> &'a TypeNames {
-        &self.local().tn
-    }
-
     pub fn export_map<'a>(&'a self) -> &'a ExportMap {
         &self.shared.export_map
     }
 
-    pub fn reachable<'a>(&'a self) -> &'a NodeSet {
-        &self.shared.reachable
+    pub fn exported_symbols<'a>(&'a self) -> &'a NodeSet {
+        &self.shared.exported_symbols
     }
 
     pub fn link_meta<'a>(&'a self) -> &'a LinkMeta {
         &self.shared.link_meta
     }
 
-    pub fn needs_unwind_cleanup_cache(&self) -> &RefCell<FnvHashMap<Ty<'tcx>, bool>> {
+    pub fn needs_unwind_cleanup_cache(&self) -> &RefCell<FxHashMap<Ty<'tcx>, bool>> {
         &self.local().needs_unwind_cleanup_cache
     }
 
-    pub fn fn_pointer_shims(&self) -> &RefCell<FnvHashMap<Ty<'tcx>, ValueRef>> {
+    pub fn fn_pointer_shims(&self) -> &RefCell<FxHashMap<Ty<'tcx>, ValueRef>> {
         &self.local().fn_pointer_shims
     }
 
     pub fn drop_glues<'a>(&'a self)
-                          -> &'a RefCell<FnvHashMap<DropGlueKind<'tcx>, (ValueRef, FnType)>> {
+                          -> &'a RefCell<FxHashMap<DropGlueKind<'tcx>, (ValueRef, FnType)>> {
         &self.local().drop_glues
     }
 
@@ -815,28 +802,30 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         self.sess().cstore.defid_for_inlined_node(node_id)
     }
 
-    pub fn instances<'a>(&'a self) -> &'a RefCell<FnvHashMap<Instance<'tcx>, ValueRef>> {
+    pub fn instances<'a>(&'a self) -> &'a RefCell<FxHashMap<Instance<'tcx>, ValueRef>> {
         &self.local().instances
     }
 
-    pub fn vtables<'a>(&'a self) -> &'a RefCell<FnvHashMap<ty::PolyTraitRef<'tcx>, ValueRef>> {
+    pub fn vtables<'a>(&'a self)
+        -> &'a RefCell<FxHashMap<(ty::Ty<'tcx>,
+                                  Option<ty::PolyExistentialTraitRef<'tcx>>), ValueRef>> {
         &self.local().vtables
     }
 
-    pub fn const_cstr_cache<'a>(&'a self) -> &'a RefCell<FnvHashMap<InternedString, ValueRef>> {
+    pub fn const_cstr_cache<'a>(&'a self) -> &'a RefCell<FxHashMap<InternedString, ValueRef>> {
         &self.local().const_cstr_cache
     }
 
-    pub fn const_unsized<'a>(&'a self) -> &'a RefCell<FnvHashMap<ValueRef, ValueRef>> {
+    pub fn const_unsized<'a>(&'a self) -> &'a RefCell<FxHashMap<ValueRef, ValueRef>> {
         &self.local().const_unsized
     }
 
-    pub fn const_globals<'a>(&'a self) -> &'a RefCell<FnvHashMap<ValueRef, ValueRef>> {
+    pub fn const_globals<'a>(&'a self) -> &'a RefCell<FxHashMap<ValueRef, ValueRef>> {
         &self.local().const_globals
     }
 
-    pub fn const_values<'a>(&'a self) -> &'a RefCell<FnvHashMap<(ast::NodeId, &'tcx Substs<'tcx>),
-                                                                ValueRef>> {
+    pub fn const_values<'a>(&'a self) -> &'a RefCell<FxHashMap<(ast::NodeId, &'tcx Substs<'tcx>),
+                                                               ValueRef>> {
         &self.local().const_values
     }
 
@@ -844,16 +833,16 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         &self.local().extern_const_values
     }
 
-    pub fn statics<'a>(&'a self) -> &'a RefCell<FnvHashMap<ValueRef, DefId>> {
+    pub fn statics<'a>(&'a self) -> &'a RefCell<FxHashMap<ValueRef, DefId>> {
         &self.local().statics
     }
 
     pub fn impl_method_cache<'a>(&'a self)
-            -> &'a RefCell<FnvHashMap<(DefId, ast::Name), DefId>> {
+            -> &'a RefCell<FxHashMap<(DefId, ast::Name), DefId>> {
         &self.local().impl_method_cache
     }
 
-    pub fn closure_bare_wrapper_cache<'a>(&'a self) -> &'a RefCell<FnvHashMap<ValueRef, ValueRef>> {
+    pub fn closure_bare_wrapper_cache<'a>(&'a self) -> &'a RefCell<FxHashMap<ValueRef, ValueRef>> {
         &self.local().closure_bare_wrapper_cache
     }
 
@@ -861,15 +850,15 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         &self.local().statics_to_rauw
     }
 
-    pub fn lltypes<'a>(&'a self) -> &'a RefCell<FnvHashMap<Ty<'tcx>, Type>> {
+    pub fn lltypes<'a>(&'a self) -> &'a RefCell<FxHashMap<Ty<'tcx>, Type>> {
         &self.local().lltypes
     }
 
-    pub fn llsizingtypes<'a>(&'a self) -> &'a RefCell<FnvHashMap<Ty<'tcx>, Type>> {
+    pub fn llsizingtypes<'a>(&'a self) -> &'a RefCell<FxHashMap<Ty<'tcx>, Type>> {
         &self.local().llsizingtypes
     }
 
-    pub fn type_hashcodes<'a>(&'a self) -> &'a RefCell<FnvHashMap<Ty<'tcx>, String>> {
+    pub fn type_hashcodes<'a>(&'a self) -> &'a RefCell<FxHashMap<Ty<'tcx>, String>> {
         &self.local().type_hashcodes
     }
 
@@ -885,7 +874,11 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         self.local().opaque_vec_type
     }
 
-    pub fn closure_vals<'a>(&'a self) -> &'a RefCell<FnvHashMap<Instance<'tcx>, ValueRef>> {
+    pub fn str_slice_type(&self) -> Type {
+        self.local().str_slice_type
+    }
+
+    pub fn closure_vals<'a>(&'a self) -> &'a RefCell<FxHashMap<Instance<'tcx>, ValueRef>> {
         &self.local().closure_vals
     }
 
@@ -905,7 +898,7 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         &self.local().rust_try_fn
     }
 
-    fn intrinsics<'a>(&'a self) -> &'a RefCell<FnvHashMap<&'static str, ValueRef>> {
+    fn intrinsics<'a>(&'a self) -> &'a RefCell<FxHashMap<&'static str, ValueRef>> {
         &self.local().intrinsics
     }
 
@@ -958,7 +951,7 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         &*self.local().symbol_map
     }
 
-    pub fn translation_items(&self) -> &RefCell<FnvHashSet<TransItem<'tcx>>> {
+    pub fn translation_items(&self) -> &RefCell<FxHashSet<TransItem<'tcx>>> {
         &self.shared.translation_items
     }
 
@@ -975,7 +968,11 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         self.local().local_gen_sym_counter.set(idx + 1);
         // Include a '.' character, so there can be no accidental conflicts with
         // user defined names
-        format!("{}.{}", prefix, idx)
+        let mut name = String::with_capacity(prefix.len() + 6);
+        name.push_str(prefix);
+        name.push_str(".");
+        base_n::push_str(idx as u64, base_n::ALPHANUMERIC_ONLY, &mut name);
+        name
     }
 }
 

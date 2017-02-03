@@ -80,8 +80,9 @@ use hir::print as pprust;
 use lint;
 use hir::def::Def;
 use hir::def_id::DefId;
-use infer::{self, TypeOrigin};
+use infer;
 use middle::region;
+use traits::{ObligationCause, ObligationCauseCode};
 use ty::{self, TyCtxt, TypeFoldable};
 use ty::{Region, ReFree};
 use ty::error::TypeError;
@@ -90,8 +91,8 @@ use std::cell::{Cell, RefCell};
 use std::char::from_u32;
 use std::fmt;
 use syntax::ast;
-use syntax::parse::token;
 use syntax::ptr::P;
+use syntax::symbol::Symbol;
 use syntax_pos::{self, Pos, Span};
 use errors::DiagnosticBuilder;
 
@@ -110,6 +111,22 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 hir::ItemTrait(..) => "trait",
                 hir::ItemFn(..) => "function body",
                 _ => "item"
+            }
+        }
+
+        fn trait_item_scope_tag(item: &hir::TraitItem) -> &'static str {
+            match item.node {
+                hir::MethodTraitItem(..) => "method body",
+                hir::ConstTraitItem(..) |
+                hir::TypeTraitItem(..) => "associated item"
+            }
+        }
+
+        fn impl_item_scope_tag(item: &hir::ImplItem) -> &'static str {
+            match item.node {
+                hir::ImplItemKind::Method(..) => "method body",
+                hir::ImplItemKind::Const(..) |
+                hir::ImplItemKind::Type(_) => "associated item"
             }
         }
 
@@ -148,6 +165,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                     },
                     Some(ast_map::NodeStmt(_)) => "statement",
                     Some(ast_map::NodeItem(it)) => item_scope_tag(&it),
+                    Some(ast_map::NodeTraitItem(it)) => trait_item_scope_tag(&it),
+                    Some(ast_map::NodeImplItem(it)) => impl_item_scope_tag(&it),
                     Some(_) | None => {
                         err.span_note(span, &unknown_scope());
                         return;
@@ -186,23 +205,31 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                     }
                 };
 
-                match self.map.find(fr.scope.node_id(&self.region_maps)) {
-                    Some(ast_map::NodeBlock(ref blk)) => {
-                        let (msg, opt_span) = explain_span(self, "block", blk.span);
-                        (format!("{} {}", prefix, msg), opt_span)
+                let node = fr.scope.node_id(&self.region_maps);
+                let unknown;
+                let tag = match self.map.find(node) {
+                    Some(ast_map::NodeBlock(_)) |
+                    Some(ast_map::NodeExpr(_)) => "body",
+                    Some(ast_map::NodeItem(it)) => item_scope_tag(&it),
+                    Some(ast_map::NodeTraitItem(it)) => trait_item_scope_tag(&it),
+                    Some(ast_map::NodeImplItem(it)) => impl_item_scope_tag(&it),
+
+                    // this really should not happen, but it does:
+                    // FIXME(#27942)
+                    Some(_) => {
+                        unknown = format!("unexpected node ({}) for scope {:?}.  \
+                                           Please report a bug.",
+                                          self.map.node_to_string(node), fr.scope);
+                        &unknown
                     }
-                    Some(ast_map::NodeItem(it)) => {
-                        let tag = item_scope_tag(&it);
-                        let (msg, opt_span) = explain_span(self, tag, it.span);
-                        (format!("{} {}", prefix, msg), opt_span)
+                    None => {
+                        unknown = format!("unknown node for scope {:?}.  \
+                                           Please report a bug.", fr.scope);
+                        &unknown
                     }
-                    Some(_) | None => {
-                        // this really should not happen, but it does:
-                        // FIXME(#27942)
-                        (format!("{} unknown free region bounded by scope {:?}",
-                                 prefix, fr.scope), None)
-                    }
-                }
+                };
+                let (msg, opt_span) = explain_span(self, tag, self.map.span(node));
+                (format!("{} {}", prefix, msg), opt_span)
             }
 
             ty::ReStatic => ("the static lifetime".to_owned(), None),
@@ -524,10 +551,10 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
     fn note_error_origin(&self,
                          err: &mut DiagnosticBuilder<'tcx>,
-                         origin: &TypeOrigin)
+                         cause: &ObligationCause<'tcx>)
     {
-        match origin {
-            &TypeOrigin::MatchExpressionArm(_, arm_span, source) => match source {
+        match cause.code {
+            ObligationCauseCode::MatchExpressionArm { arm_span, source } => match source {
                 hir::MatchSource::IfLetDesugar {..} => {
                     err.span_note(arm_span, "`if let` arm with an incompatible type");
                 }
@@ -541,7 +568,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
     pub fn note_type_err(&self,
                          diag: &mut DiagnosticBuilder<'tcx>,
-                         origin: TypeOrigin,
+                         cause: &ObligationCause<'tcx>,
                          secondary_span: Option<(Span, String)>,
                          values: Option<ValuePairs<'tcx>>,
                          terr: &TypeError<'tcx>)
@@ -558,7 +585,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             }
         };
 
-        let span = origin.span();
+        let span = cause.span;
 
         if let Some((expected, found)) = expected_found {
             let is_simple_error = if let &TypeError::Sorts(ref values) = terr {
@@ -588,7 +615,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             diag.span_label(sp, &msg);
         }
 
-        self.note_error_origin(diag, &origin);
+        self.note_error_origin(diag, &cause);
         self.check_and_note_conflicting_crates(diag, terr, span);
         self.tcx.note_and_explain_type_err(diag, terr, span);
     }
@@ -598,17 +625,17 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                          terr: &TypeError<'tcx>)
                                          -> DiagnosticBuilder<'tcx>
     {
-        let span = trace.origin.span();
-        let failure_str = trace.origin.as_failure_str();
-        let mut diag = match trace.origin {
-            TypeOrigin::IfExpressionWithNoElse(_) => {
+        let span = trace.cause.span;
+        let failure_str = trace.cause.as_failure_str();
+        let mut diag = match trace.cause.code {
+            ObligationCauseCode::IfExpressionWithNoElse => {
                 struct_span_err!(self.tcx.sess, span, E0317, "{}", failure_str)
             },
             _ => {
                 struct_span_err!(self.tcx.sess, span, E0308, "{}", failure_str)
             },
         };
-        self.note_type_err(&mut diag, trace.origin, None, Some(trace.values), terr);
+        self.note_type_err(&mut diag, &trace.cause, None, Some(trace.values), terr);
         diag
     }
 
@@ -1052,21 +1079,28 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                     match item.node {
                         hir::ItemFn(ref fn_decl, unsafety, constness, _, ref gen, _) => {
                             Some((fn_decl, gen, unsafety, constness, item.name, item.span))
-                        },
-                        _ => None
+                        }
+                        _ => None,
                     }
                 }
                 ast_map::NodeImplItem(item) => {
-                    match item.node {
-                        hir::ImplItemKind::Method(ref sig, _) => {
-                            Some((&sig.decl,
-                                  &sig.generics,
-                                  sig.unsafety,
-                                  sig.constness,
-                                  item.name,
-                                  item.span))
+                    let id = self.tcx.map.get_parent(item.id);
+                    if let Some(ast_map::NodeItem(parent_scope)) = self.tcx.map.find(id) {
+                        if let hir::ItemImpl(_, _, _, None, _, _) = parent_scope.node {
+                            // this impl scope implements a trait, do not recomend
+                            // using explicit lifetimes (#37363)
+                            return;
                         }
-                        _ => None,
+                    }
+                    if let hir::ImplItemKind::Method(ref sig, _) = item.node {
+                        Some((&sig.decl,
+                              &sig.generics,
+                              sig.unsafety,
+                              sig.constness,
+                              item.name,
+                              item.span))
+                    } else {
+                        None
                     }
                 },
                 ast_map::NodeTraitItem(item) => {
@@ -1079,12 +1113,12 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                   item.name,
                                   item.span))
                         }
-                        _ => None
+                        _ => None,
                     }
                 }
-                _ => None
+                _ => None,
             },
-            None => None
+            None => None,
         };
         let (fn_decl, generics, unsafety, constness, name, span)
                                     = node_inner.expect("expect item fn");
@@ -1211,7 +1245,7 @@ impl<'a, 'gcx, 'tcx> Rebuilder<'a, 'gcx, 'tcx> {
                 names.push(lt_name);
             }
             names.sort();
-            let name = token::intern(&names[0]);
+            let name = Symbol::intern(&names[0]);
             return (name_to_dummy_lifetime(name), Kept);
         }
         return (self.life_giver.give_lifetime(), Fresh);
@@ -1432,11 +1466,11 @@ impl<'a, 'gcx, 'tcx> Rebuilder<'a, 'gcx, 'tcx> {
                     }
                     ty_queue.push(&mut_ty.ty);
                 }
-                hir::TyPath(ref maybe_qself, ref path) => {
-                    match self.tcx.expect_def(cur_ty.id) {
+                hir::TyPath(hir::QPath::Resolved(ref maybe_qself, ref path)) => {
+                    match path.def {
                         Def::Enum(did) | Def::TyAlias(did) |
                         Def::Struct(did) | Def::Union(did) => {
-                            let generics = self.tcx.lookup_generics(did);
+                            let generics = self.tcx.item_generics(did);
 
                             let expected =
                                 generics.regions.len() as u32;
@@ -1468,15 +1502,12 @@ impl<'a, 'gcx, 'tcx> Rebuilder<'a, 'gcx, 'tcx> {
                             };
                             let new_path = self.rebuild_path(rebuild_info, lifetime);
                             let qself = maybe_qself.as_ref().map(|qself| {
-                                hir::QSelf {
-                                    ty: self.rebuild_arg_ty_or_output(&qself.ty, lifetime,
-                                                                      anon_nums, region_names),
-                                    position: qself.position
-                                }
+                                self.rebuild_arg_ty_or_output(qself, lifetime,
+                                                              anon_nums, region_names)
                             });
                             let to = hir::Ty {
                                 id: cur_ty.id,
-                                node: hir::TyPath(qself, new_path),
+                                node: hir::TyPath(hir::QPath::Resolved(qself, P(new_path))),
                                 span: cur_ty.span
                             };
                             new_ty = self.rebuild_ty(new_ty, P(to));
@@ -1601,6 +1632,7 @@ impl<'a, 'gcx, 'tcx> Rebuilder<'a, 'gcx, 'tcx> {
                 hir::AngleBracketedParameters(hir::AngleBracketedParameterData {
                     lifetimes: new_lts.into(),
                     types: new_types,
+                    infer_types: data.infer_types,
                     bindings: new_bindings,
                })
             }
@@ -1615,6 +1647,7 @@ impl<'a, 'gcx, 'tcx> Rebuilder<'a, 'gcx, 'tcx> {
         hir::Path {
             span: path.span,
             global: path.global,
+            def: path.def,
             segments: new_segs.into()
         }
     }
@@ -1688,18 +1721,18 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 if let Some((expected, found)) = self.values_str(&trace.values) {
                     // FIXME: do we want a "the" here?
                     err.span_note(
-                        trace.origin.span(),
+                        trace.cause.span,
                         &format!("...so that {} (expected {}, found {})",
-                                 trace.origin.as_requirement_str(), expected, found));
+                                 trace.cause.as_requirement_str(), expected, found));
                 } else {
                     // FIXME: this really should be handled at some earlier stage. Our
                     // handling of region checking when type errors are present is
                     // *terrible*.
 
                     err.span_note(
-                        trace.origin.span(),
+                        trace.cause.span,
                         &format!("...so that {}",
-                                 trace.origin.as_requirement_str()));
+                                 trace.cause.as_requirement_str()));
                 }
             }
             infer::Reborrow(span) => {
@@ -1923,7 +1956,7 @@ impl LifeGiver {
             let mut s = String::from("'");
             s.push_str(&num_to_string(self.counter.get()));
             if !self.taken.contains(&s) {
-                lifetime = name_to_dummy_lifetime(token::intern(&s[..]));
+                lifetime = name_to_dummy_lifetime(Symbol::intern(&s));
                 self.generated.borrow_mut().push(lifetime);
                 break;
             }
@@ -1954,3 +1987,45 @@ fn name_to_dummy_lifetime(name: ast::Name) -> hir::Lifetime {
                     span: syntax_pos::DUMMY_SP,
                     name: name }
 }
+
+impl<'tcx> ObligationCause<'tcx> {
+    fn as_failure_str(&self) -> &'static str {
+        use traits::ObligationCauseCode::*;
+        match self.code {
+            CompareImplMethodObligation { .. } => "method not compatible with trait",
+            MatchExpressionArm { source, .. } => match source {
+                hir::MatchSource::IfLetDesugar{..} => "`if let` arms have incompatible types",
+                _ => "match arms have incompatible types",
+            },
+            IfExpression => "if and else have incompatible types",
+            IfExpressionWithNoElse => "if may be missing an else clause",
+            EquatePredicate => "equality predicate not satisfied",
+            MainFunctionType => "main function has wrong type",
+            StartFunctionType => "start function has wrong type",
+            IntrinsicType => "intrinsic has wrong type",
+            MethodReceiver => "mismatched method receiver",
+            _ => "mismatched types",
+        }
+    }
+
+    fn as_requirement_str(&self) -> &'static str {
+        use traits::ObligationCauseCode::*;
+        match self.code {
+            CompareImplMethodObligation { .. } => "method type is compatible with trait",
+            ExprAssignable => "expression is assignable",
+            MatchExpressionArm { source, .. } => match source {
+                hir::MatchSource::IfLetDesugar{..} => "`if let` arms have compatible types",
+                _ => "match arms have compatible types",
+            },
+            IfExpression => "if and else have compatible types",
+            IfExpressionWithNoElse => "if missing an else returns ()",
+            EquatePredicate => "equality where clause is satisfied",
+            MainFunctionType => "`main` function has the correct type",
+            StartFunctionType => "`start` function has the correct type",
+            IntrinsicType => "intrinsic has the correct type",
+            MethodReceiver => "method receiver has the correct type",
+            _ => "types are compatible",
+        }
+    }
+}
+

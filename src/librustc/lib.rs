@@ -24,15 +24,13 @@
 #![cfg_attr(not(stage0), deny(warnings))]
 
 #![feature(associated_consts)]
-#![feature(borrow_state)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(collections)]
 #![feature(conservative_impl_trait)]
 #![feature(const_fn)]
 #![feature(core_intrinsics)]
-#![cfg_attr(stage0, feature(dotdot_in_tuple_patterns))]
-#![feature(enumset)]
+#![cfg_attr(stage0, feature(item_like_imports))]
 #![feature(libc)]
 #![feature(nonzero)]
 #![feature(quote)]
@@ -40,7 +38,7 @@
 #![feature(rustc_private)]
 #![feature(slice_patterns)]
 #![feature(staged_api)]
-#![cfg_attr(stage0, feature(question_mark))]
+#![feature(unboxed_closures)]
 #![cfg_attr(test, feature(test))]
 
 extern crate arena;

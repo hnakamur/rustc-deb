@@ -248,13 +248,8 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
             let vtable = common::fulfill_obligation(ccx.shared(), DUMMY_SP, trait_ref);
             if let traits::VtableImpl(vtable_impl) = vtable {
                 let name = ccx.tcx().item_name(instance.def);
-                let ac = ccx.tcx().impl_or_trait_items(vtable_impl.impl_def_id)
-                    .iter().filter_map(|&def_id| {
-                        match ccx.tcx().impl_or_trait_item(def_id) {
-                            ty::ConstTraitItem(ac) => Some(ac),
-                            _ => None
-                        }
-                    }).find(|ic| ic.name == name);
+                let ac = ccx.tcx().associated_items(vtable_impl.impl_def_id)
+                    .find(|item| item.kind == ty::AssociatedKind::Const && item.name == name);
                 if let Some(ac) = ac {
                     instance = Instance::new(ac.def_id, vtable_impl.substs);
                 }
@@ -557,14 +552,6 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                     }
                 }
                 failure?;
-
-                // FIXME Shouldn't need to manually trigger closure instantiations.
-                if let mir::AggregateKind::Closure(def_id, substs) = *kind {
-                    use closure;
-                    closure::trans_closure_body_via_mir(self.ccx,
-                                                        def_id,
-                                                        self.monomorphize(&substs));
-                }
 
                 match *kind {
                     mir::AggregateKind::Array => {

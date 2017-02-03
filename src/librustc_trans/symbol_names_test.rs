@@ -15,7 +15,7 @@
 //! paths etc in all kinds of annoying scenarios.
 
 use rustc::hir;
-use rustc::hir::intravisit::{self, Visitor};
+use rustc::hir::intravisit::{self, Visitor, NestedVisitorMap};
 use syntax::ast;
 
 use common::SharedCrateContext;
@@ -35,7 +35,8 @@ pub fn report_symbol_names(scx: &SharedCrateContext) {
 
     let _ignore = tcx.dep_graph.in_ignore();
     let mut visitor = SymbolNamesTest { scx: scx };
-    tcx.map.krate().visit_all_items(&mut visitor);
+    // FIXME(#37712) could use ItemLikeVisitor if trait items were item-like
+    tcx.map.krate().visit_all_item_likes(&mut visitor.as_deep_visitor());
 }
 
 struct SymbolNamesTest<'a, 'tcx:'a> {
@@ -66,6 +67,10 @@ impl<'a, 'tcx> SymbolNamesTest<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> Visitor<'tcx> for SymbolNamesTest<'a, 'tcx> {
+    fn nested_visit_map<'this>(&'this mut self) -> NestedVisitorMap<'this, 'tcx> {
+        NestedVisitorMap::None
+    }
+
     fn visit_item(&mut self, item: &'tcx hir::Item) {
         self.process_attrs(item.id);
         intravisit::walk_item(self, item);
