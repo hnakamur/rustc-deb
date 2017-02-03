@@ -35,8 +35,8 @@ mod style;
 mod errors;
 mod features;
 mod cargo;
-mod cargo_lock;
 mod pal;
+mod deps;
 
 fn main() {
     let path = env::args_os().skip(1).next().expect("need an argument");
@@ -48,8 +48,8 @@ fn main() {
     errors::check(&path, &mut bad);
     cargo::check(&path, &mut bad);
     features::check(&path, &mut bad);
-    cargo_lock::check(&path, &mut bad);
     pal::check(&path, &mut bad);
+    deps::check(&path, &mut bad);
 
     if bad {
         panic!("some tidy checks failed");
@@ -66,6 +66,7 @@ fn filter_dirs(path: &Path) -> bool {
         "src/rustllvm",
         "src/rust-installer",
         "src/liblibc",
+        "src/vendor",
     ];
     skip.iter().any(|p| path.ends_with(p))
 }

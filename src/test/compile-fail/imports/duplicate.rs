@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(item_like_imports)]
-
 mod a {
     pub fn foo() {}
 }
@@ -46,9 +44,9 @@ mod g {
 fn main() {
     e::foo();
     f::foo(); //~ ERROR `foo` is ambiguous
-              //~| NOTE Consider adding an explicit import of `foo` to disambiguate
+              //~| NOTE consider adding an explicit import of `foo` to disambiguate
     g::foo(); //~ ERROR `foo` is ambiguous
-              //~| NOTE Consider adding an explicit import of `foo` to disambiguate
+              //~| NOTE consider adding an explicit import of `foo` to disambiguate
 }
 
 mod ambiguous_module_errors {

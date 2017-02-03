@@ -11,9 +11,6 @@
 // no-prefer-dynamic
 // compile-flags:--crate-type proc-macro
 
-#![feature(proc_macro)]
-#![feature(proc_macro_lib)]
-
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
@@ -21,7 +18,7 @@ use proc_macro::TokenStream;
 #[proc_macro_derive(AToB)]
 pub fn derive1(input: TokenStream) -> TokenStream {
     println!("input1: {:?}", input.to_string());
-    assert_eq!(input.to_string(), "#[derive(BToC)]\nstruct A;\n");
+    assert_eq!(input.to_string(), "struct A;\n");
     "#[derive(BToC)] struct B;".parse().unwrap()
 }
 

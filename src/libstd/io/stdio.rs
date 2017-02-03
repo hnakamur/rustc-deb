@@ -10,7 +10,7 @@
 
 use io::prelude::*;
 
-use cell::{RefCell, BorrowState};
+use cell::RefCell;
 use fmt;
 use io::lazy::Lazy;
 use io::{self, BufReader, LineWriter};
@@ -81,11 +81,11 @@ impl Read for StdinRaw {
 }
 impl Write for StdoutRaw {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.0.write(buf) }
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> { self.0.flush() }
 }
 impl Write for StderrRaw {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.0.write(buf) }
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> { self.0.flush() }
 }
 
 enum Maybe<T> {
@@ -318,10 +318,11 @@ impl<'a> BufRead for StdinLock<'a> {
 ///
 /// Each handle shares a global buffer of data to be written to the standard
 /// output stream. Access is also synchronized via a lock and explicit control
-/// over locking is available via the `lock` method.
+/// over locking is available via the [`lock()`] method.
 ///
 /// Created by the [`io::stdout`] method.
 ///
+/// [`lock()`]: #method.lock
 /// [`io::stdout`]: fn.stdout.html
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Stdout {
@@ -637,8 +638,8 @@ pub fn _print(args: fmt::Arguments) {
         LocalKeyState::Destroyed => stdout().write_fmt(args),
         LocalKeyState::Valid => {
             LOCAL_STDOUT.with(|s| {
-                if s.borrow_state() == BorrowState::Unused {
-                    if let Some(w) = s.borrow_mut().as_mut() {
+                if let Ok(mut borrowed) = s.try_borrow_mut() {
+                    if let Some(w) = borrowed.as_mut() {
                         return w.write_fmt(args);
                     }
                 }

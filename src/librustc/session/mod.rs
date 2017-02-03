@@ -8,6 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+pub use self::code_stats::{CodeStats, DataTypeKind, FieldInfo};
+pub use self::code_stats::{SizeKind, TypeSizeInfo, VariantInfo};
+
 use dep_graph::DepGraph;
 use hir::def_id::{CrateNum, DefIndex};
 use hir::svh::Svh;
@@ -17,7 +20,7 @@ use middle::dependency_format;
 use session::search_paths::PathKind;
 use session::config::DebugInfoLevel;
 use ty::tls;
-use util::nodemap::{NodeMap, FnvHashMap, FnvHashSet};
+use util::nodemap::{NodeMap, FxHashMap, FxHashSet};
 use util::common::duration_to_secs_str;
 use mir::transform as mir_pass;
 
@@ -28,7 +31,7 @@ use syntax::json::JsonEmitter;
 use syntax::feature_gate;
 use syntax::parse;
 use syntax::parse::ParseSess;
-use syntax::parse::token;
+use syntax::symbol::Symbol;
 use syntax::{ast, codemap};
 use syntax::feature_gate::AttributeType;
 use syntax_pos::{Span, MultiSpan};
@@ -49,6 +52,7 @@ use std::fmt;
 use std::time::Duration;
 use libc::c_int;
 
+mod code_stats;
 pub mod config;
 pub mod filesearch;
 pub mod search_paths;
@@ -78,7 +82,7 @@ pub struct Session {
     /// Set of (LintId, span, message) tuples tracking lint (sub)diagnostics
     /// that have been set once, but should not be set again, in order to avoid
     /// redundantly verbose output (Issue #24690).
-    pub one_time_diagnostics: RefCell<FnvHashSet<(lint::LintId, Span, String)>>,
+    pub one_time_diagnostics: RefCell<FxHashSet<(lint::LintId, Span, String)>>,
     pub plugin_llvm_passes: RefCell<Vec<String>>,
     pub mir_passes: RefCell<mir_pass::Passes>,
     pub plugin_attributes: RefCell<Vec<(String, AttributeType)>>,
@@ -89,12 +93,15 @@ pub struct Session {
     // forms a unique global identifier for the crate. It is used to allow
     // multiple crates with the same name to coexist. See the
     // trans::back::symbol_names module for more information.
-    pub crate_disambiguator: RefCell<token::InternedString>,
+    pub crate_disambiguator: RefCell<Symbol>,
     pub features: RefCell<feature_gate::Features>,
 
     /// The maximum recursion limit for potentially infinitely recursive
     /// operations such as auto-dereference and monomorphization.
     pub recursion_limit: Cell<usize>,
+
+    /// The maximum length of types during monomorphization.
+    pub type_length_limit: Cell<usize>,
 
     /// The metadata::creader module may inject an allocator/panic_runtime
     /// dependency if it didn't already find one, and this tracks what was
@@ -111,6 +118,9 @@ pub struct Session {
 
     /// Some measurements that are being gathered during compilation.
     pub perf_stats: PerfStats,
+
+    /// Data about code being compiled, gathered during compilation.
+    pub code_stats: RefCell<CodeStats>,
 
     next_node_id: Cell<ast::NodeId>,
 }
@@ -129,8 +139,8 @@ pub struct PerfStats {
 }
 
 impl Session {
-    pub fn local_crate_disambiguator(&self) -> token::InternedString {
-        self.crate_disambiguator.borrow().clone()
+    pub fn local_crate_disambiguator(&self) -> Symbol {
+        *self.crate_disambiguator.borrow()
     }
     pub fn struct_span_warn<'a, S: Into<MultiSpan>>(&'a self,
                                                     sp: S,
@@ -258,14 +268,15 @@ impl Session {
     pub fn unimpl(&self, msg: &str) -> ! {
         self.diagnostic().unimpl(msg)
     }
-    pub fn add_lint(&self,
-                    lint: &'static lint::Lint,
-                    id: ast::NodeId,
-                    sp: Span,
-                    msg: String)
+    pub fn add_lint<S: Into<MultiSpan>>(&self,
+                                        lint: &'static lint::Lint,
+                                        id: ast::NodeId,
+                                        sp: S,
+                                        msg: String)
     {
         self.add_lint_diagnostic(lint, id, (sp, &msg[..]))
     }
+
     pub fn add_lint_diagnostic<M>(&self,
                                   lint: &'static lint::Lint,
                                   id: ast::NodeId,
@@ -603,15 +614,16 @@ pub fn build_session_(sopts: config::Options,
         working_dir: env::current_dir().unwrap(),
         lint_store: RefCell::new(lint::LintStore::new()),
         lints: RefCell::new(NodeMap()),
-        one_time_diagnostics: RefCell::new(FnvHashSet()),
+        one_time_diagnostics: RefCell::new(FxHashSet()),
         plugin_llvm_passes: RefCell::new(Vec::new()),
         mir_passes: RefCell::new(mir_pass::Passes::new()),
         plugin_attributes: RefCell::new(Vec::new()),
         crate_types: RefCell::new(Vec::new()),
-        dependency_formats: RefCell::new(FnvHashMap()),
-        crate_disambiguator: RefCell::new(token::intern("").as_str()),
+        dependency_formats: RefCell::new(FxHashMap()),
+        crate_disambiguator: RefCell::new(Symbol::intern("")),
         features: RefCell::new(feature_gate::Features::new()),
         recursion_limit: Cell::new(64),
+        type_length_limit: Cell::new(1048576),
         next_node_id: Cell::new(NodeId::new(1)),
         injected_allocator: Cell::new(None),
         injected_panic_runtime: Cell::new(None),
@@ -623,7 +635,8 @@ pub fn build_session_(sopts: config::Options,
             incr_comp_hashes_count: Cell::new(0),
             incr_comp_bytes_hashed: Cell::new(0),
             symbol_hash_time: Cell::new(Duration::from_secs(0)),
-        }
+        },
+        code_stats: RefCell::new(CodeStats::new()),
     };
 
     init_llvm(&sess);

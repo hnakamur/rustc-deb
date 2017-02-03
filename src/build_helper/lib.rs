@@ -21,7 +21,8 @@ pub fn run(cmd: &mut Command) {
 pub fn run_silent(cmd: &mut Command) {
     let status = match cmd.status() {
         Ok(status) => status,
-        Err(e) => fail(&format!("failed to execute command: {}", e)),
+        Err(e) => fail(&format!("failed to execute command: {:?}\nerror: {}",
+                                cmd, e)),
     };
     if !status.success() {
         fail(&format!("command did not execute successfully: {:?}\n\
@@ -46,6 +47,8 @@ pub fn cc2ar(cc: &Path, target: &str) -> Option<PathBuf> {
         None
     } else if target.contains("musl") {
         Some(PathBuf::from("ar"))
+    } else if target.contains("openbsd") {
+        Some(PathBuf::from("ar"))
     } else {
         let parent = cc.parent().unwrap();
         let file = cc.file_name().unwrap().to_str().unwrap();
@@ -60,10 +63,21 @@ pub fn cc2ar(cc: &Path, target: &str) -> Option<PathBuf> {
     }
 }
 
+pub fn make(host: &str) -> PathBuf {
+    if host.contains("bitrig") || host.contains("dragonfly") ||
+        host.contains("freebsd") || host.contains("netbsd") ||
+        host.contains("openbsd") {
+        PathBuf::from("gmake")
+    } else {
+        PathBuf::from("make")
+    }
+}
+
 pub fn output(cmd: &mut Command) -> String {
     let output = match cmd.stderr(Stdio::inherit()).output() {
         Ok(status) => status,
-        Err(e) => fail(&format!("failed to execute command: {}", e)),
+        Err(e) => fail(&format!("failed to execute command: {:?}\nerror: {}",
+                                cmd, e)),
     };
     if !output.status.success() {
         panic!("command did not execute successfully: {:?}\n\

@@ -28,7 +28,7 @@ use cmake;
 use gcc;
 
 use Build;
-use util::up_to_date;
+use util::{self, up_to_date};
 
 /// Compile LLVM for `target`.
 pub fn llvm(build: &Build, target: &str) {
@@ -58,6 +58,7 @@ pub fn llvm(build: &Build, target: &str) {
 
     println!("Building LLVM for {}", target);
 
+    let _time = util::timeit();
     let _ = fs::remove_dir_all(&dst.join("build"));
     t!(fs::create_dir_all(&dst.join("build")));
     let assertions = if build.config.llvm_assertions {"ON"} else {"OFF"};
@@ -67,12 +68,20 @@ pub fn llvm(build: &Build, target: &str) {
     if build.config.ninja {
         cfg.generator("Ninja");
     }
+
+    let profile = match (build.config.llvm_optimize, build.config.llvm_release_debuginfo) {
+        (false, _) => "Debug",
+        (true, false) => "Release",
+        (true, true) => "RelWithDebInfo",
+    };
+
     cfg.target(target)
        .host(&build.config.build)
        .out_dir(&dst)
-       .profile(if build.config.llvm_optimize {"Release"} else {"Debug"})
+       .profile(profile)
        .define("LLVM_ENABLE_ASSERTIONS", assertions)
-       .define("LLVM_TARGETS_TO_BUILD", "X86;ARM;AArch64;Mips;PowerPC;SystemZ;JSBackend")
+       .define("LLVM_TARGETS_TO_BUILD",
+               "X86;ARM;AArch64;Mips;PowerPC;SystemZ;JSBackend;MSP430")
        .define("LLVM_INCLUDE_EXAMPLES", "OFF")
        .define("LLVM_INCLUDE_TESTS", "OFF")
        .define("LLVM_INCLUDE_DOCS", "OFF")
@@ -100,10 +109,10 @@ pub fn llvm(build: &Build, target: &str) {
 
     // MSVC handles compiler business itself
     if !target.contains("msvc") {
-        if build.config.ccache {
-           cfg.define("CMAKE_C_COMPILER", "ccache")
+        if let Some(ref ccache) = build.config.ccache {
+           cfg.define("CMAKE_C_COMPILER", ccache)
               .define("CMAKE_C_COMPILER_ARG1", build.cc(target))
-              .define("CMAKE_CXX_COMPILER", "ccache")
+              .define("CMAKE_CXX_COMPILER", ccache)
               .define("CMAKE_CXX_COMPILER_ARG1", build.cxx(target));
         } else {
            cfg.define("CMAKE_C_COMPILER", build.cc(target))
@@ -150,6 +159,17 @@ pub fn test_helpers(build: &Build, target: &str) {
     println!("Building test helpers");
     t!(fs::create_dir_all(&dst));
     let mut cfg = gcc::Config::new();
+
+    // We may have found various cross-compilers a little differently due to our
+    // extra configuration, so inform gcc of these compilers. Note, though, that
+    // on MSVC we still need gcc's detection of env vars (ugh).
+    if !target.contains("msvc") {
+        if let Some(ar) = build.ar(target) {
+            cfg.archiver(ar);
+        }
+        cfg.compiler(build.cc(target));
+    }
+
     cfg.cargo_metadata(false)
        .out_dir(&dst)
        .target(target)

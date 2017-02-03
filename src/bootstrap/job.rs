@@ -37,17 +37,95 @@
 //! Note that this module has a #[cfg(windows)] above it as none of this logic
 //! is required on Unix.
 
-extern crate kernel32;
-extern crate winapi;
+#![allow(bad_style, dead_code)]
 
 use std::env;
 use std::io;
 use std::mem;
 
-use self::winapi::*;
-use self::kernel32::*;
+type HANDLE = *mut u8;
+type BOOL = i32;
+type DWORD = u32;
+type LPHANDLE = *mut HANDLE;
+type LPVOID = *mut u8;
+type JOBOBJECTINFOCLASS = i32;
+type SIZE_T = usize;
+type LARGE_INTEGER = i64;
+type UINT = u32;
+type ULONG_PTR = usize;
+type ULONGLONG = u64;
+
+const FALSE: BOOL = 0;
+const DUPLICATE_SAME_ACCESS: DWORD = 0x2;
+const PROCESS_DUP_HANDLE: DWORD = 0x40;
+const JobObjectExtendedLimitInformation: JOBOBJECTINFOCLASS = 9;
+const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x2000;
+const SEM_FAILCRITICALERRORS: UINT = 0x0001;
+const SEM_NOGPFAULTERRORBOX: UINT = 0x0002;
+
+extern "system" {
+    fn CreateJobObjectW(lpJobAttributes: *mut u8, lpName: *const u8) -> HANDLE;
+    fn CloseHandle(hObject: HANDLE) -> BOOL;
+    fn GetCurrentProcess() -> HANDLE;
+    fn OpenProcess(dwDesiredAccess: DWORD,
+                   bInheritHandle: BOOL,
+                   dwProcessId: DWORD) -> HANDLE;
+    fn DuplicateHandle(hSourceProcessHandle: HANDLE,
+                       hSourceHandle: HANDLE,
+                       hTargetProcessHandle: HANDLE,
+                       lpTargetHandle: LPHANDLE,
+                       dwDesiredAccess: DWORD,
+                       bInheritHandle: BOOL,
+                       dwOptions: DWORD) -> BOOL;
+    fn AssignProcessToJobObject(hJob: HANDLE, hProcess: HANDLE) -> BOOL;
+    fn SetInformationJobObject(hJob: HANDLE,
+                               JobObjectInformationClass: JOBOBJECTINFOCLASS,
+                               lpJobObjectInformation: LPVOID,
+                               cbJobObjectInformationLength: DWORD) -> BOOL;
+    fn SetErrorMode(mode: UINT) -> UINT;
+}
+
+#[repr(C)]
+struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+    BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    IoInfo: IO_COUNTERS,
+    ProcessMemoryLimit: SIZE_T,
+    JobMemoryLimit: SIZE_T,
+    PeakProcessMemoryUsed: SIZE_T,
+    PeakJobMemoryUsed: SIZE_T,
+}
+
+#[repr(C)]
+struct IO_COUNTERS {
+    ReadOperationCount: ULONGLONG,
+    WriteOperationCount: ULONGLONG,
+    OtherOperationCount: ULONGLONG,
+    ReadTransferCount: ULONGLONG,
+    WriteTransferCount: ULONGLONG,
+    OtherTransferCount: ULONGLONG,
+}
+
+#[repr(C)]
+struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+    PerProcessUserTimeLimit: LARGE_INTEGER,
+    PerJobUserTimeLimit: LARGE_INTEGER,
+    LimitFlags: DWORD,
+    MinimumWorkingsetSize: SIZE_T,
+    MaximumWorkingsetSize: SIZE_T,
+    ActiveProcessLimit: DWORD,
+    Affinity: ULONG_PTR,
+    PriorityClass: DWORD,
+    SchedulingClass: DWORD,
+}
 
 pub unsafe fn setup() {
+    // Tell Windows to not show any UI on errors (such as not finding a required dll
+    // during startup or terminating abnormally).  This is important for running tests,
+    // since some of them use abnormal termination by design.
+    // This mode is inherited by all child processes.
+    let mode = SetErrorMode(SEM_NOGPFAULTERRORBOX); // read inherited flags
+    SetErrorMode(mode | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+
     // Create a new job object for us to use
     let job = CreateJobObjectW(0 as *mut _, 0 as *const _);
     assert!(job != 0 as *mut _, "{}", io::Error::last_os_error());

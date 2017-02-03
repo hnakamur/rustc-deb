@@ -12,7 +12,7 @@ use hir::map::DefPathData;
 use hir::def_id::{CrateNum, DefId, CRATE_DEF_INDEX, LOCAL_CRATE};
 use ty::{self, Ty, TyCtxt};
 use syntax::ast;
-use syntax::parse::token;
+use syntax::symbol::Symbol;
 
 use std::cell::Cell;
 
@@ -94,14 +94,14 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                     if let Some(extern_crate_def_id) = opt_extern_crate {
                         self.push_item_path(buffer, extern_crate_def_id);
                     } else {
-                        buffer.push(&self.crate_name(cnum));
+                        buffer.push(&self.crate_name(cnum).as_str());
                     }
                 }
             }
             RootMode::Absolute => {
                 // In absolute mode, just write the crate name
                 // unconditionally.
-                buffer.push(&self.original_crate_name(cnum));
+                buffer.push(&self.original_crate_name(cnum).as_str());
             }
         }
     }
@@ -126,7 +126,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                         return true;
                     }
                     None => {
-                        buffer.push(&self.crate_name(cur_def.krate));
+                        buffer.push(&self.crate_name(cur_def.krate).as_str());
                         cur_path.iter().rev().map(|segment| buffer.push(&segment.as_str())).count();
                         return true;
                     }
@@ -136,7 +136,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
             cur_path.push(self.sess.cstore.def_key(cur_def)
                               .disambiguated_data.data.get_opt_name().unwrap_or_else(||
-                token::intern("<unnamed>")));
+                Symbol::intern("<unnamed>")));
             match visible_parent_map.get(&cur_def) {
                 Some(&def) => cur_def = def,
                 None => return false,
@@ -218,7 +218,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         // users may find it useful. Currently, we omit the parent if
         // the impl is either in the same module as the self-type or
         // as the trait.
-        let self_ty = self.lookup_item_type(impl_def_id).ty;
+        let self_ty = self.item_type(impl_def_id);
         let in_self_mod = match characteristic_def_id_of_type(self_ty) {
             None => false,
             Some(ty_def_id) => self.parent_def_id(ty_def_id) == Some(parent_def_id),
@@ -316,7 +316,7 @@ pub fn characteristic_def_id_of_type(ty: Ty) -> Option<DefId> {
     match ty.sty {
         ty::TyAdt(adt_def, _) => Some(adt_def.did),
 
-        ty::TyTrait(ref data) => Some(data.principal.def_id()),
+        ty::TyDynamic(data, ..) => data.principal().map(|p| p.def_id()),
 
         ty::TyArray(subty, _) |
         ty::TySlice(subty) |

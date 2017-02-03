@@ -31,7 +31,6 @@
 #![cfg_attr(test, feature(test))]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![cfg_attr(stage0, feature(dotdot_in_tuple_patterns))]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
@@ -111,6 +110,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
 
     add_early_builtin!(sess,
                        UnusedParens,
+                       UnusedImportBraces,
                        );
 
     add_early_builtin_with_new!(sess,
@@ -129,7 +129,6 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                  NonCamelCaseTypes,
                  NonSnakeCase,
                  NonUpperCaseGlobals,
-                 UnusedImportBraces,
                  NonShorthandFieldPatterns,
                  UnusedUnsafe,
                  UnsafeCode,
@@ -145,7 +144,6 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                  );
 
     add_builtin_with_new!(sess,
-                          Deprecated,
                           TypeLimits,
                           MissingDoc,
                           MissingDebugImplementations,
@@ -231,6 +229,14 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         FutureIncompatibleInfo {
             id: LintId::of(EXTRA_REQUIREMENT_IN_IMPL),
             reference: "issue #37166 <https://github.com/rust-lang/rust/issues/37166>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(LEGACY_DIRECTORY_OWNERSHIP),
+            reference: "issue #37872 <https://github.com/rust-lang/rust/issues/37872>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(LEGACY_IMPORTS),
+            reference: "issue #38260 <https://github.com/rust-lang/rust/issues/38260>",
         },
         ]);
 

@@ -17,12 +17,12 @@ use rustc::ty::{self, TyCtxt};
 use syntax::ast;
 use syntax_pos::Span;
 use rustc::dep_graph::DepNode;
-use rustc::hir::intravisit;
+use rustc::hir::itemlikevisit::ItemLikeVisitor;
 use rustc::hir;
 
 pub fn check<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     let mut orphan = OrphanChecker { tcx: tcx };
-    tcx.visit_all_items_in_krate(DepNode::CoherenceOrphanCheck, &mut orphan);
+    tcx.visit_all_item_likes_in_krate(DepNode::CoherenceOrphanCheck, &mut orphan);
 }
 
 struct OrphanChecker<'cx, 'tcx: 'cx> {
@@ -81,13 +81,13 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
                 // defined in this crate.
                 debug!("coherence2::orphan check: inherent impl {}",
                        self.tcx.map.node_to_string(item.id));
-                let self_ty = self.tcx.lookup_item_type(def_id).ty;
+                let self_ty = self.tcx.item_type(def_id);
                 match self_ty.sty {
                     ty::TyAdt(def, _) => {
                         self.check_def_id(item, def.did);
                     }
-                    ty::TyTrait(ref data) => {
-                        self.check_def_id(item, data.principal.def_id());
+                    ty::TyDynamic(ref data, ..) if data.principal().is_some() => {
+                        self.check_def_id(item, data.principal().unwrap().def_id());
                     }
                     ty::TyBox(..) => {
                         match self.tcx.lang_items.require_owned_box() {
@@ -380,8 +380,11 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
     }
 }
 
-impl<'cx, 'tcx, 'v> intravisit::Visitor<'v> for OrphanChecker<'cx, 'tcx> {
+impl<'cx, 'tcx, 'v> ItemLikeVisitor<'v> for OrphanChecker<'cx, 'tcx> {
     fn visit_item(&mut self, item: &hir::Item) {
         self.check_item(item);
+    }
+
+    fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem) {
     }
 }

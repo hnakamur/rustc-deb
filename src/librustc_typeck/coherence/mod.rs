@@ -19,26 +19,24 @@ use hir::def_id::DefId;
 use middle::lang_items::UnsizeTraitLangItem;
 use rustc::ty::subst::Subst;
 use rustc::ty::{self, TyCtxt, TypeFoldable};
-use rustc::traits::{self, Reveal};
+use rustc::traits::{self, ObligationCause, Reveal};
 use rustc::ty::ParameterEnvironment;
 use rustc::ty::{Ty, TyBool, TyChar, TyError};
 use rustc::ty::{TyParam, TyRawPtr};
-use rustc::ty::{TyRef, TyAdt, TyTrait, TyNever, TyTuple};
+use rustc::ty::{TyRef, TyAdt, TyDynamic, TyNever, TyTuple};
 use rustc::ty::{TyStr, TyArray, TySlice, TyFloat, TyInfer, TyInt};
 use rustc::ty::{TyUint, TyClosure, TyBox, TyFnDef, TyFnPtr};
 use rustc::ty::{TyProjection, TyAnon};
 use rustc::ty::util::CopyImplementationError;
 use middle::free_region::FreeRegionMap;
 use CrateCtxt;
-use rustc::infer::{self, InferCtxt, TypeOrigin};
+use rustc::infer::{self, InferCtxt};
 use syntax_pos::Span;
 use rustc::dep_graph::DepNode;
 use rustc::hir::map as hir_map;
-use rustc::hir::intravisit;
+use rustc::hir::itemlikevisit::ItemLikeVisitor;
 use rustc::hir::{Item, ItemImpl};
 use rustc::hir;
-
-use std::rc::Rc;
 
 mod orphan;
 mod overlap;
@@ -53,11 +51,14 @@ struct CoherenceCheckVisitor<'a, 'gcx: 'a + 'tcx, 'tcx: 'a> {
     cc: &'a CoherenceChecker<'a, 'gcx, 'tcx>,
 }
 
-impl<'a, 'gcx, 'tcx, 'v> intravisit::Visitor<'v> for CoherenceCheckVisitor<'a, 'gcx, 'tcx> {
+impl<'a, 'gcx, 'tcx, 'v> ItemLikeVisitor<'v> for CoherenceCheckVisitor<'a, 'gcx, 'tcx> {
     fn visit_item(&mut self, item: &Item) {
         if let ItemImpl(..) = item.node {
             self.cc.check_implementation(item)
         }
+    }
+
+    fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem) {
     }
 }
 
@@ -67,7 +68,7 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
         match ty.sty {
             TyAdt(def, _) => Some(def.did),
 
-            TyTrait(ref t) => Some(t.principal.def_id()),
+            TyDynamic(ref t, ..) => t.principal().map(|p| p.def_id()),
 
             TyBox(_) => self.inference_context.tcx.lang_items.owned_box(),
 
@@ -89,8 +90,9 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
         // Check implementations and traits. This populates the tables
         // containing the inherent methods and extension methods. It also
         // builds up the trait inheritance table.
-        self.crate_context.tcx.visit_all_items_in_krate(DepNode::CoherenceCheckImpl,
-                                                        &mut CoherenceCheckVisitor { cc: self });
+        self.crate_context.tcx.visit_all_item_likes_in_krate(
+            DepNode::CoherenceCheckImpl,
+            &mut CoherenceCheckVisitor { cc: self });
 
         // Populate the table of destructors. It might seem a bit strange to
         // do this here, but it's actually the most convenient place, since
@@ -108,12 +110,10 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
     fn check_implementation(&self, item: &Item) {
         let tcx = self.crate_context.tcx;
         let impl_did = tcx.map.local_def_id(item.id);
-        let self_type = tcx.lookup_item_type(impl_did);
+        let self_type = tcx.item_type(impl_did);
 
         // If there are no traits, then this implementation must have a
         // base type.
-
-        let impl_items = self.create_impl_from_item(item);
 
         if let Some(trait_ref) = self.crate_context.tcx.impl_trait_ref(impl_did) {
             debug!("(checking implementation) adding impl for trait '{:?}', item '{}'",
@@ -133,19 +133,17 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
         } else {
             // Skip inherent impls where the self type is an error
             // type. This occurs with e.g. resolve failures (#30589).
-            if self_type.ty.references_error() {
+            if self_type.references_error() {
                 return;
             }
 
             // Add the implementation to the mapping from implementation to base
             // type def ID, if there is a base type for this implementation and
             // the implementation does not have any associated traits.
-            if let Some(base_def_id) = self.get_base_type_def_id(item.span, self_type.ty) {
+            if let Some(base_def_id) = self.get_base_type_def_id(item.span, self_type) {
                 self.add_inherent_impl(base_def_id, impl_did);
             }
         }
-
-        tcx.impl_or_trait_item_def_ids.borrow_mut().insert(impl_did, Rc::new(impl_items));
     }
 
     fn add_inherent_impl(&self, base_def_id: DefId, impl_def_id: DefId) {
@@ -161,20 +159,6 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
         trait_def.record_local_impl(self.crate_context.tcx, impl_def_id, impl_trait_ref);
     }
 
-    // Converts an implementation in the AST to a vector of items.
-    fn create_impl_from_item(&self, item: &Item) -> Vec<DefId> {
-        match item.node {
-            ItemImpl(.., ref impl_items) => {
-                impl_items.iter()
-                    .map(|impl_item| self.crate_context.tcx.map.local_def_id(impl_item.id))
-                    .collect()
-            }
-            _ => {
-                span_bug!(item.span, "can't convert a non-impl to an impl");
-            }
-        }
-    }
-
     // Destructors
     //
 
@@ -187,18 +171,16 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
         tcx.populate_implementations_for_trait_if_necessary(drop_trait);
         let drop_trait = tcx.lookup_trait_def(drop_trait);
 
-        let impl_items = tcx.impl_or_trait_item_def_ids.borrow();
-
         drop_trait.for_each_impl(tcx, |impl_did| {
-            let items = impl_items.get(&impl_did).unwrap();
+            let items = tcx.associated_item_def_ids(impl_did);
             if items.is_empty() {
                 // We'll error out later. For now, just don't ICE.
                 return;
             }
             let method_def_id = items[0];
 
-            let self_type = tcx.lookup_item_type(impl_did);
-            match self_type.ty.sty {
+            let self_type = tcx.item_type(impl_did);
+            match self_type.sty {
                 ty::TyAdt(type_def, _) => {
                     type_def.set_destructor(method_def_id);
                 }
@@ -254,13 +236,13 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                 return;
             };
 
-            let self_type = tcx.lookup_item_type(impl_did);
+            let self_type = tcx.item_type(impl_did);
             debug!("check_implementations_of_copy: self_type={:?} (bound)",
                    self_type);
 
             let span = tcx.map.span(impl_node_id);
             let param_env = ParameterEnvironment::for_item(tcx, impl_node_id);
-            let self_type = self_type.ty.subst(tcx, &param_env.free_substs);
+            let self_type = self_type.subst(tcx, &param_env.free_substs);
             assert!(!self_type.has_escaping_regions());
 
             debug!("check_implementations_of_copy: self_type={:?} (free)",
@@ -348,7 +330,7 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                 return;
             };
 
-            let source = tcx.lookup_item_type(impl_did).ty;
+            let source = tcx.item_type(impl_did);
             let trait_ref = self.crate_context.tcx.impl_trait_ref(impl_did).unwrap();
             let target = trait_ref.substs.type_at(1);
             debug!("check_implementations_of_coerce_unsized: {:?} -> {:?} (bound)",
@@ -366,12 +348,12 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                    target);
 
             tcx.infer_ctxt(None, Some(param_env), Reveal::ExactMatch).enter(|infcx| {
-                let origin = TypeOrigin::Misc(span);
+                let cause = ObligationCause::misc(span, impl_node_id);
                 let check_mutbl = |mt_a: ty::TypeAndMut<'gcx>,
                                    mt_b: ty::TypeAndMut<'gcx>,
                                    mk_ptr: &Fn(Ty<'gcx>) -> Ty<'gcx>| {
                     if (mt_a.mutbl, mt_b.mutbl) == (hir::MutImmutable, hir::MutMutable) {
-                        infcx.report_mismatched_types(origin,
+                        infcx.report_mismatched_types(&cause,
                                                       mk_ptr(mt_b.ty),
                                                       target,
                                                       ty::error::TypeError::Mutability);
@@ -413,13 +395,13 @@ impl<'a, 'gcx, 'tcx> CoherenceChecker<'a, 'gcx, 'tcx> {
                             .filter_map(|(i, f)| {
                                 let (a, b) = (f.ty(tcx, substs_a), f.ty(tcx, substs_b));
 
-                                if f.unsubst_ty().is_phantom_data() {
+                                if tcx.item_type(f.did).is_phantom_data() {
                                     // Ignore PhantomData fields
                                     return None;
                                 }
 
                                 // Ignore fields that aren't significantly changed
-                                if let Ok(ok) = infcx.sub_types(false, origin, b, a) {
+                                if let Ok(ok) = infcx.sub_types(false, &cause, b, a) {
                                     if ok.obligations.is_empty() {
                                         return None;
                                     }

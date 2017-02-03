@@ -200,7 +200,7 @@ impl PpSourceMode {
     fn call_with_pp_support_hir<'tcx, A, B, F>(&self,
                                                sess: &'tcx Session,
                                                ast_map: &hir_map::Map<'tcx>,
-                                               analysis: &ty::CrateAnalysis,
+                                               analysis: &ty::CrateAnalysis<'tcx>,
                                                resolutions: &Resolutions,
                                                arenas: &'tcx ty::CtxtArenas<'tcx>,
                                                id: &str,
@@ -450,15 +450,15 @@ impl<'ast> PrinterSupport<'ast> for HygieneAnnotation<'ast> {
 impl<'ast> pprust::PpAnn for HygieneAnnotation<'ast> {
     fn post(&self, s: &mut pprust::State, node: pprust::AnnNode) -> io::Result<()> {
         match node {
-            pprust::NodeIdent(&ast::Ident { name: ast::Name(nm), ctxt }) => {
+            pprust::NodeIdent(&ast::Ident { name, ctxt }) => {
                 pp::space(&mut s.s)?;
                 // FIXME #16420: this doesn't display the connections
                 // between syntax contexts
-                s.synth_comment(format!("{}{:?}", nm, ctxt))
+                s.synth_comment(format!("{}{:?}", name.as_u32(), ctxt))
             }
-            pprust::NodeName(&ast::Name(nm)) => {
+            pprust::NodeName(&name) => {
                 pp::space(&mut s.s)?;
-                s.synth_comment(nm.to_string())
+                s.synth_comment(name.as_u32().to_string())
             }
             _ => Ok(()),
         }
@@ -696,13 +696,16 @@ impl fold::Folder for ReplaceBodyWithLoop {
 
 fn print_flowgraph<'a, 'tcx, W: Write>(variants: Vec<borrowck_dot::Variant>,
                                        tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                       code: blocks::Code,
+                                       code: blocks::Code<'tcx>,
                                        mode: PpFlowGraphMode,
                                        mut out: W)
                                        -> io::Result<()> {
     let cfg = match code {
-        blocks::BlockCode(block) => cfg::CFG::new(tcx, &block),
-        blocks::FnLikeCode(fn_like) => cfg::CFG::new(tcx, &fn_like.body()),
+        blocks::Code::Expr(expr) => cfg::CFG::new(tcx, expr),
+        blocks::Code::FnLike(fn_like) => {
+            let body = tcx.map.expr(fn_like.body());
+            cfg::CFG::new(tcx, body)
+        },
     };
     let labelled_edges = mode != PpFlowGraphMode::UnlabelledEdges;
     let lcfg = LabelledCFG {
@@ -717,12 +720,12 @@ fn print_flowgraph<'a, 'tcx, W: Write>(variants: Vec<borrowck_dot::Variant>,
             let r = dot::render(&lcfg, &mut out);
             return expand_err_details(r);
         }
-        blocks::BlockCode(_) => {
+        blocks::Code::Expr(_) => {
             tcx.sess.err("--pretty flowgraph with -Z flowgraph-print annotations requires \
                           fn-like node id.");
             return Ok(());
         }
-        blocks::FnLikeCode(fn_like) => {
+        blocks::Code::FnLike(fn_like) => {
             let (bccx, analysis_data) =
                 borrowck::build_borrowck_dataflow_data_for_fn(tcx, fn_like.to_fn_parts(), &cfg);
 
@@ -817,7 +820,7 @@ pub fn print_after_parsing(sess: &Session,
 
 pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
                                                 ast_map: &hir_map::Map<'tcx>,
-                                                analysis: &ty::CrateAnalysis,
+                                                analysis: &ty::CrateAnalysis<'tcx>,
                                                 resolutions: &Resolutions,
                                                 input: &Input,
                                                 krate: &ast::Crate,
@@ -934,7 +937,7 @@ pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
 // Instead, we call that function ourselves.
 fn print_with_analysis<'tcx, 'a: 'tcx>(sess: &'a Session,
                                        ast_map: &hir_map::Map<'tcx>,
-                                       analysis: &ty::CrateAnalysis,
+                                       analysis: &ty::CrateAnalysis<'tcx>,
                                        resolutions: &Resolutions,
                                        crate_name: &str,
                                        arenas: &'tcx ty::CtxtArenas<'tcx>,
@@ -990,8 +993,7 @@ fn print_with_analysis<'tcx, 'a: 'tcx>(sess: &'a Session,
                     tcx.sess.fatal(&format!("--pretty flowgraph couldn't find id: {}", nodeid))
                 });
 
-                let code = blocks::Code::from_node(node);
-                match code {
+                match blocks::Code::from_node(&tcx.map, nodeid) {
                     Some(code) => {
                         let variants = gather_flowgraph_variants(tcx.sess);
 
@@ -1004,11 +1006,7 @@ fn print_with_analysis<'tcx, 'a: 'tcx>(sess: &'a Session,
                                                got {:?}",
                                               node);
 
-                        // Point to what was found, if there's an accessible span.
-                        match tcx.map.opt_span(nodeid) {
-                            Some(sp) => tcx.sess.span_fatal(sp, &message),
-                            None => tcx.sess.fatal(&message),
-                        }
+                        tcx.sess.span_fatal(tcx.map.span(nodeid), &message)
                     }
                 }
             }

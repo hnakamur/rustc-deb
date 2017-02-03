@@ -14,7 +14,7 @@ use index;
 use rustc::hir;
 use rustc::hir::def::{self, CtorKind};
 use rustc::hir::def_id::{DefIndex, DefId};
-use rustc::middle::cstore::{LinkagePreference, NativeLibraryKind};
+use rustc::middle::cstore::{DepKind, LinkagePreference, NativeLibrary};
 use rustc::middle::lang_items;
 use rustc::mir;
 use rustc::ty::{self, Ty};
@@ -22,6 +22,7 @@ use rustc_back::PanicStrategy;
 
 use rustc_serialize as serialize;
 use syntax::{ast, attr};
+use syntax::symbol::Symbol;
 use syntax_pos::{self, Span};
 
 use std::marker::PhantomData;
@@ -33,15 +34,17 @@ pub fn rustc_version() -> String {
 
 /// Metadata encoding version.
 /// NB: increment this if you change the format of metadata such that
-/// the rustc version can't be found to compare with `RUSTC_VERSION`.
-pub const METADATA_VERSION: u8 = 3;
+/// the rustc version can't be found to compare with `rustc_version()`.
+pub const METADATA_VERSION: u8 = 4;
 
 /// Metadata header which includes `METADATA_VERSION`.
 /// To get older versions of rustc to ignore this metadata,
 /// there are 4 zero bytes at the start, which are treated
 /// as a length of 0 by old compilers.
 ///
-/// This header is followed by the position of the `CrateRoot`.
+/// This header is followed by the position of the `CrateRoot`,
+/// which is encoded as a 32-bit big-endian unsigned integer,
+/// and further followed by the rustc version string.
 pub const METADATA_HEADER: &'static [u8; 12] =
     &[0, 0, 0, 0, b'r', b'u', b's', b't', 0, 0, 0, METADATA_VERSION];
 
@@ -162,11 +165,10 @@ pub enum LazyState {
 
 #[derive(RustcEncodable, RustcDecodable)]
 pub struct CrateRoot {
-    pub rustc_version: String,
-    pub name: String,
+    pub name: Symbol,
     pub triple: String,
     pub hash: hir::svh::Svh,
-    pub disambiguator: String,
+    pub disambiguator: Symbol,
     pub panic_strategy: PanicStrategy,
     pub plugin_registrar_fn: Option<DefIndex>,
     pub macro_derive_registrar: Option<DefIndex>,
@@ -175,11 +177,10 @@ pub struct CrateRoot {
     pub dylib_dependency_formats: LazySeq<Option<LinkagePreference>>,
     pub lang_items: LazySeq<(DefIndex, usize)>,
     pub lang_items_missing: LazySeq<lang_items::LangItem>,
-    pub native_libraries: LazySeq<(NativeLibraryKind, String)>,
+    pub native_libraries: LazySeq<NativeLibrary>,
     pub codemap: LazySeq<syntax_pos::FileMap>,
-    pub macro_defs: LazySeq<MacroDef>,
     pub impls: LazySeq<TraitImpls>,
-    pub reachable_ids: LazySeq<DefIndex>,
+    pub exported_symbols: LazySeq<DefIndex>,
     pub index: LazySeq<index::Index>,
 }
 
@@ -187,7 +188,7 @@ pub struct CrateRoot {
 pub struct CrateDep {
     pub name: ast::Name,
     pub hash: hir::svh::Svh,
-    pub explicitly_linked: bool,
+    pub kind: DepKind,
 }
 
 #[derive(RustcEncodable, RustcDecodable)]
@@ -197,17 +198,10 @@ pub struct TraitImpls {
 }
 
 #[derive(RustcEncodable, RustcDecodable)]
-pub struct MacroDef {
-    pub name: ast::Name,
-    pub attrs: Vec<ast::Attribute>,
-    pub span: Span,
-    pub body: String,
-}
-
-#[derive(RustcEncodable, RustcDecodable)]
 pub struct Entry<'tcx> {
     pub kind: EntryKind<'tcx>,
     pub visibility: ty::Visibility,
+    pub span: Lazy<Span>,
     pub def_key: Lazy<hir::map::DefKey>,
     pub attributes: LazySeq<ast::Attribute>,
     pub children: LazySeq<DefIndex>,
@@ -241,11 +235,12 @@ pub enum EntryKind<'tcx> {
     Fn(Lazy<FnData>),
     ForeignFn(Lazy<FnData>),
     Mod(Lazy<ModData>),
+    MacroDef(Lazy<MacroDef>),
     Closure(Lazy<ClosureData<'tcx>>),
     Trait(Lazy<TraitData<'tcx>>),
     Impl(Lazy<ImplData<'tcx>>),
     DefaultImpl(Lazy<ImplData<'tcx>>),
-    Method(Lazy<MethodData<'tcx>>),
+    Method(Lazy<MethodData>),
     AssociatedType(AssociatedContainer),
     AssociatedConst(AssociatedContainer),
 }
@@ -253,6 +248,11 @@ pub enum EntryKind<'tcx> {
 #[derive(RustcEncodable, RustcDecodable)]
 pub struct ModData {
     pub reexports: LazySeq<def::Export>,
+}
+
+#[derive(RustcEncodable, RustcDecodable)]
+pub struct MacroDef {
+    pub body: String,
 }
 
 #[derive(RustcEncodable, RustcDecodable)]
@@ -276,7 +276,6 @@ pub struct TraitData<'tcx> {
     pub unsafety: hir::Unsafety,
     pub paren_sugar: bool,
     pub has_default_impl: bool,
-    pub trait_ref: Lazy<ty::TraitRef<'tcx>>,
     pub super_predicates: Lazy<ty::GenericPredicates<'tcx>>,
 }
 
@@ -300,7 +299,7 @@ pub enum AssociatedContainer {
 }
 
 impl AssociatedContainer {
-    pub fn with_def_id(&self, def_id: DefId) -> ty::ImplOrTraitItemContainer {
+    pub fn with_def_id(&self, def_id: DefId) -> ty::AssociatedItemContainer {
         match *self {
             AssociatedContainer::TraitRequired |
             AssociatedContainer::TraitWithDefault => ty::TraitContainer(def_id),
@@ -310,21 +309,16 @@ impl AssociatedContainer {
         }
     }
 
-    pub fn has_body(&self) -> bool {
-        match *self {
-            AssociatedContainer::TraitRequired => false,
-
-            AssociatedContainer::TraitWithDefault |
-            AssociatedContainer::ImplDefault |
-            AssociatedContainer::ImplFinal => true,
-        }
-    }
-
     pub fn defaultness(&self) -> hir::Defaultness {
         match *self {
-            AssociatedContainer::TraitRequired |
+            AssociatedContainer::TraitRequired => hir::Defaultness::Default {
+                has_value: false,
+            },
+
             AssociatedContainer::TraitWithDefault |
-            AssociatedContainer::ImplDefault => hir::Defaultness::Default,
+            AssociatedContainer::ImplDefault => hir::Defaultness::Default {
+                has_value: true,
+            },
 
             AssociatedContainer::ImplFinal => hir::Defaultness::Final,
         }
@@ -332,10 +326,10 @@ impl AssociatedContainer {
 }
 
 #[derive(RustcEncodable, RustcDecodable)]
-pub struct MethodData<'tcx> {
+pub struct MethodData {
     pub fn_data: FnData,
     pub container: AssociatedContainer,
-    pub explicit_self: Lazy<ty::ExplicitSelfCategory<'tcx>>,
+    pub has_self: bool,
 }
 
 #[derive(RustcEncodable, RustcDecodable)]

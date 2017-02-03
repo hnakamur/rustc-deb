@@ -10,15 +10,14 @@
 
 // aux-build:derive-unstable-2.rs
 
-#![feature(proc_macro)]
 #![allow(warnings)]
 
 #[macro_use]
 extern crate derive_unstable_2;
 
 #[derive(Unstable)]
-struct A;
 //~^ ERROR: reserved for internal compiler
+struct A;
 
 fn main() {
     foo();

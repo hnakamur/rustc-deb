@@ -13,12 +13,13 @@ use encoder;
 use locator;
 use schema;
 
-use rustc::middle::cstore::{InlinedItem, CrateStore, CrateSource, ExternCrate};
-use rustc::middle::cstore::{NativeLibraryKind, LinkMeta, LinkagePreference};
+use rustc::middle::cstore::{InlinedItem, CrateStore, CrateSource, LibSource, DepKind, ExternCrate};
+use rustc::middle::cstore::{NativeLibrary, LinkMeta, LinkagePreference, LoadedMacro};
 use rustc::hir::def::{self, Def};
 use rustc::middle::lang_items;
+use rustc::session::Session;
 use rustc::ty::{self, Ty, TyCtxt};
-use rustc::hir::def_id::{CrateNum, DefId, DefIndex, CRATE_DEF_INDEX};
+use rustc::hir::def_id::{CrateNum, DefId, DefIndex, CRATE_DEF_INDEX, LOCAL_CRATE};
 
 use rustc::dep_graph::DepNode;
 use rustc::hir::map as hir_map;
@@ -27,10 +28,11 @@ use rustc::mir::Mir;
 use rustc::util::nodemap::{NodeSet, DefIdMap};
 use rustc_back::PanicStrategy;
 
-use std::path::PathBuf;
 use syntax::ast;
 use syntax::attr;
-use syntax::parse::token;
+use syntax::parse::new_parser_from_source_str;
+use syntax::symbol::Symbol;
+use syntax_pos::{mk_sp, Span};
 use rustc::hir::svh::Svh;
 use rustc_back::target::Target;
 use rustc::hir;
@@ -39,6 +41,11 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
     fn describe_def(&self, def: DefId) -> Option<Def> {
         self.dep_graph.read(DepNode::MetaData(def));
         self.get_crate_data(def.krate).get_def(def.index)
+    }
+
+    fn def_span(&self, sess: &Session, def: DefId) -> Span {
+        self.dep_graph.read(DepNode::MetaData(def));
+        self.get_crate_data(def.krate).get_span(def.index, sess)
     }
 
     fn stability(&self, def: DefId) -> Option<attr::Stability> {
@@ -108,13 +115,13 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         self.get_crate_data(def_id.krate).get_item_attrs(def_id.index)
     }
 
-    fn trait_def<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId) -> ty::TraitDef<'tcx>
+    fn trait_def<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId) -> ty::TraitDef
     {
         self.dep_graph.read(DepNode::MetaData(def));
         self.get_crate_data(def.krate).get_trait_def(def.index, tcx)
     }
 
-    fn adt_def<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId) -> ty::AdtDefMaster<'tcx>
+    fn adt_def<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId) -> &'tcx ty::AdtDef
     {
         self.dep_graph.read(DepNode::MetaData(def));
         self.get_crate_data(def.krate).get_adt_def(def.index, tcx)
@@ -144,7 +151,7 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         result
     }
 
-    fn impl_or_trait_items(&self, def_id: DefId) -> Vec<DefId> {
+    fn associated_item_def_ids(&self, def_id: DefId) -> Vec<DefId> {
         self.dep_graph.read(DepNode::MetaData(def_id));
         let mut result = vec![];
         self.get_crate_data(def_id.krate)
@@ -182,11 +189,10 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         self.get_crate_data(def_id.krate).get_trait_of_item(def_id.index)
     }
 
-    fn impl_or_trait_item<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId)
-                              -> Option<ty::ImplOrTraitItem<'tcx>>
+    fn associated_item<'a>(&self, def: DefId) -> Option<ty::AssociatedItem>
     {
         self.dep_graph.read(DepNode::MetaData(def));
-        self.get_crate_data(def.krate).get_impl_or_trait_item(def.index, tcx)
+        self.get_crate_data(def.krate).get_associated_item(def.index)
     }
 
     fn is_const_fn(&self, did: DefId) -> bool
@@ -210,15 +216,34 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         self.get_crate_data(did.krate).is_foreign_item(did.index)
     }
 
-    fn is_statically_included_foreign_item(&self, id: ast::NodeId) -> bool
+    fn is_statically_included_foreign_item(&self, def_id: DefId) -> bool
     {
-        self.do_is_statically_included_foreign_item(id)
+        self.do_is_statically_included_foreign_item(def_id)
+    }
+
+    fn is_dllimport_foreign_item(&self, def_id: DefId) -> bool {
+        if def_id.krate == LOCAL_CRATE {
+            self.dllimport_foreign_items.borrow().contains(&def_id.index)
+        } else {
+            self.get_crate_data(def_id.krate).is_dllimport_foreign_item(def_id.index)
+        }
     }
 
     fn dylib_dependency_formats(&self, cnum: CrateNum)
                                 -> Vec<(CrateNum, LinkagePreference)>
     {
         self.get_crate_data(cnum).get_dylib_dependency_formats()
+    }
+
+    fn dep_kind(&self, cnum: CrateNum) -> DepKind
+    {
+        self.get_crate_data(cnum).dep_kind.get()
+    }
+
+    fn export_macros(&self, cnum: CrateNum) {
+        if self.get_crate_data(cnum).dep_kind.get() == DepKind::UnexportedMacrosOnly {
+            self.get_crate_data(cnum).dep_kind.set(DepKind::MacrosOnly)
+        }
     }
 
     fn lang_items(&self, cnum: CrateNum) -> Vec<(DefIndex, usize)>
@@ -235,11 +260,6 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
     fn is_staged_api(&self, cnum: CrateNum) -> bool
     {
         self.get_crate_data(cnum).is_staged_api()
-    }
-
-    fn is_explicitly_linked(&self, cnum: CrateNum) -> bool
-    {
-        self.get_crate_data(cnum).explicitly_linked.get()
     }
 
     fn is_allocator(&self, cnum: CrateNum) -> bool
@@ -260,14 +280,14 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         self.get_crate_data(cnum).panic_strategy()
     }
 
-    fn crate_name(&self, cnum: CrateNum) -> token::InternedString
+    fn crate_name(&self, cnum: CrateNum) -> Symbol
     {
-        token::intern_and_get_ident(&self.get_crate_data(cnum).name[..])
+        self.get_crate_data(cnum).name
     }
 
-    fn original_crate_name(&self, cnum: CrateNum) -> token::InternedString
+    fn original_crate_name(&self, cnum: CrateNum) -> Symbol
     {
-        token::intern_and_get_ident(&self.get_crate_data(cnum).name())
+        self.get_crate_data(cnum).name()
     }
 
     fn extern_crate(&self, cnum: CrateNum) -> Option<ExternCrate>
@@ -280,9 +300,9 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         self.get_crate_hash(cnum)
     }
 
-    fn crate_disambiguator(&self, cnum: CrateNum) -> token::InternedString
+    fn crate_disambiguator(&self, cnum: CrateNum) -> Symbol
     {
-        token::intern_and_get_ident(&self.get_crate_data(cnum).disambiguator())
+        self.get_crate_data(cnum).disambiguator()
     }
 
     fn plugin_registrar_fn(&self, cnum: CrateNum) -> Option<DefId>
@@ -293,14 +313,22 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         })
     }
 
-    fn native_libraries(&self, cnum: CrateNum) -> Vec<(NativeLibraryKind, String)>
+    fn derive_registrar_fn(&self, cnum: CrateNum) -> Option<DefId>
+    {
+        self.get_crate_data(cnum).root.macro_derive_registrar.map(|index| DefId {
+            krate: cnum,
+            index: index
+        })
+    }
+
+    fn native_libraries(&self, cnum: CrateNum) -> Vec<NativeLibrary>
     {
         self.get_crate_data(cnum).get_native_libraries()
     }
 
-    fn reachable_ids(&self, cnum: CrateNum) -> Vec<DefId>
+    fn exported_symbols(&self, cnum: CrateNum) -> Vec<DefId>
     {
-        self.get_crate_data(cnum).get_reachable_ids()
+        self.get_crate_data(cnum).get_exported_symbols()
     }
 
     fn is_no_builtins(&self, cnum: CrateNum) -> bool {
@@ -351,6 +379,51 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         result
     }
 
+    fn load_macro(&self, id: DefId, sess: &Session) -> LoadedMacro {
+        let data = self.get_crate_data(id.krate);
+        if let Some(ref proc_macros) = data.proc_macros {
+            return LoadedMacro::ProcMacro(proc_macros[id.index.as_usize() - 1].1.clone());
+        }
+
+        let (name, def) = data.get_macro(id.index);
+        let source_name = format!("<{} macros>", name);
+
+        // NB: Don't use parse_tts_from_source_str because it parses with quote_depth > 0.
+        let mut parser = new_parser_from_source_str(&sess.parse_sess, source_name, def.body);
+
+        let lo = parser.span.lo;
+        let body = match parser.parse_all_token_trees() {
+            Ok(body) => body,
+            Err(mut err) => {
+                err.emit();
+                sess.abort_if_errors();
+                unreachable!();
+            }
+        };
+        let local_span = mk_sp(lo, parser.prev_span.hi);
+
+        // Mark the attrs as used
+        let attrs = data.get_item_attrs(id.index);
+        for attr in &attrs {
+            attr::mark_used(attr);
+        }
+
+        let name = data.def_key(id.index).disambiguated_data.data
+            .get_opt_name().expect("no name in load_macro");
+        sess.imported_macro_spans.borrow_mut()
+            .insert(local_span, (name.to_string(), data.get_span(id.index, sess)));
+
+        LoadedMacro::MacroRules(ast::MacroDef {
+            ident: ast::Ident::with_empty_ctxt(name),
+            id: ast::DUMMY_NODE_ID,
+            span: local_span,
+            imported_from: None, // FIXME
+            allow_internal_unstable: attr::contains_name(&attrs, "allow_internal_unstable"),
+            attrs: attrs,
+            body: body,
+        })
+    }
+
     fn maybe_get_item_ast<'a>(&'tcx self,
                               tcx: TyCtxt<'a, 'tcx, 'tcx>,
                               def_id: DefId)
@@ -393,12 +466,10 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
 
         let find_inlined_item_root = |inlined_item_id| {
             let mut node = inlined_item_id;
-            let mut path = Vec::with_capacity(10);
 
             // If we can't find the inline root after a thousand hops, we can
             // be pretty sure there's something wrong with the HIR map.
             for _ in 0 .. 1000 {
-                path.push(node);
                 let parent_node = tcx.map.get_parent_node(node);
                 if parent_node == node {
                     return node;
@@ -414,27 +485,9 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
                     .borrow_mut()
                     .insert(def_id, None);
             }
-            Some(&InlinedItem::Item(d, ref item)) => {
-                assert_eq!(d, def_id);
-                let inlined_root_node_id = find_inlined_item_root(item.id);
-                cache_inlined_item(def_id, item.id, inlined_root_node_id);
-            }
-            Some(&InlinedItem::TraitItem(_, ref trait_item)) => {
-                let inlined_root_node_id = find_inlined_item_root(trait_item.id);
-                cache_inlined_item(def_id, trait_item.id, inlined_root_node_id);
-
-                // Associated consts already have to be evaluated in `typeck`, so
-                // the logic to do that already exists in `middle`. In order to
-                // reuse that code, it needs to be able to look up the traits for
-                // inlined items.
-                let ty_trait_item = tcx.impl_or_trait_item(def_id).clone();
-                let trait_item_def_id = tcx.map.local_def_id(trait_item.id);
-                tcx.impl_or_trait_items.borrow_mut()
-                   .insert(trait_item_def_id, ty_trait_item);
-            }
-            Some(&InlinedItem::ImplItem(_, ref impl_item)) => {
-                let inlined_root_node_id = find_inlined_item_root(impl_item.id);
-                cache_inlined_item(def_id, impl_item.id, inlined_root_node_id);
+            Some(&InlinedItem { ref body, .. }) => {
+                let inlined_root_node_id = find_inlined_item_root(body.id);
+                cache_inlined_item(def_id, inlined_root_node_id, inlined_root_node_id);
             }
         }
 
@@ -473,6 +526,11 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         self.get_crate_data(def.krate).is_item_mir_available(def.index)
     }
 
+    fn can_have_local_instance<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId) -> bool {
+        self.dep_graph.read(DepNode::MetaData(def));
+        def.is_local() || self.get_crate_data(def.krate).can_have_local_instance(tcx, def.index)
+    }
+
     fn crates(&self) -> Vec<CrateNum>
     {
         let mut result = vec![];
@@ -480,7 +538,7 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         result
     }
 
-    fn used_libraries(&self) -> Vec<(String, NativeLibraryKind)>
+    fn used_libraries(&self) -> Vec<NativeLibrary>
     {
         self.get_used_libraries().borrow().clone()
     }
@@ -500,14 +558,14 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         locator::meta_section_name(target)
     }
 
-    fn used_crates(&self, prefer: LinkagePreference) -> Vec<(CrateNum, Option<PathBuf>)>
+    fn used_crates(&self, prefer: LinkagePreference) -> Vec<(CrateNum, LibSource)>
     {
         self.do_get_used_crates(prefer)
     }
 
     fn used_crate_source(&self, cnum: CrateNum) -> CrateSource
     {
-        self.opt_used_crate_source(cnum).unwrap()
+        self.get_crate_data(cnum).source.clone()
     }
 
     fn extern_mod_stmt_cnum(&self, emod_id: ast::NodeId) -> Option<CrateNum>

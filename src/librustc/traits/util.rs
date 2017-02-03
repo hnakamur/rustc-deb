@@ -12,8 +12,7 @@ use hir::def_id::DefId;
 use ty::subst::{Subst, Substs};
 use ty::{self, Ty, TyCtxt, ToPredicate, ToPolyTraitRef};
 use ty::outlives::Component;
-use util::common::ErrorReported;
-use util::nodemap::FnvHashSet;
+use util::nodemap::FxHashSet;
 
 use super::{Obligation, ObligationCause, PredicateObligation, SelectionContext, Normalized};
 
@@ -50,12 +49,12 @@ fn anonymize_predicate<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
 
 struct PredicateSet<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     tcx: TyCtxt<'a, 'gcx, 'tcx>,
-    set: FnvHashSet<ty::Predicate<'tcx>>,
+    set: FxHashSet<ty::Predicate<'tcx>>,
 }
 
 impl<'a, 'gcx, 'tcx> PredicateSet<'a, 'gcx, 'tcx> {
     fn new(tcx: TyCtxt<'a, 'gcx, 'tcx>) -> PredicateSet<'a, 'gcx, 'tcx> {
-        PredicateSet { tcx: tcx, set: FnvHashSet() }
+        PredicateSet { tcx: tcx, set: FxHashSet() }
     }
 
     fn insert(&mut self, pred: &ty::Predicate<'tcx>) -> bool {
@@ -128,7 +127,7 @@ impl<'cx, 'gcx, 'tcx> Elaborator<'cx, 'gcx, 'tcx> {
         match *predicate {
             ty::Predicate::Trait(ref data) => {
                 // Predicates declared on the trait.
-                let predicates = tcx.lookup_super_predicates(data.def_id());
+                let predicates = tcx.item_super_predicates(data.def_id());
 
                 let mut predicates: Vec<_> =
                     predicates.predicates
@@ -272,7 +271,7 @@ pub fn transitive_bounds<'cx, 'gcx, 'tcx>(tcx: TyCtxt<'cx, 'gcx, 'tcx>,
 pub struct SupertraitDefIds<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     tcx: TyCtxt<'a, 'gcx, 'tcx>,
     stack: Vec<DefId>,
-    visited: FnvHashSet<DefId>,
+    visited: FxHashSet<DefId>,
 }
 
 pub fn supertrait_def_ids<'cx, 'gcx, 'tcx>(tcx: TyCtxt<'cx, 'gcx, 'tcx>,
@@ -295,7 +294,7 @@ impl<'cx, 'gcx, 'tcx> Iterator for SupertraitDefIds<'cx, 'gcx, 'tcx> {
             None => { return None; }
         };
 
-        let predicates = self.tcx.lookup_super_predicates(def_id);
+        let predicates = self.tcx.item_super_predicates(def_id);
         let visited = &mut self.visited;
         self.stack.extend(
             predicates.predicates
@@ -362,7 +361,7 @@ pub fn impl_trait_ref_and_oblig<'a, 'gcx, 'tcx>(selcx: &mut SelectionContext<'a,
     let Normalized { value: impl_trait_ref, obligations: normalization_obligations1 } =
         super::normalize(selcx, ObligationCause::dummy(), &impl_trait_ref);
 
-    let predicates = selcx.tcx().lookup_predicates(impl_def_id);
+    let predicates = selcx.tcx().item_predicates(impl_def_id);
     let predicates = predicates.instantiate(selcx.tcx(), impl_substs);
     let Normalized { value: predicates, obligations: normalization_obligations2 } =
         super::normalize(selcx, ObligationCause::dummy(), &predicates);
@@ -408,25 +407,6 @@ pub fn predicate_for_trait_ref<'tcx>(
 }
 
 impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
-    pub fn trait_ref_for_builtin_bound(self,
-        builtin_bound: ty::BuiltinBound,
-        param_ty: Ty<'tcx>)
-        -> Result<ty::TraitRef<'tcx>, ErrorReported>
-    {
-        match self.lang_items.from_builtin_kind(builtin_bound) {
-            Ok(def_id) => {
-                Ok(ty::TraitRef {
-                    def_id: def_id,
-                    substs: self.mk_substs_trait(param_ty, &[])
-                })
-            }
-            Err(e) => {
-                self.sess.err(&e);
-                Err(ErrorReported)
-            }
-        }
-    }
-
     pub fn predicate_for_trait_def(self,
         cause: ObligationCause<'tcx>,
         trait_def_id: DefId,
@@ -440,17 +420,6 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             substs: self.mk_substs_trait(param_ty, ty_params)
         };
         predicate_for_trait_ref(cause, trait_ref, recursion_depth)
-    }
-
-    pub fn predicate_for_builtin_bound(self,
-        cause: ObligationCause<'tcx>,
-        builtin_bound: ty::BuiltinBound,
-        recursion_depth: usize,
-        param_ty: Ty<'tcx>)
-        -> Result<PredicateObligation<'tcx>, ErrorReported>
-    {
-        let trait_ref = self.trait_ref_for_builtin_bound(builtin_bound, param_ty)?;
-        Ok(predicate_for_trait_ref(cause, trait_ref, recursion_depth))
     }
 
     /// Cast a trait reference into a reference to one of its super
@@ -477,8 +446,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         let mut entries = 0;
         // Count number of methods and add them to the total offset.
         // Skip over associated types and constants.
-        for trait_item in &self.trait_items(trait_ref.def_id())[..] {
-            if let ty::MethodTraitItem(_) = *trait_item {
+        for trait_item in self.associated_items(trait_ref.def_id()) {
+            if trait_item.kind == ty::AssociatedKind::Method {
                 entries += 1;
             }
         }
@@ -495,17 +464,13 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         // add them to the total offset.
         // Skip over associated types and constants.
         let mut entries = object.vtable_base;
-        for trait_item in &self.trait_items(object.upcast_trait_ref.def_id())[..] {
-            if trait_item.def_id() == method_def_id {
+        for trait_item in self.associated_items(object.upcast_trait_ref.def_id()) {
+            if trait_item.def_id == method_def_id {
                 // The item with the ID we were given really ought to be a method.
-                assert!(match *trait_item {
-                    ty::MethodTraitItem(_) => true,
-                    _ => false
-                });
-
+                assert_eq!(trait_item.kind, ty::AssociatedKind::Method);
                 return entries;
             }
-            if let ty::MethodTraitItem(_) = *trait_item {
+            if trait_item.kind == ty::AssociatedKind::Method {
                 entries += 1;
             }
         }
@@ -522,14 +487,15 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         -> ty::Binder<(ty::TraitRef<'tcx>, Ty<'tcx>)>
     {
         let arguments_tuple = match tuple_arguments {
-            TupleArgumentsFlag::No => sig.0.inputs[0],
-            TupleArgumentsFlag::Yes => self.intern_tup(&sig.0.inputs[..]),
+            TupleArgumentsFlag::No => sig.skip_binder().inputs()[0],
+            TupleArgumentsFlag::Yes =>
+                self.intern_tup(sig.skip_binder().inputs()),
         };
         let trait_ref = ty::TraitRef {
             def_id: fn_trait_def_id,
             substs: self.mk_substs_trait(self_ty, &[arguments_tuple]),
         };
-        ty::Binder((trait_ref, sig.0.output))
+        ty::Binder((trait_ref, sig.skip_binder().output()))
     }
 }
 

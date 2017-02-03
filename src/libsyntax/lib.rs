@@ -27,14 +27,13 @@
 #![feature(associated_consts)]
 #![feature(const_fn)]
 #![feature(libc)]
+#![feature(optin_builtin_traits)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
 #![feature(str_escape)]
 #![feature(unicode)]
-#![cfg_attr(stage0, feature(question_mark))]
 #![feature(rustc_diagnostic_macros)]
 #![feature(specialization)]
-#![cfg_attr(stage0, feature(dotdot_in_tuple_patterns))]
 
 extern crate core;
 extern crate serialize;
@@ -42,9 +41,10 @@ extern crate term;
 extern crate libc;
 #[macro_use] extern crate log;
 #[macro_use] #[no_link] extern crate rustc_bitflags;
-extern crate rustc_unicode;
+extern crate std_unicode;
 pub extern crate rustc_errors as errors;
 extern crate syntax_pos;
+extern crate rustc_data_structures;
 
 extern crate serialize as rustc_serialize; // used by deriving
 
@@ -82,7 +82,6 @@ pub mod diagnostics {
 pub mod diagnostic_list;
 
 pub mod util {
-    pub mod interner;
     pub mod lev_distance;
     pub mod node_count;
     pub mod parser;
@@ -117,6 +116,7 @@ pub mod ptr;
 pub mod show_span;
 pub mod std_inject;
 pub mod str;
+pub mod symbol;
 pub mod test;
 pub mod tokenstream;
 pub mod visit;
@@ -142,5 +142,8 @@ pub mod ext {
         pub mod macro_rules;
     }
 }
+
+#[cfg(test)]
+mod test_snippet;
 
 // __build_diagnostic_array! { libsyntax, DIAGNOSTICS }

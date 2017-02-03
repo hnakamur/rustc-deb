@@ -23,7 +23,7 @@
 //! integration code in `std::sys_common`. See that module's
 //! documentation for details.
 //!
-//! In the future it would be desirable for the indepedent
+//! In the future it would be desirable for the independent
 //! implementations of this module to be extracted to their own crates
 //! that `std` can link to, thus enabling their implementation
 //! out-of-tree via crate replacement. Though due to the complex
@@ -31,6 +31,10 @@
 //! achieve.
 
 pub use self::imp::*;
+
+#[cfg(target_os = "redox")]
+#[path = "redox/mod.rs"]
+mod imp;
 
 #[cfg(unix)]
 #[path = "unix/mod.rs"]

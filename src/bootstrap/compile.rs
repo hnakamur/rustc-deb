@@ -120,8 +120,8 @@ fn build_startup_objects(build: &Build, target: &str, into: &Path) {
     for file in t!(fs::read_dir(build.src.join("src/rtstartup"))) {
         let file = t!(file);
         let mut cmd = Command::new(&compiler_path);
-        build.add_bootstrap_key(&mut cmd);
-        build.run(cmd.arg("--target").arg(target)
+        build.run(cmd.env("RUSTC_BOOTSTRAP", "1")
+                     .arg("--target").arg(target)
                      .arg("--emit=obj")
                      .arg("--out-dir").arg(into)
                      .arg(file.path()));
@@ -190,6 +190,13 @@ pub fn rustc<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
          .env("CFG_PREFIX", build.config.prefix.clone().unwrap_or(String::new()))
          .env("CFG_LIBDIR_RELATIVE", "lib");
 
+    // If we're not building a compiler with debugging information then remove
+    // these two env vars which would be set otherwise.
+    if build.config.rust_debuginfo_only_std {
+        cargo.env_remove("RUSTC_DEBUGINFO");
+        cargo.env_remove("RUSTC_DEBUGINFO_LINES");
+    }
+
     if let Some(ref ver_date) = build.ver_date {
         cargo.env("CFG_VER_DATE", ver_date);
     }
@@ -211,6 +218,9 @@ pub fn rustc<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
     if build.config.llvm_static_stdcpp {
         cargo.env("LLVM_STATIC_STDCPP",
                   compiler_file(build.cxx(target), "libstdc++.a"));
+    }
+    if build.config.llvm_link_shared {
+        cargo.env("LLVM_LINK_SHARED", "1");
     }
     if let Some(ref s) = build.config.rustc_default_linker {
         cargo.env("CFG_DEFAULT_LINKER", s);

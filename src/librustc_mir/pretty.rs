@@ -8,13 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use build::{ScopeAuxiliaryVec, ScopeId};
 use rustc::hir;
 use rustc::hir::def_id::DefId;
 use rustc::mir::*;
 use rustc::mir::transform::MirSource;
 use rustc::ty::TyCtxt;
-use rustc_data_structures::fnv::FnvHashMap;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::indexed_vec::{Idx};
 use std::fmt::Display;
 use std::fs;
@@ -43,8 +42,7 @@ pub fn dump_mir<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                           pass_name: &str,
                           disambiguator: &Display,
                           src: MirSource,
-                          mir: &Mir<'tcx>,
-                          auxiliary: Option<&ScopeAuxiliaryVec>) {
+                          mir: &Mir<'tcx>) {
     let filters = match tcx.sess.opts.debugging_opts.dump_mir {
         None => return,
         Some(ref filters) => filters,
@@ -81,7 +79,7 @@ pub fn dump_mir<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         writeln!(file, "// pass_name = {}", pass_name)?;
         writeln!(file, "// disambiguator = {}", disambiguator)?;
         writeln!(file, "")?;
-        write_mir_fn(tcx, src, mir, &mut file, auxiliary)?;
+        write_mir_fn(tcx, src, mir, &mut file)?;
         Ok(())
     });
 }
@@ -106,52 +104,24 @@ pub fn write_mir_pretty<'a, 'b, 'tcx, I>(tcx: TyCtxt<'b, 'tcx, 'tcx>,
 
         let id = tcx.map.as_local_node_id(def_id).unwrap();
         let src = MirSource::from_node(tcx, id);
-        write_mir_fn(tcx, src, mir, w, None)?;
+        write_mir_fn(tcx, src, mir, w)?;
 
         for (i, mir) in mir.promoted.iter_enumerated() {
             writeln!(w, "")?;
-            write_mir_fn(tcx, MirSource::Promoted(id, i), mir, w, None)?;
+            write_mir_fn(tcx, MirSource::Promoted(id, i), mir, w)?;
         }
     }
     Ok(())
 }
 
-enum Annotation {
-    EnterScope(ScopeId),
-    ExitScope(ScopeId),
-}
-
-fn scope_entry_exit_annotations(auxiliary: Option<&ScopeAuxiliaryVec>)
-                                -> FnvHashMap<Location, Vec<Annotation>>
-{
-    // compute scope/entry exit annotations
-    let mut annotations = FnvHashMap();
-    if let Some(auxiliary) = auxiliary {
-        for (scope_id, auxiliary) in auxiliary.iter_enumerated() {
-            annotations.entry(auxiliary.dom)
-                       .or_insert(vec![])
-                       .push(Annotation::EnterScope(scope_id));
-
-            for &loc in &auxiliary.postdoms {
-                annotations.entry(loc)
-                           .or_insert(vec![])
-                           .push(Annotation::ExitScope(scope_id));
-            }
-        }
-    }
-    return annotations;
-}
-
 pub fn write_mir_fn<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                               src: MirSource,
                               mir: &Mir<'tcx>,
-                              w: &mut Write,
-                              auxiliary: Option<&ScopeAuxiliaryVec>)
+                              w: &mut Write)
                               -> io::Result<()> {
-    let annotations = scope_entry_exit_annotations(auxiliary);
     write_mir_intro(tcx, src, mir, w)?;
     for block in mir.basic_blocks().indices() {
-        write_basic_block(tcx, block, mir, w, &annotations)?;
+        write_basic_block(tcx, block, mir, w)?;
         if block.index() + 1 != mir.basic_blocks().len() {
             writeln!(w, "")?;
         }
@@ -165,8 +135,7 @@ pub fn write_mir_fn<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 fn write_basic_block(tcx: TyCtxt,
                      block: BasicBlock,
                      mir: &Mir,
-                     w: &mut Write,
-                     annotations: &FnvHashMap<Location, Vec<Annotation>>)
+                     w: &mut Write)
                      -> io::Result<()> {
     let data = &mir[block];
 
@@ -176,19 +145,6 @@ fn write_basic_block(tcx: TyCtxt,
     // List of statements in the middle.
     let mut current_location = Location { block: block, statement_index: 0 };
     for statement in &data.statements {
-        if let Some(ref annotations) = annotations.get(&current_location) {
-            for annotation in annotations.iter() {
-                match *annotation {
-                    Annotation::EnterScope(id) =>
-                        writeln!(w, "{0}{0}// Enter Scope({1})",
-                                 INDENT, id.index())?,
-                    Annotation::ExitScope(id) =>
-                        writeln!(w, "{0}{0}// Exit Scope({1})",
-                                 INDENT, id.index())?,
-                }
-            }
-        }
-
         let indented_mir = format!("{0}{0}{1:?};", INDENT, statement);
         writeln!(w, "{0:1$} // {2}",
                  indented_mir,
@@ -217,7 +173,7 @@ fn comment(tcx: TyCtxt, SourceInfo { span, scope }: SourceInfo) -> String {
 /// Returns the total number of variables printed.
 fn write_scope_tree(tcx: TyCtxt,
                     mir: &Mir,
-                    scope_tree: &FnvHashMap<VisibilityScope, Vec<VisibilityScope>>,
+                    scope_tree: &FxHashMap<VisibilityScope, Vec<VisibilityScope>>,
                     w: &mut Write,
                     parent: VisibilityScope,
                     depth: usize)
@@ -283,7 +239,7 @@ fn write_mir_intro<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     writeln!(w, " {{")?;
 
     // construct a scope tree and write it out
-    let mut scope_tree: FnvHashMap<VisibilityScope, Vec<VisibilityScope>> = FnvHashMap();
+    let mut scope_tree: FxHashMap<VisibilityScope, Vec<VisibilityScope>> = FxHashMap();
     for (index, scope_data) in mir.visibility_scopes.iter().enumerate() {
         if let Some(parent) = scope_data.parent_scope {
             scope_tree.entry(parent)

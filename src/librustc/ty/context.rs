@@ -14,7 +14,7 @@ use dep_graph::{DepGraph, DepTrackingMap};
 use session::Session;
 use middle;
 use hir::TraitMap;
-use hir::def::DefMap;
+use hir::def::Def;
 use hir::def_id::{CrateNum, DefId, DefIndex, LOCAL_CRATE};
 use hir::map as ast_map;
 use hir::map::{DefKey, DefPathData, DisambiguatedDefPathData};
@@ -29,14 +29,14 @@ use ty::{self, TraitRef, Ty, TypeAndMut};
 use ty::{TyS, TypeVariants, Slice};
 use ty::{AdtKind, AdtDef, ClosureSubsts, Region};
 use hir::FreevarMap;
-use ty::{BareFnTy, InferTy, ParamTy, ProjectionTy, TraitObject};
+use ty::{BareFnTy, InferTy, ParamTy, ProjectionTy, ExistentialPredicate};
 use ty::{TyVar, TyVid, IntVar, IntVid, FloatVar, FloatVid};
 use ty::TypeVariants::*;
 use ty::layout::{Layout, TargetDataLayout};
 use ty::maps;
 use util::common::MemoizationMap;
 use util::nodemap::{NodeMap, NodeSet, DefIdMap, DefIdSet};
-use util::nodemap::{FnvHashMap, FnvHashSet};
+use util::nodemap::{FxHashMap, FxHashSet};
 use rustc_data_structures::accumulate_vec::AccumulateVec;
 
 use arena::TypedArena;
@@ -47,9 +47,10 @@ use std::mem;
 use std::ops::Deref;
 use std::rc::Rc;
 use std::iter;
+use std::cmp::Ordering;
 use syntax::ast::{self, Name, NodeId};
 use syntax::attr;
-use syntax::parse::token::{self, keywords};
+use syntax::symbol::{Symbol, keywords};
 
 use hir;
 
@@ -63,11 +64,12 @@ pub struct CtxtArenas<'tcx> {
     region: TypedArena<Region>,
     stability: TypedArena<attr::Stability>,
     layout: TypedArena<Layout>,
+    existential_predicates: TypedArena<ExistentialPredicate<'tcx>>,
 
     // references
     generics: TypedArena<ty::Generics<'tcx>>,
-    trait_def: TypedArena<ty::TraitDef<'tcx>>,
-    adt_def: TypedArena<ty::AdtDefData<'tcx, 'tcx>>,
+    trait_def: TypedArena<ty::TraitDef>,
+    adt_def: TypedArena<ty::AdtDef>,
     mir: TypedArena<RefCell<Mir<'tcx>>>,
 }
 
@@ -81,6 +83,7 @@ impl<'tcx> CtxtArenas<'tcx> {
             region: TypedArena::new(),
             stability: TypedArena::new(),
             layout: TypedArena::new(),
+            existential_predicates: TypedArena::new(),
 
             generics: TypedArena::new(),
             trait_def: TypedArena::new(),
@@ -96,26 +99,28 @@ pub struct CtxtInterners<'tcx> {
 
     /// Specifically use a speedy hash algorithm for these hash sets,
     /// they're accessed quite often.
-    type_: RefCell<FnvHashSet<Interned<'tcx, TyS<'tcx>>>>,
-    type_list: RefCell<FnvHashSet<Interned<'tcx, Slice<Ty<'tcx>>>>>,
-    substs: RefCell<FnvHashSet<Interned<'tcx, Substs<'tcx>>>>,
-    bare_fn: RefCell<FnvHashSet<Interned<'tcx, BareFnTy<'tcx>>>>,
-    region: RefCell<FnvHashSet<Interned<'tcx, Region>>>,
-    stability: RefCell<FnvHashSet<&'tcx attr::Stability>>,
-    layout: RefCell<FnvHashSet<&'tcx Layout>>,
+    type_: RefCell<FxHashSet<Interned<'tcx, TyS<'tcx>>>>,
+    type_list: RefCell<FxHashSet<Interned<'tcx, Slice<Ty<'tcx>>>>>,
+    substs: RefCell<FxHashSet<Interned<'tcx, Substs<'tcx>>>>,
+    bare_fn: RefCell<FxHashSet<Interned<'tcx, BareFnTy<'tcx>>>>,
+    region: RefCell<FxHashSet<Interned<'tcx, Region>>>,
+    stability: RefCell<FxHashSet<&'tcx attr::Stability>>,
+    layout: RefCell<FxHashSet<&'tcx Layout>>,
+    existential_predicates: RefCell<FxHashSet<Interned<'tcx, Slice<ExistentialPredicate<'tcx>>>>>,
 }
 
 impl<'gcx: 'tcx, 'tcx> CtxtInterners<'tcx> {
     fn new(arenas: &'tcx CtxtArenas<'tcx>) -> CtxtInterners<'tcx> {
         CtxtInterners {
             arenas: arenas,
-            type_: RefCell::new(FnvHashSet()),
-            type_list: RefCell::new(FnvHashSet()),
-            substs: RefCell::new(FnvHashSet()),
-            bare_fn: RefCell::new(FnvHashSet()),
-            region: RefCell::new(FnvHashSet()),
-            stability: RefCell::new(FnvHashSet()),
-            layout: RefCell::new(FnvHashSet())
+            type_: RefCell::new(FxHashSet()),
+            type_list: RefCell::new(FxHashSet()),
+            substs: RefCell::new(FxHashSet()),
+            bare_fn: RefCell::new(FxHashSet()),
+            region: RefCell::new(FxHashSet()),
+            stability: RefCell::new(FxHashSet()),
+            layout: RefCell::new(FxHashSet()),
+            existential_predicates: RefCell::new(FxHashSet()),
         }
     }
 
@@ -201,6 +206,9 @@ pub struct CommonTypes<'tcx> {
 }
 
 pub struct Tables<'tcx> {
+    /// Resolved definitions for `<T>::X` associated paths.
+    pub type_relative_path_defs: NodeMap<Def>,
+
     /// Stores the types for various nodes in the AST.  Note that this table
     /// is not guaranteed to be populated until after typeck.  See
     /// typeck::check::fn_ctxt for details.
@@ -244,15 +252,26 @@ pub struct Tables<'tcx> {
 impl<'a, 'gcx, 'tcx> Tables<'tcx> {
     pub fn empty() -> Tables<'tcx> {
         Tables {
-            node_types: FnvHashMap(),
+            type_relative_path_defs: NodeMap(),
+            node_types: FxHashMap(),
             item_substs: NodeMap(),
             adjustments: NodeMap(),
-            method_map: FnvHashMap(),
-            upvar_capture_map: FnvHashMap(),
+            method_map: FxHashMap(),
+            upvar_capture_map: FxHashMap(),
             closure_tys: DefIdMap(),
             closure_kinds: DefIdMap(),
             liberated_fn_sigs: NodeMap(),
             fru_field_types: NodeMap()
+        }
+    }
+
+    /// Returns the final resolution of a `QPath` in an `Expr` or `Pat` node.
+    pub fn qpath_def(&self, qpath: &hir::QPath, id: NodeId) -> Def {
+        match *qpath {
+            hir::QPath::Resolved(_, ref path) => path.def,
+            hir::QPath::TypeRelative(..) => {
+                self.type_relative_path_defs.get(&id).cloned().unwrap_or(Def::Err)
+            }
         }
     }
 
@@ -379,11 +398,6 @@ pub struct GlobalCtxt<'tcx> {
 
     pub sess: &'tcx Session,
 
-    /// Map from path id to the results from resolve; generated
-    /// initially by resolve and updated during typeck in some cases
-    /// (e.g., UFCS paths)
-    pub def_map: RefCell<DefMap>,
-
     /// Map indicating what traits are in scope for places where this
     /// is relevant; generated by resolve.
     pub trait_map: TraitMap,
@@ -403,18 +417,15 @@ pub struct GlobalCtxt<'tcx> {
     pub tables: RefCell<Tables<'tcx>>,
 
     /// Maps from a trait item to the trait item "descriptor"
-    pub impl_or_trait_items: RefCell<DepTrackingMap<maps::ImplOrTraitItems<'tcx>>>,
+    pub associated_items: RefCell<DepTrackingMap<maps::AssociatedItems<'tcx>>>,
 
     /// Maps from an impl/trait def-id to a list of the def-ids of its items
-    pub impl_or_trait_item_def_ids: RefCell<DepTrackingMap<maps::ImplOrTraitItemDefIds<'tcx>>>,
-
-    /// A cache for the trait_items() routine; note that the routine
-    /// itself pushes the `TraitItems` dependency node.
-    trait_items_cache: RefCell<DepTrackingMap<maps::TraitItems<'tcx>>>,
+    pub associated_item_def_ids: RefCell<DepTrackingMap<maps::AssociatedItemDefIds<'tcx>>>,
 
     pub impl_trait_refs: RefCell<DepTrackingMap<maps::ImplTraitRefs<'tcx>>>,
     pub trait_defs: RefCell<DepTrackingMap<maps::TraitDefs<'tcx>>>,
     pub adt_defs: RefCell<DepTrackingMap<maps::AdtDefs<'tcx>>>,
+    pub adt_sized_constraint: RefCell<DepTrackingMap<maps::AdtSizedConstraint<'tcx>>>,
 
     /// Maps from the def-id of an item (trait/struct/enum/fn) to its
     /// associated generics and predicates.
@@ -448,19 +459,19 @@ pub struct GlobalCtxt<'tcx> {
     pub maybe_unused_trait_imports: NodeSet,
 
     // Records the type of every item.
-    pub tcache: RefCell<DepTrackingMap<maps::Tcache<'tcx>>>,
+    pub item_types: RefCell<DepTrackingMap<maps::Types<'tcx>>>,
 
     // Internal cache for metadata decoding. No need to track deps on this.
-    pub rcache: RefCell<FnvHashMap<ty::CReaderCacheKey, Ty<'tcx>>>,
+    pub rcache: RefCell<FxHashMap<ty::CReaderCacheKey, Ty<'tcx>>>,
 
     // Cache for the type-contents routine. FIXME -- track deps?
-    pub tc_cache: RefCell<FnvHashMap<Ty<'tcx>, ty::contents::TypeContents>>,
+    pub tc_cache: RefCell<FxHashMap<Ty<'tcx>, ty::contents::TypeContents>>,
 
     // FIXME no dep tracking, but we should be able to remove this
     pub ty_param_defs: RefCell<NodeMap<ty::TypeParameterDef<'tcx>>>,
 
     // FIXME dep tracking -- should be harmless enough
-    pub normalized_cache: RefCell<FnvHashMap<Ty<'tcx>, Ty<'tcx>>>,
+    pub normalized_cache: RefCell<FxHashMap<Ty<'tcx>, Ty<'tcx>>>,
 
     pub lang_items: middle::lang_items::LanguageItems,
 
@@ -565,20 +576,20 @@ pub struct GlobalCtxt<'tcx> {
 
     /// The definite name of the current crate after taking into account
     /// attributes, commandline parameters, etc.
-    pub crate_name: token::InternedString,
+    pub crate_name: Symbol,
 
     /// Data layout specification for the current target.
     pub data_layout: TargetDataLayout,
 
     /// Cache for layouts computed from types.
-    pub layout_cache: RefCell<FnvHashMap<Ty<'tcx>, &'tcx Layout>>,
+    pub layout_cache: RefCell<FxHashMap<Ty<'tcx>, &'tcx Layout>>,
 
     /// Used to prevent layout from recursing too deeply.
     pub layout_depth: Cell<usize>,
 
     /// Map from function to the `#[derive]` mode that it's defining. Only used
     /// by `proc-macro` crates.
-    pub derive_macros: RefCell<NodeMap<token::InternedString>>,
+    pub derive_macros: RefCell<NodeMap<Symbol>>,
 }
 
 impl<'tcx> GlobalCtxt<'tcx> {
@@ -592,15 +603,15 @@ impl<'tcx> GlobalCtxt<'tcx> {
 }
 
 impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
-    pub fn crate_name(self, cnum: CrateNum) -> token::InternedString {
+    pub fn crate_name(self, cnum: CrateNum) -> Symbol {
         if cnum == LOCAL_CRATE {
-            self.crate_name.clone()
+            self.crate_name
         } else {
             self.sess.cstore.crate_name(cnum)
         }
     }
 
-    pub fn original_crate_name(self, cnum: CrateNum) -> token::InternedString {
+    pub fn original_crate_name(self, cnum: CrateNum) -> Symbol {
         if cnum == LOCAL_CRATE {
             self.crate_name.clone()
         } else {
@@ -608,7 +619,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
-    pub fn crate_disambiguator(self, cnum: CrateNum) -> token::InternedString {
+    pub fn crate_disambiguator(self, cnum: CrateNum) -> Symbol {
         if cnum == LOCAL_CRATE {
             self.sess.local_crate_disambiguator()
         } else {
@@ -669,10 +680,6 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         self.ty_param_defs.borrow().get(&node_id).unwrap().clone()
     }
 
-    pub fn node_type_insert(self, id: NodeId, ty: Ty<'gcx>) {
-        self.tables.borrow_mut().node_types.insert(id, ty);
-    }
-
     pub fn alloc_generics(self, generics: ty::Generics<'gcx>)
                           -> &'gcx ty::Generics<'gcx> {
         self.global_interners.arenas.generics.alloc(generics)
@@ -682,38 +689,17 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         self.global_interners.arenas.mir.alloc(RefCell::new(mir))
     }
 
-    pub fn intern_trait_def(self, def: ty::TraitDef<'gcx>)
-                            -> &'gcx ty::TraitDef<'gcx> {
-        let did = def.trait_ref.def_id;
-        let interned = self.alloc_trait_def(def);
-        if let Some(prev) = self.trait_defs.borrow_mut().insert(did, interned) {
-            bug!("Tried to overwrite interned TraitDef: {:?}", prev)
-        }
-        self.generics.borrow_mut().insert(did, interned.generics);
-        interned
-    }
-
-    pub fn alloc_trait_def(self, def: ty::TraitDef<'gcx>)
-                           -> &'gcx ty::TraitDef<'gcx> {
+    pub fn alloc_trait_def(self, def: ty::TraitDef) -> &'gcx ty::TraitDef {
         self.global_interners.arenas.trait_def.alloc(def)
     }
 
-    pub fn insert_adt_def(self, did: DefId, adt_def: ty::AdtDefMaster<'gcx>) {
-        // this will need a transmute when reverse-variance is removed
-        if let Some(prev) = self.adt_defs.borrow_mut().insert(did, adt_def) {
-            bug!("Tried to overwrite interned AdtDef: {:?}", prev)
-        }
-    }
-
-    pub fn intern_adt_def(self,
-                          did: DefId,
-                          kind: AdtKind,
-                          variants: Vec<ty::VariantDefData<'gcx, 'gcx>>)
-                          -> ty::AdtDefMaster<'gcx> {
-        let def = ty::AdtDefData::new(self, did, kind, variants);
-        let interned = self.global_interners.arenas.adt_def.alloc(def);
-        self.insert_adt_def(did, interned);
-        interned
+    pub fn alloc_adt_def(self,
+                         did: DefId,
+                         kind: AdtKind,
+                         variants: Vec<ty::VariantDef>)
+                         -> &'gcx ty::AdtDef {
+        let def = ty::AdtDef::new(self, did, kind, variants);
+        self.global_interners.arenas.adt_def.alloc(def)
     }
 
     pub fn intern_stability(self, stab: attr::Stability) -> &'gcx attr::Stability {
@@ -776,7 +762,6 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     /// reference to the context, to allow formatting values that need it.
     pub fn create_and_enter<F, R>(s: &'tcx Session,
                                   arenas: &'tcx CtxtArenas<'tcx>,
-                                  def_map: DefMap,
                                   trait_map: TraitMap,
                                   named_region_map: resolve_lifetime::NamedRegionMap,
                                   map: ast_map::Map<'tcx>,
@@ -801,16 +786,16 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             types: common_types,
             named_region_map: named_region_map,
             region_maps: region_maps,
-            free_region_maps: RefCell::new(FnvHashMap()),
+            free_region_maps: RefCell::new(FxHashMap()),
             item_variance_map: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             variance_computed: Cell::new(false),
             sess: s,
-            def_map: RefCell::new(def_map),
             trait_map: trait_map,
             tables: RefCell::new(Tables::empty()),
             impl_trait_refs: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             trait_defs: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             adt_defs: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
+            adt_sized_constraint: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             generics: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             predicates: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             super_predicates: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
@@ -819,14 +804,13 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             mir_map: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             freevars: RefCell::new(freevars),
             maybe_unused_trait_imports: maybe_unused_trait_imports,
-            tcache: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
-            rcache: RefCell::new(FnvHashMap()),
-            tc_cache: RefCell::new(FnvHashMap()),
-            impl_or_trait_items: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
-            impl_or_trait_item_def_ids: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
-            trait_items_cache: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
+            item_types: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
+            rcache: RefCell::new(FxHashMap()),
+            tc_cache: RefCell::new(FxHashMap()),
+            associated_items: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
+            associated_item_def_ids: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             ty_param_defs: RefCell::new(NodeMap()),
-            normalized_cache: RefCell::new(FnvHashMap()),
+            normalized_cache: RefCell::new(FxHashMap()),
             lang_items: lang_items,
             inherent_impls: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             used_unsafe: RefCell::new(NodeSet()),
@@ -844,9 +828,9 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             custom_coerce_unsized_kinds: RefCell::new(DefIdMap()),
             cast_kinds: RefCell::new(NodeMap()),
             fragment_infos: RefCell::new(DefIdMap()),
-            crate_name: token::intern_and_get_ident(crate_name),
+            crate_name: Symbol::intern(crate_name),
             data_layout: data_layout,
-            layout_cache: RefCell::new(FnvHashMap()),
+            layout_cache: RefCell::new(FxHashMap()),
             layout_depth: Cell::new(0),
             derive_macros: RefCell::new(NodeMap()),
        }, f)
@@ -949,6 +933,27 @@ impl<'a, 'tcx> Lift<'tcx> for &'a Slice<Ty<'a>> {
         if let Some(&Interned(list)) = tcx.interners.type_list.borrow().get(&self[..]) {
             if *self as *const _ == list as *const _ {
                 return Some(list);
+            }
+        }
+        // Also try in the global tcx if we're not that.
+        if !tcx.is_global() {
+            self.lift_to_tcx(tcx.global_tcx())
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a, 'tcx> Lift<'tcx> for &'a Slice<ExistentialPredicate<'a>> {
+    type Lifted = &'tcx Slice<ExistentialPredicate<'tcx>>;
+    fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>)
+        -> Option<&'tcx Slice<ExistentialPredicate<'tcx>>> {
+        if self.is_empty() {
+            return Some(Slice::empty());
+        }
+        if let Some(&Interned(eps)) = tcx.interners.existential_predicates.borrow().get(&self[..]) {
+            if *self as *const _ == eps as *const _ {
+                return Some(eps);
             }
         }
         // Also try in the global tcx if we're not that.
@@ -1128,7 +1133,7 @@ impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
         sty_debug_print!(
             self,
             TyAdt, TyBox, TyArray, TySlice, TyRawPtr, TyRef, TyFnDef, TyFnPtr,
-            TyTrait, TyClosure, TyTuple, TyParam, TyInfer, TyProjection, TyAnon);
+            TyDynamic, TyClosure, TyTuple, TyParam, TyInfer, TyProjection, TyAnon);
 
         println!("Substs interner: #{}", self.interners.substs.borrow().len());
         println!("BareFnTy interner: #{}", self.interners.bare_fn.borrow().len());
@@ -1199,6 +1204,13 @@ impl<'tcx: 'lcx, 'lcx> Borrow<BareFnTy<'lcx>> for Interned<'tcx, BareFnTy<'tcx>>
 impl<'tcx> Borrow<Region> for Interned<'tcx, Region> {
     fn borrow<'a>(&'a self) -> &'a Region {
         self.0
+    }
+}
+
+impl<'tcx: 'lcx, 'lcx> Borrow<[ExistentialPredicate<'lcx>]>
+    for Interned<'tcx, Slice<ExistentialPredicate<'tcx>>> {
+    fn borrow<'a>(&'a self) -> &'a [ExistentialPredicate<'lcx>] {
+        &self.0[..]
     }
 }
 
@@ -1299,6 +1311,7 @@ macro_rules! slice_interners {
 }
 
 slice_interners!(
+    existential_predicates: _intern_existential_predicates(ExistentialPredicate),
     type_list: _intern_type_list(Ty),
     substs: _intern_substs(Kind)
 );
@@ -1360,7 +1373,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         self.mk_imm_ref(self.mk_region(ty::ReStatic), self.mk_str())
     }
 
-    pub fn mk_adt(self, def: AdtDef<'tcx>, substs: &'tcx Substs<'tcx>) -> Ty<'tcx> {
+    pub fn mk_adt(self, def: &'tcx AdtDef, substs: &'tcx Substs<'tcx>) -> Ty<'tcx> {
         // take a copy of substs so that we own the vectors inside
         self.mk_ty(TyAdt(def, substs))
     }
@@ -1439,28 +1452,29 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         self.mk_ty(TyFnPtr(fty))
     }
 
-    pub fn mk_trait(self, mut obj: TraitObject<'tcx>) -> Ty<'tcx> {
-        obj.projection_bounds.sort_by_key(|b| b.sort_key(self));
-        self.mk_ty(TyTrait(box obj))
+    pub fn mk_dynamic(
+        self,
+        obj: ty::Binder<&'tcx Slice<ExistentialPredicate<'tcx>>>,
+        reg: &'tcx ty::Region
+    ) -> Ty<'tcx> {
+        self.mk_ty(TyDynamic(obj, reg))
     }
 
     pub fn mk_projection(self,
                          trait_ref: TraitRef<'tcx>,
                          item_name: Name)
-                         -> Ty<'tcx> {
-        // take a copy of substs so that we own the vectors inside
-        let inner = ProjectionTy { trait_ref: trait_ref, item_name: item_name };
-        self.mk_ty(TyProjection(inner))
-    }
+        -> Ty<'tcx> {
+            // take a copy of substs so that we own the vectors inside
+            let inner = ProjectionTy { trait_ref: trait_ref, item_name: item_name };
+            self.mk_ty(TyProjection(inner))
+        }
 
     pub fn mk_closure(self,
                       closure_id: DefId,
-                      substs: &'tcx Substs<'tcx>,
-                      tys: &[Ty<'tcx>])
-                      -> Ty<'tcx> {
+                      substs: &'tcx Substs<'tcx>)
+        -> Ty<'tcx> {
         self.mk_closure_from_closure_substs(closure_id, ClosureSubsts {
-            func_substs: substs,
-            upvar_tys: self.intern_type_list(tys)
+            substs: substs
         })
     }
 
@@ -1505,6 +1519,13 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         self.mk_ty(TyAnon(def_id, substs))
     }
 
+    pub fn intern_existential_predicates(self, eps: &[ExistentialPredicate<'tcx>])
+        -> &'tcx Slice<ExistentialPredicate<'tcx>> {
+        assert!(!eps.is_empty());
+        assert!(eps.windows(2).all(|w| w[0].cmp(self, &w[1]) != Ordering::Greater));
+        self._intern_existential_predicates(eps)
+    }
+
     pub fn intern_type_list(self, ts: &[Ty<'tcx>]) -> &'tcx Slice<Ty<'tcx>> {
         if ts.len() == 0 {
             Slice::empty()
@@ -1519,6 +1540,23 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         } else {
             self._intern_substs(ts)
         }
+    }
+
+    pub fn mk_fn_sig<I>(self, inputs: I, output: I::Item, variadic: bool)
+        -> <I::Item as InternIteratorElement<Ty<'tcx>, ty::FnSig<'tcx>>>::Output
+        where I: Iterator,
+              I::Item: InternIteratorElement<Ty<'tcx>, ty::FnSig<'tcx>>
+    {
+        inputs.chain(iter::once(output)).intern_with(|xs| ty::FnSig {
+            inputs_and_output: self.intern_type_list(xs),
+            variadic: variadic
+        })
+    }
+
+    pub fn mk_existential_predicates<I: InternAs<[ExistentialPredicate<'tcx>],
+                                     &'tcx Slice<ExistentialPredicate<'tcx>>>>(self, iter: I)
+                                     -> I::Output {
+        iter.intern_with(|xs| self.intern_existential_predicates(xs))
     }
 
     pub fn mk_type_list<I: InternAs<[Ty<'tcx>],
@@ -1537,15 +1575,6 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                     -> &'tcx Substs<'tcx>
     {
         self.mk_substs(iter::once(s).chain(t.into_iter().cloned()).map(Kind::from))
-    }
-
-    pub fn trait_items(self, trait_did: DefId) -> Rc<Vec<ty::ImplOrTraitItem<'gcx>>> {
-        self.trait_items_cache.memoize(trait_did, || {
-            let def_ids = self.impl_or_trait_items(trait_did);
-            Rc::new(def_ids.iter()
-                           .map(|&def_id| self.impl_or_trait_item(def_id))
-                           .collect())
-        })
     }
 
     /// Obtain the representation annotation for a struct definition.
@@ -1592,4 +1621,3 @@ impl<T, R, E> InternIteratorElement<T, R> for Result<T, E> {
         Ok(f(&iter.collect::<Result<AccumulateVec<[_; 8]>, _>>()?))
     }
 }
-

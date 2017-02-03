@@ -190,9 +190,6 @@ impl<'a, 'tcx> Lift<'tcx> for traits::ObligationCauseCode<'a> {
             super::VariableType(id) => Some(super::VariableType(id)),
             super::ReturnType => Some(super::ReturnType),
             super::RepeatVec => Some(super::RepeatVec),
-            super::ClosureCapture(node_id, span, bound) => {
-                Some(super::ClosureCapture(node_id, span, bound))
-            }
             super::FieldSized => Some(super::FieldSized),
             super::ConstSized => Some(super::ConstSized),
             super::SharedStatic => Some(super::SharedStatic),
@@ -212,6 +209,34 @@ impl<'a, 'tcx> Lift<'tcx> for traits::ObligationCauseCode<'a> {
                     trait_item_def_id: trait_item_def_id,
                     lint_id: lint_id,
                 })
+            }
+            super::ExprAssignable => {
+                Some(super::ExprAssignable)
+            }
+            super::MatchExpressionArm { arm_span, source } => {
+                Some(super::MatchExpressionArm { arm_span: arm_span,
+                                                 source: source })
+            }
+            super::IfExpression => {
+                Some(super::IfExpression)
+            }
+            super::IfExpressionWithNoElse => {
+                Some(super::IfExpressionWithNoElse)
+            }
+            super::EquatePredicate => {
+                Some(super::EquatePredicate)
+            }
+            super::MainFunctionType => {
+                Some(super::MainFunctionType)
+            }
+            super::StartFunctionType => {
+                Some(super::StartFunctionType)
+            }
+            super::IntrinsicType => {
+                Some(super::IntrinsicType)
+            }
+            super::MethodReceiver => {
+                Some(super::MethodReceiver)
             }
         }
     }
@@ -461,6 +486,15 @@ impl<'tcx, T: TypeFoldable<'tcx>> TypeFoldable<'tcx> for Normalized<'tcx, T> {
 impl<'tcx> TypeFoldable<'tcx> for traits::ObligationCauseCode<'tcx> {
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
         match *self {
+            super::ExprAssignable |
+            super::MatchExpressionArm { arm_span: _, source: _ } |
+            super::IfExpression |
+            super::IfExpressionWithNoElse |
+            super::EquatePredicate |
+            super::MainFunctionType |
+            super::StartFunctionType |
+            super::IntrinsicType |
+            super::MethodReceiver |
             super::MiscObligation |
             super::SliceOrArrayElem |
             super::TupleElem |
@@ -470,7 +504,6 @@ impl<'tcx> TypeFoldable<'tcx> for traits::ObligationCauseCode<'tcx> {
             super::VariableType(_) |
             super::ReturnType |
             super::RepeatVec |
-            super::ClosureCapture(..) |
             super::FieldSized |
             super::ConstSized |
             super::SharedStatic |
@@ -497,6 +530,15 @@ impl<'tcx> TypeFoldable<'tcx> for traits::ObligationCauseCode<'tcx> {
 
     fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
         match *self {
+            super::ExprAssignable |
+            super::MatchExpressionArm { arm_span: _, source: _ } |
+            super::IfExpression |
+            super::IfExpressionWithNoElse |
+            super::EquatePredicate |
+            super::MainFunctionType |
+            super::StartFunctionType |
+            super::IntrinsicType |
+            super::MethodReceiver |
             super::MiscObligation |
             super::SliceOrArrayElem |
             super::TupleElem |
@@ -506,7 +548,6 @@ impl<'tcx> TypeFoldable<'tcx> for traits::ObligationCauseCode<'tcx> {
             super::VariableType(_) |
             super::ReturnType |
             super::RepeatVec |
-            super::ClosureCapture(..) |
             super::FieldSized |
             super::ConstSized |
             super::SharedStatic |

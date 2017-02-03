@@ -24,7 +24,7 @@ use ty::{self, TyCtxt, Binder, TypeFoldable};
 use ty::error::TypeError;
 use ty::relate::{Relate, RelateResult, TypeRelation};
 use syntax_pos::Span;
-use util::nodemap::{FnvHashMap, FnvHashSet};
+use util::nodemap::{FxHashMap, FxHashSet};
 
 pub struct HrMatchResult<U> {
     pub value: U,
@@ -58,7 +58,7 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
         // Start a snapshot so we can examine "all bindings that were
         // created as part of this type comparison".
         return self.infcx.commit_if_ok(|snapshot| {
-            let span = self.trace.origin.span();
+            let span = self.trace.cause.span;
 
             // First, we instantiate each bound region in the subtype with a fresh
             // region variable.
@@ -135,7 +135,7 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
             // Map each skolemized region to a vector of other regions that it
             // must be equated with. (Note that this vector may include other
             // skolemized regions from `skol_map`.)
-            let skol_resolution_map: FnvHashMap<_, _> =
+            let skol_resolution_map: FxHashMap<_, _> =
                 skol_map
                 .iter()
                 .map(|(&br, &skol)| {
@@ -158,7 +158,7 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
             // `skol_map`. There should always be a representative if things
             // are properly well-formed.
             let mut unconstrained_regions = vec![];
-            let skol_representatives: FnvHashMap<_, _> =
+            let skol_representatives: FxHashMap<_, _> =
                 skol_resolution_map
                 .iter()
                 .map(|(&skol, &(br, ref regions))| {
@@ -230,7 +230,7 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
         // created as part of this type comparison".
         return self.infcx.commit_if_ok(|snapshot| {
             // Instantiate each bound region with a fresh region variable.
-            let span = self.trace.origin.span();
+            let span = self.trace.cause.span;
             let (a_with_fresh, a_map) =
                 self.infcx.replace_late_bound_regions_with_fresh_var(
                     span, HigherRankedType, a);
@@ -247,7 +247,7 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
 
             // Generalize the regions appearing in result0 if possible
             let new_vars = self.infcx.region_vars_confined_to_snapshot(snapshot);
-            let span = self.trace.origin.span();
+            let span = self.trace.cause.span;
             let result1 =
                 fold_regions_in(
                     self.tcx(),
@@ -268,7 +268,7 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
                                              snapshot: &CombinedSnapshot,
                                              debruijn: ty::DebruijnIndex,
                                              new_vars: &[ty::RegionVid],
-                                             a_map: &FnvHashMap<ty::BoundRegion, &'tcx ty::Region>,
+                                             a_map: &FxHashMap<ty::BoundRegion, &'tcx ty::Region>,
                                              r0: &'tcx ty::Region)
                                              -> &'tcx ty::Region {
             // Regions that pre-dated the LUB computation stay as they are.
@@ -325,10 +325,10 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
             // Instantiate each bound region with a fresh region variable.
             let (a_with_fresh, a_map) =
                 self.infcx.replace_late_bound_regions_with_fresh_var(
-                    self.trace.origin.span(), HigherRankedType, a);
+                    self.trace.cause.span, HigherRankedType, a);
             let (b_with_fresh, b_map) =
                 self.infcx.replace_late_bound_regions_with_fresh_var(
-                    self.trace.origin.span(), HigherRankedType, b);
+                    self.trace.cause.span, HigherRankedType, b);
             let a_vars = var_ids(self, &a_map);
             let b_vars = var_ids(self, &b_map);
 
@@ -341,7 +341,7 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
 
             // Generalize the regions appearing in result0 if possible
             let new_vars = self.infcx.region_vars_confined_to_snapshot(snapshot);
-            let span = self.trace.origin.span();
+            let span = self.trace.cause.span;
             let result1 =
                 fold_regions_in(
                     self.tcx(),
@@ -364,8 +364,7 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
                                              snapshot: &CombinedSnapshot,
                                              debruijn: ty::DebruijnIndex,
                                              new_vars: &[ty::RegionVid],
-                                             a_map: &FnvHashMap<ty::BoundRegion,
-                                                                &'tcx ty::Region>,
+                                             a_map: &FxHashMap<ty::BoundRegion, &'tcx ty::Region>,
                                              a_vars: &[ty::RegionVid],
                                              b_vars: &[ty::RegionVid],
                                              r0: &'tcx ty::Region)
@@ -434,7 +433,7 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
 
         fn rev_lookup<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
                                       span: Span,
-                                      a_map: &FnvHashMap<ty::BoundRegion, &'tcx ty::Region>,
+                                      a_map: &FxHashMap<ty::BoundRegion, &'tcx ty::Region>,
                                       r: &'tcx ty::Region) -> &'tcx ty::Region
         {
             for (a_br, a_r) in a_map {
@@ -457,14 +456,14 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
 }
 
 fn var_ids<'a, 'gcx, 'tcx>(fields: &CombineFields<'a, 'gcx, 'tcx>,
-                           map: &FnvHashMap<ty::BoundRegion, &'tcx ty::Region>)
+                           map: &FxHashMap<ty::BoundRegion, &'tcx ty::Region>)
                            -> Vec<ty::RegionVid> {
     map.iter()
        .map(|(_, &r)| match *r {
            ty::ReVar(r) => { r }
            _ => {
                span_bug!(
-                   fields.trace.origin.span(),
+                   fields.trace.cause.span,
                    "found non-region-vid: {:?}",
                    r);
            }
@@ -504,7 +503,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                        snapshot: &CombinedSnapshot,
                        r: &'tcx ty::Region,
                        directions: TaintDirections)
-                       -> FnvHashSet<&'tcx ty::Region> {
+                       -> FxHashSet<&'tcx ty::Region> {
         self.region_vars.tainted(&snapshot.region_vars_snapshot, r, directions)
     }
 
@@ -568,7 +567,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         let escaping_types =
             self.type_variables.borrow_mut().types_escaping_snapshot(&snapshot.type_snapshot);
 
-        let mut escaping_region_vars = FnvHashSet();
+        let mut escaping_region_vars = FxHashSet();
         for ty in &escaping_types {
             self.tcx.collect_regions(ty, &mut escaping_region_vars);
         }
@@ -764,7 +763,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         // region back to the `ty::BoundRegion` that it originally
         // represented. Because `leak_check` passed, we know that
         // these taint sets are mutually disjoint.
-        let inv_skol_map: FnvHashMap<&'tcx ty::Region, ty::BoundRegion> =
+        let inv_skol_map: FxHashMap<&'tcx ty::Region, ty::BoundRegion> =
             skol_map
             .iter()
             .flat_map(|(&skol_br, &skol)| {
@@ -837,7 +836,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                           snapshot: &CombinedSnapshot)
     {
         debug!("pop_skolemized({:?})", skol_map);
-        let skol_regions: FnvHashSet<_> = skol_map.values().cloned().collect();
+        let skol_regions: FxHashSet<_> = skol_map.values().cloned().collect();
         self.region_vars.pop_skolemized(&skol_regions, &snapshot.region_vars_snapshot);
         if !skol_map.is_empty() {
             self.projection_cache.borrow_mut().rollback_skolemized(

@@ -22,6 +22,9 @@
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 
+#if LLVM_VERSION_GE(4, 0)
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
+#endif
 
 #include "llvm-c/Transforms/PassManagerBuilder.h"
 
@@ -137,13 +140,20 @@ LLVMRustAddPass(LLVMPassManagerRef PM, LLVMPassRef rust_pass) {
 #define SUBTARGET_SYSTEMZ
 #endif
 
+#ifdef LLVM_COMPONENT_MSP430
+#define SUBTARGET_MSP430 SUBTARGET(MSP430)
+#else
+#define SUBTARGET_MSP430
+#endif
+
 #define GEN_SUBTARGETS    \
         SUBTARGET_X86     \
         SUBTARGET_ARM     \
         SUBTARGET_AARCH64 \
         SUBTARGET_MIPS    \
         SUBTARGET_PPC     \
-        SUBTARGET_SYSTEMZ
+        SUBTARGET_SYSTEMZ \
+        SUBTARGET_MSP430
 
 #define SUBTARGET(x) namespace llvm {                \
     extern const SubtargetFeatureKV x##FeatureKV[];  \
@@ -519,10 +529,22 @@ LLVMRustPrintPasses() {
     LLVMInitializePasses();
     struct MyListener : PassRegistrationListener {
         void passEnumerate(const PassInfo *info) {
+#if LLVM_VERSION_GE(4, 0)
+            StringRef PassArg = info->getPassArgument();
+            StringRef PassName = info->getPassName();
+            if (!PassArg.empty()) {
+                // These unsigned->signed casts could theoretically overflow, but
+                // realistically never will (and even if, the result is implementation
+                // defined rather plain UB).
+                printf("%15.*s - %.*s\n", (int)PassArg.size(), PassArg.data(),
+                       (int)PassName.size(), PassName.data());
+            }
+#else
             if (info->getPassArgument() && *info->getPassArgument()) {
                 printf("%15s - %s\n", info->getPassArgument(),
                        info->getPassName());
             }
+#endif
         }
     } listener;
 
@@ -532,7 +554,11 @@ LLVMRustPrintPasses() {
 
 extern "C" void
 LLVMRustAddAlwaysInlinePass(LLVMPassManagerBuilderRef PMB, bool AddLifetimes) {
+#if LLVM_VERSION_GE(4, 0)
+    unwrap(PMB)->Inliner = llvm::createAlwaysInlinerLegacyPass(AddLifetimes);
+#else
     unwrap(PMB)->Inliner = createAlwaysInlinerPass(AddLifetimes);
+#endif
 }
 
 extern "C" void

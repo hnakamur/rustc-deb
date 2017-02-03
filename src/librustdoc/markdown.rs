@@ -63,14 +63,15 @@ pub fn render(input: &str, mut output: PathBuf, matches: &getopts::Matches,
         Err(LoadStringError::ReadFail) => return 1,
         Err(LoadStringError::BadUtf8) => return 2,
     };
-    if let Some(playground) = matches.opt_str("markdown-playground-url") {
+    if let Some(playground) = matches.opt_str("markdown-playground-url").or(
+                              matches.opt_str("playground-url")) {
         markdown::PLAYGROUND.with(|s| { *s.borrow_mut() = Some((None, playground)); });
     }
 
     let mut out = match File::create(&output) {
         Err(e) => {
             let _ = writeln!(&mut io::stderr(),
-                             "error opening `{}` for writing: {}",
+                             "rustdoc: {}: {}",
                              output.display(), e);
             return 4;
         }
@@ -79,8 +80,10 @@ pub fn render(input: &str, mut output: PathBuf, matches: &getopts::Matches,
 
     let (metadata, text) = extract_leading_metadata(&input_str);
     if metadata.is_empty() {
-        let _ = writeln!(&mut io::stderr(),
-                         "invalid markdown file: expecting initial line with `% ...TITLE...`");
+        let _ = writeln!(
+            &mut io::stderr(),
+            "rustdoc: invalid markdown file: expecting initial line with `% ...TITLE...`"
+        );
         return 5;
     }
     let title = metadata[0];
@@ -131,7 +134,7 @@ pub fn render(input: &str, mut output: PathBuf, matches: &getopts::Matches,
     match err {
         Err(e) => {
             let _ = writeln!(&mut io::stderr(),
-                             "error writing to `{}`: {}",
+                             "rustdoc: cannot write to `{}`: {}",
                              output.display(), e);
             6
         }

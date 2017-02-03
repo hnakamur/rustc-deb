@@ -162,6 +162,7 @@ fn main() {
         cfg.header("sys/ipc.h");
         cfg.header("sys/msg.h");
         cfg.header("sys/shm.h");
+        cfg.header("sys/fsuid.h");
         cfg.header("pty.h");
         cfg.header("shadow.h");
     }
@@ -213,6 +214,10 @@ fn main() {
         cfg.header("ufs/ufs/quota.h");
         cfg.header("pthread_np.h");
         cfg.header("sys/ioctl_compat.h");
+    }
+
+    if linux || freebsd || netbsd || apple {
+        cfg.header("aio.h");
     }
 
     cfg.type_name(move |ty, is_struct| {
@@ -293,6 +298,9 @@ fn main() {
             // The alignment of this is 4 on 64-bit OSX...
             "kevent" if apple && x86_64 => true,
 
+            // This is actually a union, not a struct
+            "sigval" => true,
+
             _ => false
         }
     });
@@ -352,6 +360,19 @@ fn main() {
             // it and just ignore these constants
             "QFMT_VFS_OLD" |
             "QFMT_VFS_V0" if mips && linux => true,
+
+            // These constants were removed in FreeBSD 11 (svn r273250) but will
+            // still be accepted and ignored at runtime.
+            "MAP_RENAME" |
+            "MAP_NORESERVE" if freebsd => true,
+
+            // These constants were removed in FreeBSD 11 (svn r262489),
+            // and they've never had any legitimate use outside of the
+            // base system anyway.
+            "CTL_MAXID" |
+            "KERN_MAXID" |
+            "HW_MAXID" |
+            "USER_MAXID" if freebsd => true,
 
             _ => false,
         }
@@ -417,10 +438,22 @@ fn main() {
             // [3]: https://sourceware.org/git/?p=glibc.git;a=blob;f=sysdeps/unix/sysv/linux/sys/eventfd.h;h=6295f32e937e779e74318eb9d3bdbe76aef8a8f3;hb=4e42b5b8f89f0e288e68be7ad70f9525aebc2cff#l34
             "eventfd" if linux => true,
 
-            // The `uname` funcion in freebsd is now an inline wrapper that
+            // The `uname` function in freebsd is now an inline wrapper that
             // delegates to another, but the symbol still exists, so don't check
             // the symbol.
             "uname" if freebsd => true,
+
+            // aio_waitcomplete's return type changed between FreeBSD 10 and 11.
+            "aio_waitcomplete" if freebsd => true,
+
+            // lio_listio confuses the checker, probably because one of its
+            // arguments is an array
+            "lio_listio" if freebsd => true,
+            "lio_listio" if musl => true,
+
+            // Apparently the NDK doesn't have this defined on android, but
+            // it's in a header file?
+            "endpwent" if android => true,
 
             _ => false,
         }
@@ -441,7 +474,13 @@ fn main() {
         // sighandler_t type is super weird
         (struct_ == "sigaction" && field == "sa_sigaction") ||
         // __timeval type is a patch which doesn't exist in glibc
-        (linux && struct_ == "utmpx" && field == "ut_tv")
+        (linux && struct_ == "utmpx" && field == "ut_tv") ||
+        // sigval is actually a union, but we pretend it's a struct
+        (struct_ == "sigevent" && field == "sigev_value") ||
+        // aio_buf is "volatile void*" and Rust doesn't understand volatile
+        (struct_ == "aiocb" && field == "aio_buf") ||
+        // stack_t.ss_sp's type changed from FreeBSD 10 to 11 in svn r294930
+        (freebsd && struct_ == "stack_t" && field == "ss_sp")
     });
 
     cfg.skip_field(move |struct_, field| {
@@ -451,7 +490,9 @@ fn main() {
         // musl names this __dummy1 but it's still there
         (musl && struct_ == "glob_t" && field == "gl_flags") ||
         // musl seems to define this as an *anonymous* bitfield
-        (musl && struct_ == "statvfs" && field == "__f_unused")
+        (musl && struct_ == "statvfs" && field == "__f_unused") ||
+        // sigev_notify_thread_id is actually part of a sigev_un union
+        (struct_ == "sigevent" && field == "sigev_notify_thread_id")
     });
 
     cfg.fn_cname(move |name, cname| {

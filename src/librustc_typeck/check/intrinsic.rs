@@ -12,19 +12,20 @@
 //! intrinsics that the compiler exposes.
 
 use intrinsics;
-use rustc::infer::TypeOrigin;
+use rustc::traits::{ObligationCause, ObligationCauseCode};
 use rustc::ty::subst::Substs;
-use rustc::ty::FnSig;
 use rustc::ty::{self, Ty};
-use rustc::util::nodemap::FnvHashMap;
+use rustc::util::nodemap::FxHashMap;
 use {CrateCtxt, require_same_types};
 
 use syntax::abi::Abi;
 use syntax::ast;
-use syntax::parse::token;
+use syntax::symbol::Symbol;
 use syntax_pos::Span;
 
 use rustc::hir;
+
+use std::iter;
 
 fn equate_intrinsic_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                    it: &hir::ForeignItem,
@@ -34,7 +35,6 @@ fn equate_intrinsic_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                    output: Ty<'tcx>) {
     let tcx = ccx.tcx;
     let def_id = tcx.map.local_def_id(it.id);
-    let i_ty = tcx.lookup_item_type(def_id);
 
     let substs = Substs::for_item(tcx, def_id,
                                   |_, _| tcx.mk_region(ty::ReErased),
@@ -43,13 +43,9 @@ fn equate_intrinsic_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     let fty = tcx.mk_fn_def(def_id, substs, tcx.mk_bare_fn(ty::BareFnTy {
         unsafety: hir::Unsafety::Unsafe,
         abi: abi,
-        sig: ty::Binder(FnSig {
-            inputs: inputs,
-            output: output,
-            variadic: false,
-        }),
+        sig: ty::Binder(tcx.mk_fn_sig(inputs.into_iter(), output, false)),
     }));
-    let i_n_tps = i_ty.generics.types.len();
+    let i_n_tps = tcx.item_generics(def_id).types.len();
     if i_n_tps != n_tps {
         let span = match it.node {
             hir::ForeignItemFn(_, ref generics) => generics.span,
@@ -64,8 +60,10 @@ fn equate_intrinsic_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
             .emit();
     } else {
         require_same_types(ccx,
-                           TypeOrigin::IntrinsicType(it.span),
-                           i_ty.ty,
+                           &ObligationCause::new(it.span,
+                                                 it.id,
+                                                 ObligationCauseCode::IntrinsicType),
+                           tcx.item_type(def_id),
                            fty);
     }
 }
@@ -74,7 +72,7 @@ fn equate_intrinsic_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
 /// and in libcore/intrinsics.rs
 pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &hir::ForeignItem) {
     fn param<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>, n: u32) -> Ty<'tcx> {
-        let name = token::intern(&format!("P{}", n));
+        let name = Symbol::intern(&format!("P{}", n));
         ccx.tcx.mk_param(n, name)
     }
 
@@ -298,11 +296,7 @@ pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &hir::ForeignItem) {
                 let fn_ty = tcx.mk_bare_fn(ty::BareFnTy {
                     unsafety: hir::Unsafety::Normal,
                     abi: Abi::Rust,
-                    sig: ty::Binder(FnSig {
-                        inputs: vec![mut_u8],
-                        output: tcx.mk_nil(),
-                        variadic: false,
-                    }),
+                    sig: ty::Binder(tcx.mk_fn_sig(iter::once(mut_u8), tcx.mk_nil(), false)),
                 });
                 (0, vec![tcx.mk_fn_ptr(fn_ty), mut_u8, mut_u8], tcx.types.i32)
             }
@@ -325,13 +319,13 @@ pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &hir::ForeignItem) {
 pub fn check_platform_intrinsic_type(ccx: &CrateCtxt,
                                      it: &hir::ForeignItem) {
     let param = |n| {
-        let name = token::intern(&format!("P{}", n));
+        let name = Symbol::intern(&format!("P{}", n));
         ccx.tcx.mk_param(n, name)
     };
 
     let tcx = ccx.tcx;
-    let i_ty = tcx.lookup_item_type(tcx.map.local_def_id(it.id));
-    let i_n_tps = i_ty.generics.types.len();
+    let def_id = tcx.map.local_def_id(it.id);
+    let i_n_tps = tcx.item_generics(def_id).types.len();
     let name = it.name.as_str();
 
     let (n_tps, inputs, output) = match &*name {
@@ -372,24 +366,25 @@ pub fn check_platform_intrinsic_type(ccx: &CrateCtxt,
                         return
                     }
 
-                    let mut structural_to_nomimal = FnvHashMap();
+                    let mut structural_to_nomimal = FxHashMap();
 
-                    let sig = tcx.no_late_bound_regions(i_ty.ty.fn_sig()).unwrap();
-                    if intr.inputs.len() != sig.inputs.len() {
+                    let sig = tcx.item_type(def_id).fn_sig();
+                    let sig = tcx.no_late_bound_regions(sig).unwrap();
+                    if intr.inputs.len() != sig.inputs().len() {
                         span_err!(tcx.sess, it.span, E0444,
                                   "platform-specific intrinsic has invalid number of \
                                    arguments: found {}, expected {}",
-                                  sig.inputs.len(), intr.inputs.len());
+                                  sig.inputs().len(), intr.inputs.len());
                         return
                     }
-                    let input_pairs = intr.inputs.iter().zip(&sig.inputs);
+                    let input_pairs = intr.inputs.iter().zip(sig.inputs());
                     for (i, (expected_arg, arg)) in input_pairs.enumerate() {
                         match_intrinsic_type_to_type(ccx, &format!("argument {}", i + 1), it.span,
                                                      &mut structural_to_nomimal, expected_arg, arg);
                     }
                     match_intrinsic_type_to_type(ccx, "return value", it.span,
                                                  &mut structural_to_nomimal,
-                                                 &intr.output, sig.output);
+                                                 &intr.output, sig.output());
                     return
                 }
                 None => {
@@ -412,7 +407,7 @@ fn match_intrinsic_type_to_type<'tcx, 'a>(
         ccx: &CrateCtxt<'a, 'tcx>,
         position: &str,
         span: Span,
-        structural_to_nominal: &mut FnvHashMap<&'a intrinsics::Type, ty::Ty<'tcx>>,
+        structural_to_nominal: &mut FxHashMap<&'a intrinsics::Type, ty::Ty<'tcx>>,
         expected: &'a intrinsics::Type, t: ty::Ty<'tcx>)
 {
     use intrinsics::Type::*;

@@ -11,7 +11,7 @@
 use hir::def_id::{DefId};
 use ty::{self, Ty, TyCtxt};
 use util::common::MemoizationMap;
-use util::nodemap::FnvHashMap;
+use util::nodemap::FxHashMap;
 
 use std::fmt;
 use std::ops;
@@ -98,10 +98,11 @@ impl TypeContents {
         TC::OwnsOwned | (*self & TC::OwnsAll)
     }
 
-    pub fn union<T, F>(v: &[T], mut f: F) -> TypeContents where
-        F: FnMut(&T) -> TypeContents,
+    pub fn union<I, T, F>(v: I, mut f: F) -> TypeContents where
+        I: IntoIterator<Item=T>,
+        F: FnMut(T) -> TypeContents,
     {
-        v.iter().fold(TC::None, |tc, ty| tc | f(ty))
+        v.into_iter().fold(TC::None, |tc, ty| tc | f(ty))
     }
 
     pub fn has_dtor(&self) -> bool {
@@ -141,11 +142,11 @@ impl fmt::Debug for TypeContents {
 
 impl<'a, 'tcx> ty::TyS<'tcx> {
     pub fn type_contents(&'tcx self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> TypeContents {
-        return tcx.tc_cache.memoize(self, || tc_ty(tcx, self, &mut FnvHashMap()));
+        return tcx.tc_cache.memoize(self, || tc_ty(tcx, self, &mut FxHashMap()));
 
         fn tc_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                            ty: Ty<'tcx>,
-                           cache: &mut FnvHashMap<Ty<'tcx>, TypeContents>) -> TypeContents
+                           cache: &mut FxHashMap<Ty<'tcx>, TypeContents>) -> TypeContents
         {
             // Subtle: Note that we are *not* using tcx.tc_cache here but rather a
             // private cache for this walk.  This is needed in the case of cyclic
@@ -194,7 +195,7 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
                     tc_ty(tcx, typ, cache).owned_pointer()
                 }
 
-                ty::TyTrait(_) => {
+                ty::TyDynamic(..) => {
                     TC::All - TC::InteriorParam
                 }
 
@@ -215,8 +216,10 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
                 }
                 ty::TyStr => TC::None,
 
-                ty::TyClosure(_, ref substs) => {
-                    TypeContents::union(&substs.upvar_tys, |ty| tc_ty(tcx, &ty, cache))
+                ty::TyClosure(def_id, ref substs) => {
+                    TypeContents::union(
+                        substs.upvar_tys(def_id, tcx),
+                        |ty| tc_ty(tcx, &ty, cache))
                 }
 
                 ty::TyTuple(ref tys) => {

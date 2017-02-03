@@ -41,10 +41,14 @@ pub fn check(build: &mut Build) {
         }
     }
     let have_cmd = |cmd: &OsStr| {
-        for path in env::split_paths(&path).map(|p| p.join(cmd)) {
-            if fs::metadata(&path).is_ok() ||
-               fs::metadata(path.with_extension("exe")).is_ok() {
-                return Some(path);
+        for path in env::split_paths(&path) {
+            let target = path.join(cmd);
+            let mut cmd_alt = cmd.to_os_string();
+            cmd_alt.push(".exe");
+            if target.exists() ||
+               target.with_extension("exe").exists() ||
+               target.join(cmd_alt).exists() {
+                return Some(target);
             }
         }
         return None;
@@ -79,17 +83,28 @@ pub fn check(build: &mut Build) {
         break
     }
 
-    need_cmd("python".as_ref());
-
-    // Look for the nodejs command, needed for emscripten testing
-    if let Some(node) = have_cmd("node".as_ref()) {
-        build.config.nodejs = Some(node);
-    } else if let Some(node) = have_cmd("nodejs".as_ref()) {
-        build.config.nodejs = Some(node);
+    if build.config.python.is_none() {
+        build.config.python = have_cmd("python2.7".as_ref());
     }
+    if build.config.python.is_none() {
+        build.config.python = have_cmd("python2".as_ref());
+    }
+    if build.config.python.is_none() {
+        need_cmd("python".as_ref());
+        build.config.python = Some("python".into());
+    }
+    need_cmd(build.config.python.as_ref().unwrap().as_ref());
+
 
     if let Some(ref s) = build.config.nodejs {
         need_cmd(s.as_ref());
+    } else {
+        // Look for the nodejs command, needed for emscripten testing
+        if let Some(node) = have_cmd("node".as_ref()) {
+            build.config.nodejs = Some(node);
+        } else if let Some(node) = have_cmd("nodejs".as_ref()) {
+            build.config.nodejs = Some(node);
+        }
     }
 
     if let Some(ref gdb) = build.config.gdb {
@@ -207,5 +222,9 @@ $ pacman -R cmake && pacman -S mingw-w64-x86_64-cmake
     build.lldb_version = run(Command::new("lldb").arg("--version")).ok();
     if build.lldb_version.is_some() {
         build.lldb_python_dir = run(Command::new("lldb").arg("-P")).ok();
+    }
+
+    if let Some(ref s) = build.config.ccache {
+        need_cmd(s.as_ref());
     }
 }

@@ -9,16 +9,18 @@
 // except according to those terms.
 //
 
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Quad { a: u64, b: u64, c: u64, d: u64 }
 
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Floats { a: f64, b: u8, c: f64 }
 
 mod rustrt {
     use super::{Floats, Quad};
 
-    #[link(name = "rust_test_helpers")]
+    #[link(name = "rust_test_helpers", kind = "static")]
     extern {
         pub fn rust_dbg_abi_1(q: Quad) -> Quad;
         pub fn rust_dbg_abi_2(f: Floats) -> Floats;

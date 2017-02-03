@@ -86,7 +86,7 @@ should go to.
 
 */
 
-use build::{BlockAnd, BlockAndExtension, Builder, CFG, ScopeAuxiliary, ScopeId};
+use build::{BlockAnd, BlockAndExtension, Builder, CFG};
 use rustc::middle::region::{CodeExtent, CodeExtentData};
 use rustc::middle::lang_items;
 use rustc::ty::subst::{Kind, Subst};
@@ -94,17 +94,13 @@ use rustc::ty::{Ty, TyCtxt};
 use rustc::mir::*;
 use syntax_pos::Span;
 use rustc_data_structures::indexed_vec::Idx;
-use rustc_data_structures::fnv::FnvHashMap;
+use rustc_data_structures::fx::FxHashMap;
 
 pub struct Scope<'tcx> {
-    /// the scope-id within the scope_auxiliary
-    id: ScopeId,
-
     /// The visibility scope this scope was created in.
     visibility_scope: VisibilityScope,
 
-    /// the extent of this scope within source code; also stored in
-    /// `ScopeAuxiliary`, but kept here for convenience
+    /// the extent of this scope within source code.
     extent: CodeExtent,
 
     /// Whether there's anything to do for the cleanup path, that is,
@@ -140,7 +136,7 @@ pub struct Scope<'tcx> {
     free: Option<FreeData<'tcx>>,
 
     /// The cache for drop chain on “normal” exit into a particular BasicBlock.
-    cached_exits: FnvHashMap<(BasicBlock, CodeExtent), BasicBlock>,
+    cached_exits: FxHashMap<(BasicBlock, CodeExtent), BasicBlock>,
 }
 
 struct DropData<'tcx> {
@@ -181,7 +177,7 @@ struct FreeData<'tcx> {
 }
 
 #[derive(Clone, Debug)]
-pub struct LoopScope {
+pub struct LoopScope<'tcx> {
     /// Extent of the loop
     pub extent: CodeExtent,
     /// Where the body of the loop begins
@@ -189,8 +185,9 @@ pub struct LoopScope {
     /// Block to branch into when the loop terminates (either by being `break`-en out from, or by
     /// having its condition to become false)
     pub break_block: BasicBlock,
-    /// Indicates the reachability of the break_block for this loop
-    pub might_break: bool
+    /// The destination of the loop expression itself (i.e. where to put the result of a `break`
+    /// expression)
+    pub break_destination: Lvalue<'tcx>,
 }
 
 impl<'tcx> Scope<'tcx> {
@@ -250,10 +247,10 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     ///
     /// Returns the might_break attribute of the LoopScope used.
     pub fn in_loop_scope<F>(&mut self,
-                               loop_block: BasicBlock,
-                               break_block: BasicBlock,
-                               f: F)
-                               -> bool
+                            loop_block: BasicBlock,
+                            break_block: BasicBlock,
+                            break_destination: Lvalue<'tcx>,
+                            f: F)
         where F: FnOnce(&mut Builder<'a, 'gcx, 'tcx>)
     {
         let extent = self.extent_of_innermost_scope();
@@ -261,13 +258,12 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             extent: extent.clone(),
             continue_block: loop_block,
             break_block: break_block,
-            might_break: false
+            break_destination: break_destination,
         };
         self.loop_scopes.push(loop_scope);
         f(self);
         let loop_scope = self.loop_scopes.pop().unwrap();
         assert!(loop_scope.extent == extent);
-        loop_scope.might_break
     }
 
     /// Convenience wrapper that pushes a scope and then executes `f`
@@ -276,7 +272,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         where F: FnOnce(&mut Builder<'a, 'gcx, 'tcx>) -> BlockAnd<R>
     {
         debug!("in_scope(extent={:?}, block={:?})", extent, block);
-        self.push_scope(extent, block);
+        self.push_scope(extent);
         let rv = unpack!(block = f(self));
         unpack!(block = self.pop_scope(extent, block));
         debug!("in_scope: exiting extent={:?} block={:?}", extent, block);
@@ -287,23 +283,16 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     /// scope and call `pop_scope` afterwards. Note that these two
     /// calls must be paired; using `in_scope` as a convenience
     /// wrapper maybe preferable.
-    pub fn push_scope(&mut self, extent: CodeExtent, entry: BasicBlock) {
+    pub fn push_scope(&mut self, extent: CodeExtent) {
         debug!("push_scope({:?})", extent);
-        let id = ScopeId::new(self.scope_auxiliary.len());
         let vis_scope = self.visibility_scope;
         self.scopes.push(Scope {
-            id: id,
             visibility_scope: vis_scope,
             extent: extent,
             needs_cleanup: false,
             drops: vec![],
             free: None,
-            cached_exits: FnvHashMap()
-        });
-        self.scope_auxiliary.push(ScopeAuxiliary {
-            extent: extent,
-            dom: self.cfg.current_location(entry),
-            postdoms: vec![]
+            cached_exits: FxHashMap()
         });
     }
 
@@ -325,9 +314,6 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                                           &self.scopes,
                                           block,
                                           self.arg_count));
-        self.scope_auxiliary[scope.id]
-            .postdoms
-            .push(self.cfg.current_location(block));
         block.unit()
     }
 
@@ -375,9 +361,6 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 self.cfg.terminate(block, scope.source_info(span), free);
                 block = next;
             }
-            self.scope_auxiliary[scope.id]
-                .postdoms
-                .push(self.cfg.current_location(block));
         }
         }
         let scope = &self.scopes[len - scope_count];
@@ -403,7 +386,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     pub fn find_loop_scope(&mut self,
                            span: Span,
                            label: Option<CodeExtent>)
-                           -> &mut LoopScope {
+                           -> &mut LoopScope<'tcx> {
         let loop_scopes = &mut self.loop_scopes;
         match label {
             None => {
@@ -800,13 +783,12 @@ fn build_free<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
                               data: &FreeData<'tcx>,
                               target: BasicBlock)
                               -> TerminatorKind<'tcx> {
-    let free_func = tcx.lang_items.require(lang_items::BoxFreeFnLangItem)
-                       .unwrap_or_else(|e| tcx.sess.fatal(&e));
+    let free_func = tcx.require_lang_item(lang_items::BoxFreeFnLangItem);
     let substs = tcx.intern_substs(&[Kind::from(data.item_ty)]);
     TerminatorKind::Call {
         func: Operand::Constant(Constant {
             span: data.span,
-            ty: tcx.lookup_item_type(free_func).ty.subst(tcx, substs),
+            ty: tcx.item_type(free_func).subst(tcx, substs),
             literal: Literal::Item {
                 def_id: free_func,
                 substs: substs

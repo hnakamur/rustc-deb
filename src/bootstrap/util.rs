@@ -18,6 +18,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
 use filetime::FileTime;
 
@@ -40,6 +41,12 @@ pub fn mtime(path: &Path) -> FileTime {
 /// Copies a file from `src` to `dst`, attempting to use hard links and then
 /// falling back to an actually filesystem copy if necessary.
 pub fn copy(src: &Path, dst: &Path) {
+    // A call to `hard_link` will fail if `dst` exists, so remove it if it
+    // already exists so we can try to help `hard_link` succeed.
+    let _ = fs::remove_file(&dst);
+
+    // Attempt to "easy copy" by creating a hard link (symlinks don't work on
+    // windows), but if that fails just fall back to a slow `copy` operation.
     let res = fs::hard_link(src, dst);
     let res = res.or_else(|_| fs::copy(src, dst).map(|_| ()));
     if let Err(e) = res {
@@ -188,4 +195,20 @@ pub fn push_exe_path(mut buf: PathBuf, components: &[&str]) -> PathBuf {
     buf.push(file);
 
     buf
+}
+
+pub struct TimeIt(Instant);
+
+/// Returns an RAII structure that prints out how long it took to drop.
+pub fn timeit() -> TimeIt {
+    TimeIt(Instant::now())
+}
+
+impl Drop for TimeIt {
+    fn drop(&mut self) {
+        let time = self.0.elapsed();
+        println!("\tfinished in {}.{:03}",
+                 time.as_secs(),
+                 time.subsec_nanos() / 1_000_000);
+    }
 }

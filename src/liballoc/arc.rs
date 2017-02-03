@@ -274,6 +274,68 @@ impl<T> Arc<T> {
             Ok(elem)
         }
     }
+
+    /// Consumes the `Arc`, returning the wrapped pointer.
+    ///
+    /// To avoid a memory leak the pointer must be converted back to an `Arc` using
+    /// [`Arc::from_raw`][from_raw].
+    ///
+    /// [from_raw]: struct.Arc.html#method.from_raw
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(rc_raw)]
+    ///
+    /// use std::sync::Arc;
+    ///
+    /// let x = Arc::new(10);
+    /// let x_ptr = Arc::into_raw(x);
+    /// assert_eq!(unsafe { *x_ptr }, 10);
+    /// ```
+    #[unstable(feature = "rc_raw", issue = "37197")]
+    pub fn into_raw(this: Self) -> *mut T {
+        let ptr = unsafe { &mut (**this.ptr).data as *mut _ };
+        mem::forget(this);
+        ptr
+    }
+
+    /// Constructs an `Arc` from a raw pointer.
+    ///
+    /// The raw pointer must have been previously returned by a call to a
+    /// [`Arc::into_raw`][into_raw].
+    ///
+    /// This function is unsafe because improper use may lead to memory problems. For example, a
+    /// double-free may occur if the function is called twice on the same raw pointer.
+    ///
+    /// [into_raw]: struct.Arc.html#method.into_raw
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(rc_raw)]
+    ///
+    /// use std::sync::Arc;
+    ///
+    /// let x = Arc::new(10);
+    /// let x_ptr = Arc::into_raw(x);
+    ///
+    /// unsafe {
+    ///     // Convert back to an `Arc` to prevent leak.
+    ///     let x = Arc::from_raw(x_ptr);
+    ///     assert_eq!(*x, 10);
+    ///
+    ///     // Further calls to `Arc::from_raw(x_ptr)` would be memory unsafe.
+    /// }
+    ///
+    /// // The memory was freed when `x` went out of scope above, so `x_ptr` is now dangling!
+    /// ```
+    #[unstable(feature = "rc_raw", issue = "37197")]
+    pub unsafe fn from_raw(ptr: *mut T) -> Self {
+        // To find the corresponding pointer to the `ArcInner` we need to subtract the offset of the
+        // `data` field from the pointer.
+        Arc { ptr: Shared::new((ptr as *mut u8).offset(-offset_of!(ArcInner<T>, data)) as *mut _) }
+    }
 }
 
 impl<T: ?Sized> Arc<T> {
@@ -319,16 +381,17 @@ impl<T: ?Sized> Arc<T> {
 
     /// Gets the number of [`Weak`][weak] pointers to this value.
     ///
-    /// Be careful how you use this information, because another thread
-    /// may change the weak count at any time.
-    ///
     /// [weak]: struct.Weak.html
+    ///
+    /// # Safety
+    ///
+    /// This method by itself is safe, but using it correctly requires extra care.
+    /// Another thread can change the weak count at any time,
+    /// including potentially between calling this method and acting on the result.
     ///
     /// # Examples
     ///
     /// ```
-    /// #![feature(arc_counts)]
-    ///
     /// use std::sync::Arc;
     ///
     /// let five = Arc::new(5);
@@ -339,22 +402,22 @@ impl<T: ?Sized> Arc<T> {
     /// assert_eq!(1, Arc::weak_count(&five));
     /// ```
     #[inline]
-    #[unstable(feature = "arc_counts", reason = "not clearly useful, and racy",
-               issue = "28356")]
+    #[stable(feature = "arc_counts", since = "1.15.0")]
     pub fn weak_count(this: &Self) -> usize {
         this.inner().weak.load(SeqCst) - 1
     }
 
     /// Gets the number of strong (`Arc`) pointers to this value.
     ///
-    /// Be careful how you use this information, because another thread
-    /// may change the strong count at any time.
+    /// # Safety
+    ///
+    /// This method by itself is safe, but using it correctly requires extra care.
+    /// Another thread can change the strong count at any time,
+    /// including potentially between calling this method and acting on the result.
     ///
     /// # Examples
     ///
     /// ```
-    /// #![feature(arc_counts)]
-    ///
     /// use std::sync::Arc;
     ///
     /// let five = Arc::new(5);
@@ -365,8 +428,7 @@ impl<T: ?Sized> Arc<T> {
     /// assert_eq!(2, Arc::strong_count(&five));
     /// ```
     #[inline]
-    #[unstable(feature = "arc_counts", reason = "not clearly useful, and racy",
-               issue = "28356")]
+    #[stable(feature = "arc_counts", since = "1.15.0")]
     pub fn strong_count(this: &Self) -> usize {
         this.inner().strong.load(SeqCst)
     }
@@ -1181,6 +1243,23 @@ mod tests {
         let x = Arc::new(5);
         let _w = Arc::downgrade(&x);
         assert_eq!(Arc::try_unwrap(x), Ok(5));
+    }
+
+    #[test]
+    fn into_from_raw() {
+        let x = Arc::new(box "hello");
+        let y = x.clone();
+
+        let x_ptr = Arc::into_raw(x);
+        drop(y);
+        unsafe {
+            assert_eq!(**x_ptr, "hello");
+
+            let x = Arc::from_raw(x_ptr);
+            assert_eq!(**x, "hello");
+
+            assert_eq!(Arc::try_unwrap(x).map(|x| *x), Ok("hello"));
+        }
     }
 
     #[test]
