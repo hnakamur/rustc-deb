@@ -19,3 +19,4 @@ d-fix-configure-for-deb-arches.patch
 d-dynamic-link-llvm.patch
 d-use-system-jquery.patch
 d-fill-in-mips-mk-rules.patch
+d-disable-doc-build-in-all.diff

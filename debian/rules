@@ -132,7 +132,7 @@ generate-sources:
 	$(MAKE) -C src/rt/hoedown src/html_blocks.c
 
 override_dh_auto_build-arch: generate-sources
-	dh_auto_build -- all-no-docs VERBOSE=1
+	dh_auto_build -- all VERBOSE=1
 
 # note: this is only for buildds that want to do a separate arch:all build;
 # there is no point running this yourself "to save time" since it implicitly
