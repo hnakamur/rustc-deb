@@ -1,8 +1,8 @@
-Index: rust/src/librustdoc/html/render.rs
+Index: rustc.git/src/librustdoc/html/render.rs
 ===================================================================
---- rust.orig/src/librustdoc/html/render.rs
-+++ rust/src/librustdoc/html/render.rs
-@@ -653,8 +653,16 @@ fn write_shared(cx: &Context,
+--- rustc.git.orig/src/librustdoc/html/render.rs
++++ rustc.git/src/librustdoc/html/render.rs
+@@ -656,8 +656,16 @@ fn write_shared(cx: &Context,
      // Add all the static files. These may already exist, but we just
      // overwrite them anyway to make sure that they're fresh and up-to-date.
  

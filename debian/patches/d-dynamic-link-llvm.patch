@@ -9,13 +9,13 @@ Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
-Index: rust/src/librustc_llvm/build.rs
+Index: rustc.git/src/librustc_llvm/build.rs
 ===================================================================
---- rust.orig/src/librustc_llvm/build.rs
-+++ rust/src/librustc_llvm/build.rs
-@@ -123,63 +123,10 @@ fn main() {
-        .cpp_link_stdlib(None) // we handle this below
-        .compile("librustllvm.a");
+--- rustc.git.orig/src/librustc_llvm/build.rs
++++ rustc.git/src/librustc_llvm/build.rs
+@@ -157,55 +157,10 @@ fn main() {
+ 
+     let (llvm_kind, llvm_link_arg) = detect_llvm_link(&llvm_config);
  
 -    // Link in all LLVM libraries, if we're uwring the "wrong" llvm-config then
 -    // we don't pick up system libs because unfortunately they're for the host
@@ -23,16 +23,8 @@ Index: rust/src/librustc_llvm/build.rs
 -    let mut cmd = Command::new(&llvm_config);
 -    cmd.arg("--libs");
 -
--    // Force static linking with "--link-static" if available.
--    let mut version_cmd = Command::new(&llvm_config);
--    version_cmd.arg("--version");
--    let version_output = output(&mut version_cmd);
--    let mut parts = version_output.split('.');
--    if let (Some(major), Some(minor)) = (parts.next().and_then(|s| s.parse::<u32>().ok()),
--                                         parts.next().and_then(|s| s.parse::<u32>().ok())) {
--        if major > 3 || (major == 3 && minor >= 8) {
--            cmd.arg("--link-static");
--        }
+-    if let Some(link_arg) = llvm_link_arg {
+-        cmd.arg(link_arg);
 -    }
 -
 -    if !is_crossed {
@@ -68,7 +60,7 @@ Index: rust/src/librustc_llvm/build.rs
 -        }
 -
 -        let kind = if name.starts_with("LLVM") {
--            "static"
+-            llvm_kind
 -        } else {
 -            "dylib"
 -        };
@@ -81,10 +73,10 @@ Index: rust/src/librustc_llvm/build.rs
  
      // LLVM ldflags
      //
-Index: rust/src/etc/mklldeps.py
+Index: rustc.git/src/etc/mklldeps.py
 ===================================================================
---- rust.orig/src/etc/mklldeps.py
-+++ rust/src/etc/mklldeps.py
+--- rustc.git.orig/src/etc/mklldeps.py
++++ rustc.git/src/etc/mklldeps.py
 @@ -56,38 +56,13 @@ def runErr(args):
  
  f.write("\n")
