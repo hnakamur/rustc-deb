@@ -193,7 +193,7 @@ override_dh_compress:
 
 override_dh_auto_test-arch:
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	RUST_BACKTRACE=1 $(PMAKE) VERBOSE=1 check-notidy
+	RUST_BACKTRACE=1 $(PMAKE) VERBOSE=1 check
 endif
 
 # No tests are applicable when only building arch:all packages.
