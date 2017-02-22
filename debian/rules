@@ -106,6 +106,11 @@ ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
   DEB_CONFIGURE_FLAGS += --disable-optimize --disable-optimize-cxx --disable-optimize-llvm
 endif
 
+# Workaround for powerpc64le: no optimization
+ifneq (,$(findstring powerpc64le,$(DEB_TARGET_RUST_TYPE)))
+  DEB_CONFIGURE_FLAGS += --disable-optimize --disable-optimize-cxx --disable-optimize-llvm
+endif
+
 
 %:
 	dh $@ --parallel

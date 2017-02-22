@@ -9,6 +9,7 @@ u-ignoretest-i386.patch
 u-ignoretest-arm64.patch
 u-ignoretest-jemalloc.patch
 u-detect-mips-cpu.patch
+u-ignoretest-powerpc.patch
 
 # Debian-specific patches, not suitable for upstream
 d-rust-gdb-paths
@@ -19,3 +20,4 @@ d-dynamic-link-llvm.patch
 d-use-system-jquery.patch
 d-fill-in-mips-mk-rules.patch
 disable-check-tool-tidy.diff
+d-missing-ref-dlsym-ppc64el.patch
