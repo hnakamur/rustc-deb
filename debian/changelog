@@ -1,5 +1,6 @@
 rustc (1.15.1+dfsg1-1~exp1) experimental; urgency=medium
 
+  [ Sylvestre Ledru ]
   * New upstream release (won't probably be in stretch).
     see the 1.4 git branch for the follow up for stable 
   * d/p/patches/disable-doc-build-in-all.diff:
@@ -9,7 +10,13 @@ rustc (1.15.1+dfsg1-1~exp1) experimental; urgency=medium
     Disable the call to check-tidy
   * Refresh of the patches
 
- -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 03 Feb 2017 15:34:42 +0100
+  [ Sven Joachim ]
+  * Drop Pre-Depends on multiarch-support. (Closes: #856109)
+
+  [ Erwan Prioul ]
+  * Fix test and build failures for ppc64el. (Closes: #839643)
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 26 Feb 2017 18:30:59 +0100
 
 rustc (1.14.0+dfsg1-3) unstable; urgency=medium
 
