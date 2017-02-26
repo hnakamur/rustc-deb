@@ -5,10 +5,11 @@ rustc (1.15.1+dfsg1-1~exp1) experimental; urgency=medium
   * d/p/patches/disable-doc-build-in-all.diff:
     all-no-docs no longer exists. Disable the call to doc in all
   * Call to the test renamed from check-notidy => check
+  * d/p/u-destdir-support.diff: Apply upstream patch to support
+    destdir in the make install
   * d/p/disable-check-tool-tidy.diff:
     Disable the call to check-tidy
   * Refresh of the patches
-
  -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 03 Feb 2017 15:34:42 +0100
 
 rustc (1.14.0+dfsg1-3) unstable; urgency=medium

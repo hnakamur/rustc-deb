@@ -10,6 +10,7 @@ u-ignoretest-arm64.patch
 u-ignoretest-jemalloc.patch
 u-detect-mips-cpu.patch
 u-ignoretest-powerpc.patch
+u-destdir-support.diff
 
 # Debian-specific patches, not suitable for upstream
 d-rust-gdb-paths

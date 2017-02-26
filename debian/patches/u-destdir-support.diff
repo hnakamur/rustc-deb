@@ -1,0 +1,21 @@
+Sur la branche master
+Votre branche est à jour avec 'origin/master'.
+Modifications qui ne seront pas validées :
+  (utilisez "git add <fichier>..." pour mettre à jour ce qui sera validé)
+  (utilisez "git checkout -- <fichier>..." pour annuler les modifications dans la copie de travail)
+
+	modifié :         src/bootstrap/compile.rs
+	modifié :         src/bootstrap/config.rs
+	modifié :         src/bootstrap/config.toml.example
+	modifié :         src/bootstrap/install.rs
+
+Fichiers non suivis:
+  (utilisez "git add <fichier>..." pour inclure dans ce qui sera validé)
+
+	src/bootstrap/compile.rs.orig
+	src/bootstrap/config.rs.orig
+	src/bootstrap/config.rs.rej
+	src/bootstrap/config.toml.example.orig
+	src/bootstrap/config.toml.example.rej
+
+aucune modification n'a été ajoutée à la validation (utilisez "git add" ou "git commit -a")
