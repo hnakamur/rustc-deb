@@ -30,11 +30,6 @@ unexport SUDO_USER
 # gcc-6.  See bug #811573.
 CFLAGS += -Wno-misleading-indentation
 
-# Debhelper clears MAKEFLAGS, so we have to do this again for any
-# target where we call $(MAKE) directly.  Boo.
-DEB_PARALLEL_JOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
-PMAKE = $(MAKE) $(if $(DEB_PARALLEL_JOBS),-j$(DEB_PARALLEL_JOBS))
-
 # Release type (one of beta, stable or nightly)
 RELEASE_CHANNEL := stable
 # See also ./build-preview-dsc.sh for a script that builds a beta/nightly .dsc
@@ -52,6 +47,7 @@ DEB_CONFIGURE_FLAGS = \
                --host=$(DEB_HOST_RUST_TYPE) \
                --target=$(DEB_TARGET_RUST_TYPE) \
                --disable-manage-submodules \
+               --disable-rustbuild \
                --release-channel=$(RELEASE_CHANNEL) \
                --prefix=/usr
 
@@ -127,7 +123,7 @@ override_dh_auto_configure:
 override_dh_auto_clean:
 	set -e; \
 	if [ -f Makefile ]; then \
-	  $(PMAKE) clean-all; \
+	  $(MAKE) clean-all; \
 	  $(RM) Makefile config.stamp config.mk; \
 	fi
 	$(RM) src/rt/hoedown/src/html_blocks.c # clean up after building this ourselves
@@ -199,7 +195,10 @@ override_dh_compress:
 
 override_dh_auto_test-arch:
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	RUST_BACKTRACE=1 $(PMAKE) VERBOSE=1 check
+# Use non-parallel $(MAKE) here instead of dh_auto_test, otherwise the upstream
+# Makefile will try to run N instances of the testrunner each of which will run
+# N instances of rustc (there is also parallel logic in libtest.rs already).
+	RUST_BACKTRACE=1 $(MAKE) VERBOSE=1 check
 endif
 
 # No tests are applicable when only building arch:all packages.
