@@ -1,3 +1,9 @@
+Description: TODO
+ See https://lists.alioth.debian.org/pipermail/pkg-rust-maintainers/2017-February/000828.html
+ for possible followups
+Author: Erwan Prioul <erwan@linux.vnet.ibm.com>
+Forwarded: TODO
+
 diff -Naur a/src/test/run-make/issue-24445/Makefile b/src/test/run-make/issue-24445/Makefile
 --- a/src/test/run-make/issue-24445/Makefile	2017-02-17 10:21:17.092001151 +0000
 +++ b/src/test/run-make/issue-24445/Makefile	2017-02-21 13:07:36.719995153 +0000

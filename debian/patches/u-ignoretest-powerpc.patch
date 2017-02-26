@@ -1,3 +1,7 @@
+Description: Ignore ASM tests on powerpc
+Author: Erwan Prioul <erwan@linux.vnet.ibm.com>
+Applied-Upstream: commit:1572bf104dbf65d58bd6b889fa46229c9b92d6f9
+
 diff -Naur a/src/test/compile-fail/asm-bad-clobber.rs b/src/test/compile-fail/asm-bad-clobber.rs
 --- a/src/test/compile-fail/asm-bad-clobber.rs	2017-02-17 10:21:15.192001150 +0000
 +++ b/src/test/compile-fail/asm-bad-clobber.rs	2017-02-20 10:53:33.355996252 +0000
