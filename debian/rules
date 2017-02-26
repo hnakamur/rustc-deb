@@ -107,6 +107,7 @@ ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
 endif
 
 # Workaround for powerpc64le: no optimization
+# TODO: can remove when https://github.com/rust-lang/rust/issues/39015 is fixed
 ifneq (,$(findstring powerpc64le,$(DEB_TARGET_RUST_TYPE)))
   DEB_CONFIGURE_FLAGS += --disable-optimize --disable-optimize-cxx --disable-optimize-llvm
 endif
