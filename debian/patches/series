@@ -19,5 +19,5 @@ d-fix-configure-for-deb-arches.patch
 d-dynamic-link-llvm.patch
 d-use-system-jquery.patch
 d-fill-in-mips-mk-rules.patch
-disable-check-tool-tidy.diff
+#disable-check-tool-tidy.diff
 d-missing-ref-dlsym-ppc64el.patch
