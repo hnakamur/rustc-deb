@@ -52,6 +52,7 @@ DEB_CONFIGURE_FLAGS = \
                --host=$(DEB_HOST_RUST_TYPE) \
                --target=$(DEB_TARGET_RUST_TYPE) \
                --disable-manage-submodules \
+               --disable-rustbuild \
                --release-channel=$(RELEASE_CHANNEL) \
                --prefix=/usr
 
