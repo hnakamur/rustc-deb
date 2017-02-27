@@ -8,6 +8,10 @@ Later:
 <eddyb> so you always have to add --enable-optimize or something like that to counteract the negative effect
 <eddyb> unoptimized rustc is *very* slow, in fact it's my sole guess for 7 hours, assuming you didn't just simply lose 8x parallelism or something
 
+<eddyb> infinity0: -Z time-passes between two different compilers, on the same test, would also be pretty revealing
+<eddyb> infinity0: also try timing the entire compile-fail test run between stage1/bin/rustc and stage2/bin/rustc (the latter is what running tests uses by default)
+<eddyb> infinity0: in the old thing [pre-rustbuild makefiles] it's... make check-stage1-cfail, I think
+
 Older backlog:
 
  * Use Compiler-rt package
