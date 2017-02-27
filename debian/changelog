@@ -16,6 +16,9 @@ rustc (1.15.1+dfsg1-1~exp1) experimental; urgency=medium
   [ Ximin Luo ]
   * Disable rustbuild for the time being (as it was in 1.14) and instead
     bootstrap two new arches, armhf and ppc64el.
+  * Switch back to debhelper 9 to make backporting easier.
+  * Switch Build-Depends on binutils-multiarch back to binutils, the former is
+    no longer needed by the upstream tests.
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Sun, 26 Feb 2017 21:12:27 +0100
 

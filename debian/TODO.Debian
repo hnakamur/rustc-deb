@@ -1,8 +1,3 @@
-For 1.15.1:
-
- * See if we can go back to debhelper compat 9 as that makes backporting easier
- * B-D binutils-multiarch -> binutils since upstream no longer do that in the tests
-
 Later:
 
  * Try to investigate the 1 hour vs 7 hour build time difference we saw between
