@@ -8,6 +8,6 @@ Index: b/configure
  
 -    armv7l)
 +    armv7l | armv8l)
-         case $DEB_HOST_ARCH in
-         armhf)
-             CFG_CPUTYPE=armv7
+         CFG_CPUTYPE=armv7
+         CFG_OSTYPE="${CFG_OSTYPE}eabihf"
+         ;;

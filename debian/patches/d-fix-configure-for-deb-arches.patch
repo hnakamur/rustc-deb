@@ -15,7 +15,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 @@ -514,8 +514,19 @@
          ;;
  
-     armv7l)
+     armv7l | armv8l)
 -        CFG_CPUTYPE=armv7
 -        CFG_OSTYPE="${CFG_OSTYPE}eabihf"
 +        case $DEB_HOST_ARCH in
@@ -28,7 +28,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 +            CFG_OSTYPE="${CFG_OSTYPE}eabi"
 +           ;;
 +        *)
-+            err "unknown DEB_HOST_ARCH $DEB_HOST_ARCH for armv7l cpu"
++            err "unknown DEB_HOST_ARCH $DEB_HOST_ARCH for armv7l/armv8l cpu"
 +            ;;
 +        esac
          ;;
