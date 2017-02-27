@@ -61,7 +61,12 @@ DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.9
 # Sed expression that matches the "rustc" we have in our Build-Depends field
 SED_RUSTC_BUILDDEP := /^Build-Depends:/,/^[^[:space:]\#]/{/\s*rustc.*,/$$action}
 PRECONFIGURE_CHECK = :
-ifeq (0,$(shell ls -1 dl/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l))
+HAVE_BINARY_TARBALL := $(shell ls -1 dl/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l)
+# allow not using the binary tarball although it exists
+#ifneq (,$(filter $(DEB_HOST_ARCH), amd64 arm64 armhf i386 powerpc ppc64el s390x))
+#  HAVE_BINARY_TARBALL := 0
+#endif
+ifeq (0,$(HAVE_BINARY_TARBALL))
     # Case A (Building from source): the extracted source tree does not include
     # a bootstrapping tarball for the current architecture e.g. because the
     # distro already has a rustc for this arch, or the uploader expects that

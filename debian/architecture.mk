@@ -7,3 +7,8 @@ rust_type_setvar = $(1)_RUST_TYPE ?= $(call rust_cpu,$($(1)_GNU_CPU),$($(1)_ARCH
 
 $(foreach machine,BUILD HOST TARGET,\
   $(eval $(call rust_type_setvar,DEB_$(machine))))
+
+# fallback for older dpkg versions
+ifeq ($(DEB_TARGET_RUST_TYPE),-unknown-)
+  DEB_TARGET_RUST_TYPE = $(DEB_HOST_RUST_TYPE)
+endif

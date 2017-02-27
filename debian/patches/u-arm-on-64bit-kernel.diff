@@ -1,0 +1,13 @@
+Index: b/configure
+===================================================================
+--- a/configure
++++ b/configure
+@@ -513,7 +513,7 @@ case $CFG_CPUTYPE in
+         CFG_OSTYPE="${CFG_OSTYPE}eabihf"
+         ;;
+ 
+-    armv7l)
++    armv7l | armv8l)
+         case $DEB_HOST_ARCH in
+         armhf)
+             CFG_CPUTYPE=armv7
