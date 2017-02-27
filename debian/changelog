@@ -20,6 +20,9 @@ rustc (1.15.1+dfsg1-1~exp1) experimental; urgency=medium
   * Switch Build-Depends on binutils-multiarch back to binutils, the former is
     no longer needed by the upstream tests.
 
+  [ Matthias Klose ]
+  * Compatibility fixes and improvements to help work better on Ubuntu.
+
  -- Sylvestre Ledru <sylvestre@debian.org>  Sun, 26 Feb 2017 21:12:27 +0100
 
 rustc (1.14.0+dfsg1-3) unstable; urgency=medium
