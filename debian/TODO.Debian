@@ -2,6 +2,7 @@ For 1.15.1:
 
  * Check that build with bundled dl/ doesn't try to download the checksums again
  * See if we can go back to debhelper compat 9 as that makes backporting easier
+ * B-D binutils-multiarch -> binutils since upstream no longer do that in the tests
 
 Later:
 
