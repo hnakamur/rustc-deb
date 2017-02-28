@@ -5,6 +5,8 @@ rustc (1.15.1+dfsg1-1~exp1) experimental; urgency=medium
   * Call to the test renamed from check-notidy => check
   * d/p/u-destdir-support.diff: Apply upstream patch to support
     destdir in the make install (for rustbuild, in later versions)
+  * Overrides the 'binary-or-shlib-defines-rpath' lintian warnings.
+    We need them for now
   * Refresh of the patches
 
   [ Sven Joachim ]

@@ -11,3 +11,6 @@ libstd-rust-1.15 binary: package-must-activate-ldconfig-trigger
 # to libc.  Lintian gets upset that some Rust libraries don't need
 # libc, boo hoo.
 libstd-rust-1.15 binary: library-not-linked-against-libc
+
+# We need it for now
+binary-or-shlib-defines-rpath usr/lib/*/lib*so /usr/lib/rustlib/*lib
