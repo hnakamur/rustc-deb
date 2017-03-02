@@ -1,11 +1,11 @@
-rustc (1.15.1+dfsg1-1~exp2) UNRELEASED; urgency=medium
+rustc (1.15.1+dfsg1-1~exp2) experimental; urgency=medium
 
   * Update armhf ignoretest patch.
   * Bootstrap armhf. (Closes: #809316, #834003)
   * Bootstrap ppc4el. (Closes: #839643)
   * Fix rust-lldb symlink. (Closes: #850639)
 
- -- Ximin Luo <infinity0@debian.org>  Thu, 02 Mar 2017 22:41:55 +0100
+ -- Ximin Luo <infinity0@debian.org>  Thu, 02 Mar 2017 23:01:26 +0100
 
 rustc (1.15.1+dfsg1-1~exp1) experimental; urgency=medium
 
