@@ -114,6 +114,7 @@ Description: Rust standard libraries - development files
 Package: rust-gdb
 Architecture: all
 Depends: gdb, ${misc:Depends}
+Suggests: gdb-doc
 Replaces: rustc (<< 1.1.0+dfsg1-1)
 Description: Rust debugger (gdb)
  Rust is a curly-brace, block-structured expression language.  It
@@ -133,6 +134,7 @@ Description: Rust debugger (gdb)
 
 Package: rust-lldb
 Architecture: all
+# When updating, also update rust-lldb.links
 Depends: lldb-3.9, ${misc:Depends}, python-lldb-3.9
 Replaces: rustc (<< 1.1.0+dfsg1-1)
 Description: Rust debugger (lldb)
