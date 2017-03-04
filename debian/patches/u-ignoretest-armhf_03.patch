@@ -1,13 +1,11 @@
-Description: Disable reference.md "Items_and_attributes_14" doctest, hanging on armhf
+Description: Disable reference.md "Items_and_attributes_15" doctest, failing on armhf
  This passes on i386 amd64 arm64
  .
  See https://gist.github.com/infinity0/2f5452d4ee9deb2f1bacb8b39c987c9c
- for thread stacktrace during the hang; eddyb from #rustc suggests this might
- be an LLVM issue. This might be updated with our newer Debian LLVM versions;
- we should try to re-enable this test again when we switch on armhf again.
- still occurs then file a bug upstream.
+ for thread stacktrace from 1.10.0 when it hung instead of failed; eddyb from
+ #rustc suggested this might be an LLVM issue.
 Author: Ximin Luo <infinity0@debian.org>
-Forwarded: TODO pending enabling armhf in Debian
+Bug: https://github.com/rust-lang/rust/issues/40260
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 Index: rustc.git/src/doc/reference.md
