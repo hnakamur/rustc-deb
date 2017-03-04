@@ -1,6 +1,6 @@
 Description: Support armhf running on a 64-bit kernel
 Author: Matthias Klose <doko@debian.org>
-Forwarded: TODO
+Forwarded: https://github.com/rust-lang/rust/pull/40261
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 Index: b/configure
