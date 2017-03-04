@@ -6,7 +6,7 @@ u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
 u-ignoretest-armhf_03.patch
 u-ignoretest-arm64-stdcall.patch
-u-ignoretest-i386.patch
+#u-ignoretest-i386.patch
 u-ignoretest-arm64.patch
 u-ignoretest-jemalloc.patch
 u-detect-mips-cpu.patch
