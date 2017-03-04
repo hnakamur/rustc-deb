@@ -1,5 +1,6 @@
 rustc (1.15.1+dfsg1-1~exp3) UNRELEASED; urgency=medium
 
+  * Ignore atomic-lock-free tests on armhf.
   * Update ignoretest-armhf_03.patch for newer 1.15.1 behaviour.
 
  -- Ximin Luo <infinity0@debian.org>  Sat, 04 Mar 2017 17:02:02 +0100

@@ -2,6 +2,7 @@
 # Ideally we would order these as follows:
 # [ applied already ], [ pending ], [ forwarded or to-be-forwarded ]
 u-reproducible-dl-stage0.patch
+u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
 u-ignoretest-armhf_03.patch
 u-ignoretest-arm64-stdcall.patch
