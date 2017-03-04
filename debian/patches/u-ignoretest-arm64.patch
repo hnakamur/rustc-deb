@@ -10,15 +10,3 @@ Index: rustc.git/src/test/run-pass-valgrind/down-with-thread-dtors.rs
  // no-prefer-dynamic
  
  thread_local!(static FOO: Foo = Foo);
-Index: rustc.git/src/test/debuginfo/macro-stepping.rs
-===================================================================
---- rustc.git.orig/src/test/debuginfo/macro-stepping.rs
-+++ rustc.git/src/test/debuginfo/macro-stepping.rs
-@@ -8,6 +8,7 @@
- // option. This file may not be copied, modified, or distributed
- // except according to those terms.
- 
-+// ignore-aarch64
- // ignore-windows
- // ignore-android
- // ignore-aarch64
