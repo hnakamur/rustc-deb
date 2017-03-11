@@ -5,6 +5,7 @@ u-reproducible-dl-stage0.patch
 u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
 u-ignoretest-armhf_03.patch
+u-ignoretest-armhf_04.patch
 u-ignoretest-arm64-stdcall.patch
 #u-ignoretest-i386.patch
 u-ignoretest-arm64.patch
