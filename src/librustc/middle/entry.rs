@@ -10,20 +10,20 @@
 
 
 use dep_graph::DepNode;
-use hir::map as ast_map;
+use hir::map as hir_map;
 use hir::def_id::{CRATE_DEF_INDEX};
 use session::{config, Session};
 use syntax::ast::NodeId;
 use syntax::attr;
 use syntax::entry::EntryPointType;
 use syntax_pos::Span;
-use hir::{Item, ItemFn, ImplItem};
+use hir::{Item, ItemFn, ImplItem, TraitItem};
 use hir::itemlikevisit::ItemLikeVisitor;
 
 struct EntryContext<'a, 'tcx: 'a> {
     session: &'a Session,
 
-    map: &'a ast_map::Map<'tcx>,
+    map: &'a hir_map::Map<'tcx>,
 
     // The top-level function called 'main'
     main_fn: Option<(NodeId, Span)>,
@@ -47,14 +47,17 @@ impl<'a, 'tcx> ItemLikeVisitor<'tcx> for EntryContext<'a, 'tcx> {
         find_item(item, self, at_root);
     }
 
+    fn visit_trait_item(&mut self, _trait_item: &'tcx TraitItem) {
+        // entry fn is never a trait item
+    }
 
     fn visit_impl_item(&mut self, _impl_item: &'tcx ImplItem) {
         // entry fn is never an impl item
     }
 }
 
-pub fn find_entry_point(session: &Session, ast_map: &ast_map::Map) {
-    let _task = ast_map.dep_graph.in_task(DepNode::EntryPoint);
+pub fn find_entry_point(session: &Session, hir_map: &hir_map::Map) {
+    let _task = hir_map.dep_graph.in_task(DepNode::EntryPoint);
 
     let any_exe = session.crate_types.borrow().iter().any(|ty| {
         *ty == config::CrateTypeExecutable
@@ -65,21 +68,21 @@ pub fn find_entry_point(session: &Session, ast_map: &ast_map::Map) {
     }
 
     // If the user wants no main function at all, then stop here.
-    if attr::contains_name(&ast_map.krate().attrs, "no_main") {
+    if attr::contains_name(&hir_map.krate().attrs, "no_main") {
         session.entry_type.set(Some(config::EntryNone));
         return
     }
 
     let mut ctxt = EntryContext {
         session: session,
-        map: ast_map,
+        map: hir_map,
         main_fn: None,
         attr_main_fn: None,
         start_fn: None,
         non_main_fns: Vec::new(),
     };
 
-    ast_map.krate().visit_all_item_likes(&mut ctxt);
+    hir_map.krate().visit_all_item_likes(&mut ctxt);
 
     configure_main(&mut ctxt);
 }

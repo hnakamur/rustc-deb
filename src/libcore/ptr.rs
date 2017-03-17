@@ -74,7 +74,10 @@ pub const fn null_mut<T>() -> *mut T { 0 as *mut T }
 ///
 /// # Safety
 ///
-/// This is only unsafe because it accepts a raw pointer.
+/// This function copies the memory through the raw pointers passed to it
+/// as arguments.
+///
+/// Ensure that these pointers are valid before calling `swap`.
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub unsafe fn swap<T>(x: *mut T, y: *mut T) {
@@ -445,7 +448,6 @@ impl<T: ?Sized> *const T {
     /// Basic usage:
     ///
     /// ```
-    /// #![feature(ptr_wrapping_offset)]
     /// // Iterate using a raw pointer in increments of two elements
     /// let data = [1u8, 2, 3, 4, 5];
     /// let mut ptr: *const u8 = data.as_ptr();
@@ -460,7 +462,7 @@ impl<T: ?Sized> *const T {
     ///     ptr = ptr.wrapping_offset(step);
     /// }
     /// ```
-    #[unstable(feature = "ptr_wrapping_offset", issue = "37570")]
+    #[stable(feature = "ptr_wrapping_offset", since = "1.16.0")]
     #[inline]
     pub fn wrapping_offset(self, count: isize) -> *const T where T: Sized {
         unsafe {
@@ -569,7 +571,6 @@ impl<T: ?Sized> *mut T {
     /// Basic usage:
     ///
     /// ```
-    /// #![feature(ptr_wrapping_offset)]
     /// // Iterate using a raw pointer in increments of two elements
     /// let mut data = [1u8, 2, 3, 4, 5];
     /// let mut ptr: *mut u8 = data.as_mut_ptr();
@@ -584,7 +585,7 @@ impl<T: ?Sized> *mut T {
     /// }
     /// assert_eq!(&data, &[0, 2, 0, 4, 0]);
     /// ```
-    #[unstable(feature = "ptr_wrapping_offset", issue = "37570")]
+    #[stable(feature = "ptr_wrapping_offset", since = "1.16.0")]
     #[inline]
     pub fn wrapping_offset(self, count: isize) -> *mut T where T: Sized {
         unsafe {

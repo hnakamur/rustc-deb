@@ -1378,8 +1378,8 @@ let x = |_| {}; // error: cannot determine a type for this expression
 
 You have two possibilities to solve this situation:
 
- * Give an explicit definition of the expression
- * Infer the expression
+* Give an explicit definition of the expression
+* Infer the expression
 
 Examples:
 
@@ -1412,85 +1412,19 @@ fn main() {
 ```
 "##,
 
-E0106: r##"
-This error indicates that a lifetime is missing from a type. If it is an error
-inside a function signature, the problem may be with failing to adhere to the
-lifetime elision rules (see below).
-
-Here are some simple examples of where you'll run into this error:
-
-```compile_fail,E0106
-struct Foo { x: &bool }        // error
-struct Foo<'a> { x: &'a bool } // correct
-
-enum Bar { A(u8), B(&bool), }        // error
-enum Bar<'a> { A(u8), B(&'a bool), } // correct
-
-type MyStr = &str;        // error
-type MyStr<'a> = &'a str; // correct
-```
-
-Lifetime elision is a special, limited kind of inference for lifetimes in
-function signatures which allows you to leave out lifetimes in certain cases.
-For more background on lifetime elision see [the book][book-le].
-
-The lifetime elision rules require that any function signature with an elided
-output lifetime must either have
-
- - exactly one input lifetime
- - or, multiple input lifetimes, but the function must also be a method with a
-   `&self` or `&mut self` receiver
-
-In the first case, the output lifetime is inferred to be the same as the unique
-input lifetime. In the second case, the lifetime is instead inferred to be the
-same as the lifetime on `&self` or `&mut self`.
-
-Here are some examples of elision errors:
-
-```compile_fail,E0106
-// error, no input lifetimes
-fn foo() -> &str { }
-
-// error, `x` and `y` have distinct lifetimes inferred
-fn bar(x: &str, y: &str) -> &str { }
-
-// error, `y`'s lifetime is inferred to be distinct from `x`'s
-fn baz<'a>(x: &'a str, y: &str) -> &str { }
-```
-
-[book-le]: https://doc.rust-lang.org/nightly/book/lifetimes.html#lifetime-elision
-"##,
-
 E0107: r##"
 This error means that an incorrect number of lifetime parameters were provided
-for a type (like a struct or enum) or trait.
-
-Some basic examples include:
+for a type (like a struct or enum) or trait:
 
 ```compile_fail,E0107
-struct Foo<'a>(&'a str);
+struct Foo<'a, 'b>(&'a str, &'b str);
 enum Bar { A, B, C }
 
 struct Baz<'a> {
-    foo: Foo,     // error: expected 1, found 0
+    foo: Foo<'a>, // error: expected 2, found 1
     bar: Bar<'a>, // error: expected 0, found 1
 }
 ```
-
-Here's an example that is currently an error, but may work in a future version
-of Rust:
-
-```compile_fail,E0107
-struct Foo<'a>(&'a str);
-
-trait Quux { }
-impl Quux for Foo { } // error: expected 1, found 0
-```
-
-Lifetime elision in implementation headers was part of the lifetime elision
-RFC. It is, however, [currently unimplemented][iss15872].
-
-[iss15872]: https://github.com/rust-lang/rust/issues/15872
 "##,
 
 E0116: r##"
@@ -1862,55 +1796,6 @@ fn bar(foo: Foo) -> u32 {
     }
 }
 ```
-"##,
-
-E0172: r##"
-This error means that an attempt was made to specify the type of a variable with
-a combination of a concrete type and a trait. Consider the following example:
-
-```compile_fail,E0172
-fn foo(bar: i32+std::fmt::Display) {}
-```
-
-The code is trying to specify that we want to receive a signed 32-bit integer
-which also implements `Display`. This doesn't make sense: when we pass `i32`, a
-concrete type, it implicitly includes all of the traits that it implements.
-This includes `Display`, `Debug`, `Clone`, and a host of others.
-
-If `i32` implements the trait we desire, there's no need to specify the trait
-separately. If it does not, then we need to `impl` the trait for `i32` before
-passing it into `foo`. Either way, a fixed definition for `foo` will look like
-the following:
-
-```
-fn foo(bar: i32) {}
-```
-
-To learn more about traits, take a look at the Book:
-
-https://doc.rust-lang.org/book/traits.html
-"##,
-
-E0178: r##"
-In types, the `+` type operator has low precedence, so it is often necessary
-to use parentheses.
-
-For example:
-
-```compile_fail,E0178
-trait Foo {}
-
-struct Bar<'a> {
-    w: &'a Foo + Copy,   // error, use &'a (Foo + Copy)
-    x: &'a Foo + 'a,     // error, use &'a (Foo + 'a)
-    y: &'a mut Foo + 'a, // error, use &'a mut (Foo + 'a)
-    z: fn() -> Foo + 'a, // error, use fn() -> (Foo + 'a)
-}
-```
-
-More details can be found in [RFC 438].
-
-[RFC 438]: https://github.com/rust-lang/rfcs/pull/438
 "##,
 
 E0182: r##"
@@ -2300,6 +2185,7 @@ This fails because `&mut T` is not `Copy`, even when `T` is `Copy` (this
 differs from the behavior for `&T`, which is always `Copy`).
 "##,
 
+/*
 E0205: r##"
 An attempt to implement the `Copy` trait for an enum failed because one of the
 variants does not implement `Copy`. To fix this, you must implement `Copy` for
@@ -2329,6 +2215,7 @@ enum Foo<'a> {
 This fails because `&mut T` is not `Copy`, even when `T` is `Copy` (this
 differs from the behavior for `&T`, which is always `Copy`).
 "##,
+*/
 
 E0206: r##"
 You can only implement `Copy` for a struct or enum. Both of the following
@@ -2861,25 +2748,6 @@ struct Bar<S, T> { x: Foo<S, T> }
 ```
 "##,
 
-E0248: r##"
-This error indicates an attempt to use a value where a type is expected. For
-example:
-
-```compile_fail,E0248
-enum Foo {
-    Bar(u32)
-}
-
-fn do_something(x: Foo::Bar) { }
-```
-
-In this example, we're attempting to take a type of `Foo::Bar` in the
-do_something function. This is not legal: `Foo::Bar` is a value of type `Foo`,
-not a distinct static type. Likewise, it's not legal to attempt to
-`impl Foo::Bar`: instead, you must `impl Foo` and then pattern match to specify
-behavior for specific enum variants.
-"##,
-
 E0569: r##"
 If an impl has a generic parameter with the `#[may_dangle]` attribute, then
 that impl must be declared as an `unsafe impl. For example:
@@ -3101,6 +2969,42 @@ struct Bar;
 impl Foo for Bar {
     const BAR: u32 = 5; // error, expected bool, found u32
 }
+```
+"##,
+
+E0328: r##"
+The Unsize trait should not be implemented directly. All implementations of
+Unsize are provided automatically by the compiler.
+
+Erroneous code example:
+
+```compile_fail,E0328
+#![feature(unsize)]
+
+use std::marker::Unsize;
+
+pub struct MyType;
+
+impl<T> Unsize<T> for MyType {}
+```
+
+If you are defining your own smart pointer type and would like to enable
+conversion from a sized to an unsized type with the [DST coercion system]
+(https://github.com/rust-lang/rfcs/blob/master/text/0982-dst-coercion.md), use
+[`CoerceUnsized`](https://doc.rust-lang.org/std/ops/trait.CoerceUnsized.html)
+instead.
+
+```
+#![feature(coerce_unsized)]
+
+use std::ops::CoerceUnsized;
+
+pub struct MyType<T: ?Sized> {
+    field_with_unsized_type: T,
+}
+
+impl<T, U> CoerceUnsized<MyType<U>> for MyType<T>
+    where T: CoerceUnsized<U> {}
 ```
 "##,
 
@@ -3885,45 +3789,6 @@ extern "platform-intrinsic" {
 ```
 "##,
 
-E0513: r##"
-The type of the variable couldn't be found out.
-
-Erroneous code example:
-
-```compile_fail,E0513
-use std::mem;
-
-unsafe {
-    let size = mem::size_of::<u32>();
-    mem::transmute_copy::<u32, [u8; size]>(&8_8);
-    // error: no type for local variable
-}
-```
-
-To fix this error, please use a constant size instead of `size`. To make
-this error more obvious, you could run:
-
-```compile_fail,E0080
-use std::mem;
-
-unsafe {
-    mem::transmute_copy::<u32, [u8; mem::size_of::<u32>()]>(&8_8);
-    // error: constant evaluation error
-}
-```
-
-So now, you can fix your code by setting the size directly:
-
-```
-use std::mem;
-
-unsafe {
-    mem::transmute_copy::<u32, [u8; 4]>(&8_8);
-    // `u32` is 4 bytes so we replace the `mem::size_of` call with its size
-}
-```
-"##,
-
 E0516: r##"
 The `typeof` keyword is currently reserved but unimplemented.
 Erroneous code example:
@@ -4208,6 +4073,7 @@ register_diagnostics! {
 //  E0163, // merged into E0071
 //  E0167,
 //  E0168,
+//  E0172, // non-trait found in a type sum, moved to resolve
 //  E0173, // manual implementations of unboxed closure traits are experimental
 //  E0174,
     E0183,
@@ -4230,7 +4096,6 @@ register_diagnostics! {
 //  E0222, // Error code E0045 (variadic function must have C calling
            // convention) duplicate
     E0224, // at least one non-builtin train is required for an object type
-    E0226, // only a single explicit lifetime bound is permitted
     E0227, // ambiguous lifetime bound, explicit lifetime bound required
     E0228, // explicit lifetime bound required
     E0231, // only named substitution parameters are allowed
@@ -4247,10 +4112,10 @@ register_diagnostics! {
     E0245, // not a trait
 //  E0246, // invalid recursive type
 //  E0247,
+//  E0248, // value used as a type, now reported earlier during resolution as E0412
 //  E0249,
 //  E0319, // trait impls for defaulted traits allowed just for structs/enums
     E0320, // recursive overflow during dropck
-    E0328, // cannot implement Unsize explicitly
 //  E0372, // coherence not object safe
     E0377, // the trait `CoerceUnsized` may only be implemented for a coercion
            // between structures with the same definition

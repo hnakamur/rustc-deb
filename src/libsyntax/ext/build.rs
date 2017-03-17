@@ -16,6 +16,7 @@ use codemap::{dummy_spanned, respan, Spanned};
 use ext::base::ExtCtxt;
 use ptr::P;
 use symbol::{Symbol, keywords};
+use rustc_i128::u128;
 
 // Transitional reexports so qquote can find the paths it is looking for
 mod syntax {
@@ -53,7 +54,6 @@ pub trait AstBuilder {
 
     fn ty(&self, span: Span, ty: ast::TyKind) -> P<ast::Ty>;
     fn ty_path(&self, ast::Path) -> P<ast::Ty>;
-    fn ty_sum(&self, ast::Path, ast::TyParamBounds) -> P<ast::Ty>;
     fn ty_ident(&self, span: Span, idents: ast::Ident) -> P<ast::Ty>;
 
     fn ty_rptr(&self, span: Span,
@@ -66,9 +66,6 @@ pub trait AstBuilder {
 
     fn ty_option(&self, ty: P<ast::Ty>) -> P<ast::Ty>;
     fn ty_infer(&self, sp: Span) -> P<ast::Ty>;
-
-    fn ty_vars(&self, ty_params: &P<[ast::TyParam]>) -> Vec<P<ast::Ty>> ;
-    fn ty_vars_global(&self, ty_params: &P<[ast::TyParam]>) -> Vec<P<ast::Ty>> ;
 
     fn typaram(&self,
                span: Span,
@@ -322,24 +319,24 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
                 bindings: Vec<ast::TypeBinding> )
                 -> ast::Path {
         let last_identifier = idents.pop().unwrap();
-        let mut segments: Vec<ast::PathSegment> = idents.into_iter()
-                                                      .map(|ident| {
-            ast::PathSegment {
-                identifier: ident,
-                parameters: ast::PathParameters::none(),
-            }
-        }).collect();
-        segments.push(ast::PathSegment {
-            identifier: last_identifier,
-            parameters: ast::PathParameters::AngleBracketed(ast::AngleBracketedParameterData {
+        let mut segments: Vec<ast::PathSegment> = Vec::new();
+        if global {
+            segments.push(ast::PathSegment::crate_root());
+        }
+
+        segments.extend(idents.into_iter().map(Into::into));
+        let parameters = if lifetimes.is_empty() && types.is_empty() && bindings.is_empty() {
+            None
+        } else {
+            Some(P(ast::PathParameters::AngleBracketed(ast::AngleBracketedParameterData {
                 lifetimes: lifetimes,
-                types: P::from_vec(types),
-                bindings: P::from_vec(bindings),
-            })
-        });
+                types: types,
+                bindings: bindings,
+            })))
+        };
+        segments.push(ast::PathSegment { identifier: last_identifier, parameters: parameters });
         ast::Path {
             span: sp,
-            global: global,
             segments: segments,
         }
     }
@@ -367,13 +364,14 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
                  bindings: Vec<ast::TypeBinding>)
                  -> (ast::QSelf, ast::Path) {
         let mut path = trait_path;
+        let parameters = ast::AngleBracketedParameterData {
+            lifetimes: lifetimes,
+            types: types,
+            bindings: bindings,
+        };
         path.segments.push(ast::PathSegment {
             identifier: ident,
-            parameters: ast::PathParameters::AngleBracketed(ast::AngleBracketedParameterData {
-                lifetimes: lifetimes,
-                types: P::from_vec(types),
-                bindings: P::from_vec(bindings),
-            })
+            parameters: Some(P(ast::PathParameters::AngleBracketed(parameters))),
         });
 
         (ast::QSelf {
@@ -399,12 +397,6 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
 
     fn ty_path(&self, path: ast::Path) -> P<ast::Ty> {
         self.ty(path.span, ast::TyKind::Path(None, path))
-    }
-
-    fn ty_sum(&self, path: ast::Path, bounds: ast::TyParamBounds) -> P<ast::Ty> {
-        self.ty(path.span,
-                ast::TyKind::ObjectSum(self.ty_path(path),
-                                 bounds))
     }
 
     // Might need to take bounds as an argument in the future, if you ever want
@@ -461,20 +453,6 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
             default: default,
             span: span
         }
-    }
-
-    // these are strange, and probably shouldn't be used outside of
-    // pipes. Specifically, the global version possible generates
-    // incorrect code.
-    fn ty_vars(&self, ty_params: &P<[ast::TyParam]>) -> Vec<P<ast::Ty>> {
-        ty_params.iter().map(|p| self.ty_ident(DUMMY_SP, p.ident)).collect()
-    }
-
-    fn ty_vars_global(&self, ty_params: &P<[ast::TyParam]>) -> Vec<P<ast::Ty>> {
-        ty_params
-            .iter()
-            .map(|p| self.ty_path(self.path_global(DUMMY_SP, vec![p.ident])))
-            .collect()
     }
 
     fn trait_ref(&self, path: ast::Path) -> ast::TraitRef {
@@ -697,7 +675,13 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
         self.expr(b.span, ast::ExprKind::Block(b))
     }
     fn field_imm(&self, span: Span, name: Ident, e: P<ast::Expr>) -> ast::Field {
-        ast::Field { ident: respan(span, name), expr: e, span: span, is_shorthand: false }
+        ast::Field {
+            ident: respan(span, name),
+            expr: e,
+            span: span,
+            is_shorthand: false,
+            attrs: ast::ThinVec::new(),
+        }
     }
     fn expr_struct(&self, span: Span, path: ast::Path, fields: Vec<ast::Field>) -> P<ast::Expr> {
         self.expr(span, ast::ExprKind::Struct(path, fields, None))
@@ -711,30 +695,33 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
         self.expr(sp, ast::ExprKind::Lit(P(respan(sp, lit))))
     }
     fn expr_usize(&self, span: Span, i: usize) -> P<ast::Expr> {
-        self.expr_lit(span, ast::LitKind::Int(i as u64, ast::LitIntType::Unsigned(ast::UintTy::Us)))
+        self.expr_lit(span, ast::LitKind::Int(i as u128,
+                                              ast::LitIntType::Unsigned(ast::UintTy::Us)))
     }
     fn expr_isize(&self, sp: Span, i: isize) -> P<ast::Expr> {
         if i < 0 {
-            let i = (-i) as u64;
+            let i = (-i) as u128;
             let lit_ty = ast::LitIntType::Signed(ast::IntTy::Is);
             let lit = self.expr_lit(sp, ast::LitKind::Int(i, lit_ty));
             self.expr_unary(sp, ast::UnOp::Neg, lit)
         } else {
-            self.expr_lit(sp, ast::LitKind::Int(i as u64, ast::LitIntType::Signed(ast::IntTy::Is)))
+            self.expr_lit(sp, ast::LitKind::Int(i as u128,
+                                                ast::LitIntType::Signed(ast::IntTy::Is)))
         }
     }
     fn expr_u32(&self, sp: Span, u: u32) -> P<ast::Expr> {
-        self.expr_lit(sp, ast::LitKind::Int(u as u64, ast::LitIntType::Unsigned(ast::UintTy::U32)))
+        self.expr_lit(sp, ast::LitKind::Int(u as u128,
+                                            ast::LitIntType::Unsigned(ast::UintTy::U32)))
     }
     fn expr_u8(&self, sp: Span, u: u8) -> P<ast::Expr> {
-        self.expr_lit(sp, ast::LitKind::Int(u as u64, ast::LitIntType::Unsigned(ast::UintTy::U8)))
+        self.expr_lit(sp, ast::LitKind::Int(u as u128, ast::LitIntType::Unsigned(ast::UintTy::U8)))
     }
     fn expr_bool(&self, sp: Span, value: bool) -> P<ast::Expr> {
         self.expr_lit(sp, ast::LitKind::Bool(value))
     }
 
     fn expr_vec(&self, sp: Span, exprs: Vec<P<ast::Expr>>) -> P<ast::Expr> {
-        self.expr(sp, ast::ExprKind::Vec(exprs))
+        self.expr(sp, ast::ExprKind::Array(exprs))
     }
     fn expr_vec_ng(&self, sp: Span) -> P<ast::Expr> {
         self.expr_call_global(sp, self.std_path(&["vec", "Vec", "new"]),

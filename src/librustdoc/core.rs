@@ -15,7 +15,7 @@ use rustc::session::{self, config};
 use rustc::hir::def_id::DefId;
 use rustc::hir::def::{Def, ExportMap};
 use rustc::middle::privacy::AccessLevels;
-use rustc::ty::{self, TyCtxt, Ty};
+use rustc::ty::{self, TyCtxt, GlobalArenas, Ty};
 use rustc::hir::map as hir_map;
 use rustc::lint;
 use rustc::util::nodemap::{FxHashMap, NodeMap};
@@ -37,6 +37,7 @@ use visit_ast::RustdocVisitor;
 use clean;
 use clean::Clean;
 use html::render::RenderInfo;
+use arena::DroplessArena;
 
 pub use rustc::session::config::Input;
 pub use rustc::session::search_paths::SearchPaths;
@@ -155,18 +156,26 @@ pub fn run_core(search_paths: SearchPaths,
     let name = link::find_crate_name(Some(&sess), &krate.attrs, &input);
 
     let driver::ExpansionResult { defs, analysis, resolutions, mut hir_forest, .. } = {
-        driver::phase_2_configure_and_expand(
-            &sess, &cstore, krate, None, &name, None, resolve::MakeGlobMap::No, |_| Ok(()),
-        ).expect("phase_2_configure_and_expand aborted in rustdoc!")
+        let result = driver::phase_2_configure_and_expand(&sess,
+                                                          &cstore,
+                                                          krate,
+                                                          None,
+                                                          &name,
+                                                          None,
+                                                          resolve::MakeGlobMap::No,
+                                                          |_| Ok(()));
+        abort_on_err(result, &sess)
     };
 
-    let arenas = ty::CtxtArenas::new();
+    let arena = DroplessArena::new();
+    let arenas = GlobalArenas::new();
     let hir_map = hir_map::map_crate(&mut hir_forest, defs);
 
     abort_on_err(driver::phase_3_run_analysis_passes(&sess,
                                                      hir_map,
                                                      analysis,
                                                      resolutions,
+                                                     &arena,
                                                      &arenas,
                                                      &name,
                                                      |tcx, analysis, _, result| {
@@ -180,7 +189,7 @@ pub fn run_core(search_paths: SearchPaths,
         // to the map from defid -> nodeid
         let access_levels = AccessLevels {
             map: access_levels.map.into_iter()
-                                  .map(|(k, v)| (tcx.map.local_def_id(k), v))
+                                  .map(|(k, v)| (tcx.hir.local_def_id(k), v))
                                   .collect()
         };
 
@@ -195,11 +204,11 @@ pub fn run_core(search_paths: SearchPaths,
             export_map: export_map,
             hir_ty_to_ty: hir_ty_to_ty,
         };
-        debug!("crate: {:?}", tcx.map.krate());
+        debug!("crate: {:?}", tcx.hir.krate());
 
         let krate = {
             let mut v = RustdocVisitor::new(&ctxt);
-            v.visit(tcx.map.krate());
+            v.visit(tcx.hir.krate());
             v.clean(&ctxt)
         };
 

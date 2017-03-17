@@ -21,13 +21,12 @@ use test::TestPaths;
 use uidiff;
 use util::logv;
 
-use std::env;
 use std::collections::HashSet;
+use std::env;
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{self, BufReader};
 use std::io::prelude::*;
-use std::net::TcpStream;
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, ExitStatus};
 use std::str;
@@ -506,8 +505,8 @@ actual:\n\
                                  exe_file.to_str().unwrap().to_owned(),
                                  self.config.adb_test_dir.clone()
                              ],
-                             vec![("".to_owned(), "".to_owned())],
-                             Some("".to_owned()))
+                             Vec::new(),
+                             None)
                     .expect(&format!("failed to exec `{:?}`", self.config.adb_path));
 
                 procsrv::run("",
@@ -518,8 +517,8 @@ actual:\n\
                                  "tcp:5039".to_owned(),
                                  "tcp:5039".to_owned()
                              ],
-                             vec![("".to_owned(), "".to_owned())],
-                             Some("".to_owned()))
+                             Vec::new(),
+                             None)
                     .expect(&format!("failed to exec `{:?}`", self.config.adb_path));
 
                 let adb_arg = format!("export LD_LIBRARY_PATH={}; \
@@ -539,17 +538,23 @@ actual:\n\
                                                               "shell".to_owned(),
                                                               adb_arg.clone()
                                                           ],
-                                                          vec![("".to_owned(),
-                                                                "".to_owned())],
-                                                          Some("".to_owned()))
+                                                          Vec::new(),
+                                                          None)
                     .expect(&format!("failed to exec `{:?}`", self.config.adb_path));
+
+                // Wait for the gdbserver to print out "Listening on port ..."
+                // at which point we know that it's started and then we can
+                // execute the debugger below.
+                let mut stdout = BufReader::new(process.stdout.take().unwrap());
+                let mut line = String::new();
                 loop {
-                    //waiting 1 second for gdbserver start
-                    ::std::thread::sleep(::std::time::Duration::new(1,0));
-                    if TcpStream::connect("127.0.0.1:5039").is_ok() {
+                    line.truncate(0);
+                    stdout.read_line(&mut line).unwrap();
+                    if line.starts_with("Listening on port 5039") {
                         break
                     }
                 }
+                drop(stdout);
 
                 let debugger_script = self.make_out_name("debugger.script");
                 // FIXME (#9639): This needs to handle non-utf8 paths
@@ -569,7 +574,7 @@ actual:\n\
                                  &gdb_path,
                                  None,
                                  &debugger_opts,
-                                 vec![("".to_owned(), "".to_owned())],
+                                 Vec::new(),
                                  None)
                     .expect(&format!("failed to exec `{:?}`", gdb_path));
                 let cmdline = {
@@ -1619,8 +1624,46 @@ actual:\n\
     }
 
     fn fatal_proc_rec(&self, err: &str, proc_res: &ProcRes) -> ! {
+        self.try_print_open_handles();
         self.error(err);
         proc_res.fatal(None);
+    }
+
+    // This function is a poor man's attempt to debug rust-lang/rust#38620, if
+    // that's closed then this should be deleted
+    //
+    // This is a very "opportunistic" debugging attempt, so we ignore all
+    // errors here.
+    fn try_print_open_handles(&self) {
+        if !cfg!(windows) {
+            return
+        }
+        if self.config.mode != Incremental {
+            return
+        }
+
+        let filename = match self.testpaths.file.file_stem() {
+            Some(path) => path,
+            None => return,
+        };
+
+        let mut cmd = Command::new("handle.exe");
+        cmd.arg("-a").arg("-u");
+        cmd.arg(filename);
+        cmd.arg("-nobanner");
+        let output = match cmd.output() {
+            Ok(output) => output,
+            Err(_) => return,
+        };
+        println!("---------------------------------------------------");
+        println!("ran extra command to debug rust-lang/rust#38620: ");
+        println!("{:?}", cmd);
+        println!("result: {}", output.status);
+        println!("--- stdout ----------------------------------------");
+        println!("{}", String::from_utf8_lossy(&output.stdout));
+        println!("--- stderr ----------------------------------------");
+        println!("{}", String::from_utf8_lossy(&output.stderr));
+        println!("---------------------------------------------------");
     }
 
     fn _arm_exec_compiled_test(&self, env: Vec<(String, String)>) -> ProcRes {
@@ -2132,6 +2175,10 @@ actual:\n\
            .env("LLVM_COMPONENTS", &self.config.llvm_components)
            .env("LLVM_CXXFLAGS", &self.config.llvm_cxxflags);
 
+        // We don't want RUSTFLAGS set from the outside to interfere with
+        // compiler flags set in the test cases:
+        cmd.env_remove("RUSTFLAGS");
+
         if self.config.target.contains("msvc") {
             // We need to pass a path to `lib.exe`, so assume that `cc` is `cl.exe`
             // and that `lib.exe` lives next to it.
@@ -2303,7 +2350,18 @@ actual:\n\
                 };
             }
             if !found {
-                panic!("ran out of mir dump output to match against");
+                let normalize_all = dumped_string.lines()
+                                                 .map(nocomment_mir_line)
+                                                 .filter(|l| !l.is_empty())
+                                                 .collect::<Vec<_>>()
+                                                 .join("\n");
+                panic!("ran out of mir dump output to match against.\n\
+                        Did not find expected line: {:?}\n\
+                        Expected:\n{}\n\
+                        Actual:\n{}",
+                        expected_line,
+                        expected_content.join("\n"),
+                        normalize_all);
             }
         }
     }
@@ -2448,11 +2506,14 @@ enum TargetLocation {
 }
 
 fn normalize_mir_line(line: &str) -> String {
-    let no_comments = if let Some(idx) = line.find("//") {
+    nocomment_mir_line(line).replace(char::is_whitespace, "")
+}
+
+fn nocomment_mir_line(line: &str) -> &str {
+    if let Some(idx) = line.find("//") {
         let (l, _) = line.split_at(idx);
-        l
+        l.trim_right()
     } else {
         line
-    };
-    no_comments.replace(char::is_whitespace, "")
+    }
 }

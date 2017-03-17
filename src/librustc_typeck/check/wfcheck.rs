@@ -90,7 +90,7 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
         let ccx = self.ccx;
         debug!("check_item_well_formed(it.id={}, it.name={})",
                item.id,
-               ccx.tcx.item_path_str(ccx.tcx.map.local_def_id(item.id)));
+               ccx.tcx.item_path_str(ccx.tcx.hir.local_def_id(item.id)));
 
         match item.node {
             /// Right now we check that every default trait implementation
@@ -117,7 +117,7 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
             hir::ItemImpl(_, hir::ImplPolarity::Negative, _, Some(_), ..) => {
                 // FIXME(#27579) what amount of WF checking do we need for neg impls?
 
-                let trait_ref = ccx.tcx.impl_trait_ref(ccx.tcx.map.local_def_id(item.id)).unwrap();
+                let trait_ref = ccx.tcx.impl_trait_ref(ccx.tcx.hir.local_def_id(item.id)).unwrap();
                 if !ccx.tcx.trait_has_default_impl(trait_ref.def_id) {
                     error_192(ccx, item.span);
                 }
@@ -159,16 +159,16 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
         }
     }
 
-    fn check_trait_or_impl_item(&mut self,
-                                item_id: ast::NodeId,
-                                span: Span,
-                                sig_if_method: Option<&hir::MethodSig>) {
+    fn check_associated_item(&mut self,
+                             item_id: ast::NodeId,
+                             span: Span,
+                             sig_if_method: Option<&hir::MethodSig>) {
         let code = self.code.clone();
         self.for_id(item_id, span).with_fcx(|fcx, this| {
             let free_substs = &fcx.parameter_environment.free_substs;
             let free_id_outlive = fcx.parameter_environment.free_id_outlive;
 
-            let item = fcx.tcx.associated_item(fcx.tcx.map.local_def_id(item_id));
+            let item = fcx.tcx.associated_item(fcx.tcx.hir.local_def_id(item_id));
 
             let (mut implied_bounds, self_ty) = match item.container {
                 ty::TraitContainer(_) => (vec![], fcx.tcx.mk_self_type()),
@@ -251,7 +251,7 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
             }
 
             let free_substs = &fcx.parameter_environment.free_substs;
-            let def_id = fcx.tcx.map.local_def_id(item.id);
+            let def_id = fcx.tcx.hir.local_def_id(item.id);
             let predicates = fcx.instantiate_bounds(item.span, def_id, free_substs);
             this.check_where_clauses(fcx, item.span, &predicates);
 
@@ -321,7 +321,7 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
     }
 
     fn check_trait(&mut self, item: &hir::Item) {
-        let trait_def_id = self.tcx().map.local_def_id(item.id);
+        let trait_def_id = self.tcx().hir.local_def_id(item.id);
 
         if self.tcx().trait_has_default_impl(trait_def_id) {
             self.check_auto_trait(trait_def_id, item.span);
@@ -337,11 +337,11 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
 
     fn check_item_fn(&mut self,
                      item: &hir::Item,
-                     body_id: hir::ExprId)
+                     body_id: hir::BodyId)
     {
         self.for_item(item).with_fcx(|fcx, this| {
             let free_substs = &fcx.parameter_environment.free_substs;
-            let def_id = fcx.tcx.map.local_def_id(item.id);
+            let def_id = fcx.tcx.hir.local_def_id(item.id);
             let ty = fcx.tcx.item_type(def_id);
             let item_ty = fcx.instantiate_type_scheme(item.span, free_substs, &ty);
             let bare_fn_ty = match item_ty.sty {
@@ -354,7 +354,7 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
             let predicates = fcx.instantiate_bounds(item.span, def_id, free_substs);
 
             let mut implied_bounds = vec![];
-            let free_id_outlive = fcx.tcx.region_maps.call_site_extent(item.id, body_id.node_id());
+            let free_id_outlive = fcx.tcx.region_maps.call_site_extent(item.id, body_id.node_id);
             this.check_fn_or_method(fcx, item.span, bare_fn_ty, &predicates,
                                     free_id_outlive, &mut implied_bounds);
             implied_bounds
@@ -367,7 +367,7 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
         debug!("check_item_type: {:?}", item);
 
         self.for_item(item).with_fcx(|fcx, this| {
-            let ty = fcx.tcx.item_type(fcx.tcx.map.local_def_id(item.id));
+            let ty = fcx.tcx.item_type(fcx.tcx.hir.local_def_id(item.id));
             let item_ty = fcx.instantiate_type_scheme(item.span,
                                                       &fcx.parameter_environment
                                                           .free_substs,
@@ -388,7 +388,7 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
 
         self.for_item(item).with_fcx(|fcx, this| {
             let free_substs = &fcx.parameter_environment.free_substs;
-            let item_def_id = fcx.tcx.map.local_def_id(item.id);
+            let item_def_id = fcx.tcx.hir.local_def_id(item.id);
 
             match *ast_trait_ref {
                 Some(ref ast_trait_ref) => {
@@ -478,7 +478,7 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
             return;
         }
 
-        let span = method_sig.decl.inputs[0].pat.span;
+        let span = method_sig.decl.inputs[0].span;
 
         let free_substs = &fcx.parameter_environment.free_substs;
         let method_ty = fcx.tcx.item_type(method.def_id);
@@ -505,14 +505,16 @@ impl<'ccx, 'gcx> CheckTypeWellFormedVisitor<'ccx, 'gcx> {
         debug!("check_method_receiver: receiver ty = {:?}", rcvr_ty);
 
         let cause = fcx.cause(span, ObligationCauseCode::MethodReceiver);
-        fcx.demand_eqtype_with_origin(&cause, rcvr_ty, self_arg_ty);
+        if let Some(mut err) = fcx.demand_eqtype_with_origin(&cause, rcvr_ty, self_arg_ty) {
+            err.emit();
+        }
     }
 
     fn check_variances_for_type_defn(&self,
                                      item: &hir::Item,
                                      ast_generics: &hir::Generics)
     {
-        let item_def_id = self.tcx().map.local_def_id(item.id);
+        let item_def_id = self.tcx().hir.local_def_id(item.id);
         let ty = self.tcx().item_type(item_def_id);
         if self.tcx().has_error_field(ty) {
             return;
@@ -607,10 +609,10 @@ impl<'ccx, 'tcx, 'v> Visitor<'v> for CheckTypeWellFormedVisitor<'ccx, 'tcx> {
     fn visit_trait_item(&mut self, trait_item: &'v hir::TraitItem) {
         debug!("visit_trait_item: {:?}", trait_item);
         let method_sig = match trait_item.node {
-            hir::TraitItem_::MethodTraitItem(ref sig, _) => Some(sig),
+            hir::TraitItemKind::Method(ref sig, _) => Some(sig),
             _ => None
         };
-        self.check_trait_or_impl_item(trait_item.id, trait_item.span, method_sig);
+        self.check_associated_item(trait_item.id, trait_item.span, method_sig);
         intravisit::walk_trait_item(self, trait_item)
     }
 
@@ -620,7 +622,7 @@ impl<'ccx, 'tcx, 'v> Visitor<'v> for CheckTypeWellFormedVisitor<'ccx, 'tcx> {
             hir::ImplItemKind::Method(ref sig, _) => Some(sig),
             _ => None
         };
-        self.check_trait_or_impl_item(impl_item.id, impl_item.span, method_sig);
+        self.check_associated_item(impl_item.id, impl_item.span, method_sig);
         intravisit::walk_impl_item(self, impl_item)
     }
 }
@@ -642,7 +644,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         let fields =
             struct_def.fields().iter()
             .map(|field| {
-                let field_ty = self.tcx.item_type(self.tcx.map.local_def_id(field.id));
+                let field_ty = self.tcx.item_type(self.tcx.hir.local_def_id(field.id));
                 let field_ty = self.instantiate_type_scheme(field.span,
                                                             &self.parameter_environment
                                                                  .free_substs,

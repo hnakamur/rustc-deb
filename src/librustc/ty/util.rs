@@ -13,9 +13,9 @@
 use hir::def_id::DefId;
 use hir::map::DefPathData;
 use infer::InferCtxt;
-use hir::map as ast_map;
+use hir::map as hir_map;
 use traits::{self, Reveal};
-use ty::{self, Ty, AdtKind, TyCtxt, TypeAndMut, TypeFlags, TypeFoldable};
+use ty::{self, Ty, TyCtxt, TypeAndMut, TypeFlags, TypeFoldable};
 use ty::{Disr, ParameterEnvironment};
 use ty::fold::TypeVisitor;
 use ty::layout::{Layout, LayoutError};
@@ -51,11 +51,13 @@ impl IntTypeExt for attr::IntType {
             SignedInt(ast::IntTy::I16)     => tcx.types.i16,
             SignedInt(ast::IntTy::I32)     => tcx.types.i32,
             SignedInt(ast::IntTy::I64)     => tcx.types.i64,
+            SignedInt(ast::IntTy::I128)     => tcx.types.i128,
             SignedInt(ast::IntTy::Is)   => tcx.types.isize,
             UnsignedInt(ast::UintTy::U8)    => tcx.types.u8,
             UnsignedInt(ast::UintTy::U16)   => tcx.types.u16,
             UnsignedInt(ast::UintTy::U32)   => tcx.types.u32,
             UnsignedInt(ast::UintTy::U64)   => tcx.types.u64,
+            UnsignedInt(ast::UintTy::U128)   => tcx.types.u128,
             UnsignedInt(ast::UintTy::Us) => tcx.types.usize,
         }
     }
@@ -66,6 +68,7 @@ impl IntTypeExt for attr::IntType {
             SignedInt(ast::IntTy::I16)   => ConstInt::I16(0),
             SignedInt(ast::IntTy::I32)   => ConstInt::I32(0),
             SignedInt(ast::IntTy::I64)   => ConstInt::I64(0),
+            SignedInt(ast::IntTy::I128)   => ConstInt::I128(0),
             SignedInt(ast::IntTy::Is) => match tcx.sess.target.int_type {
                 ast::IntTy::I16 => ConstInt::Isize(ConstIsize::Is16(0)),
                 ast::IntTy::I32 => ConstInt::Isize(ConstIsize::Is32(0)),
@@ -76,6 +79,7 @@ impl IntTypeExt for attr::IntType {
             UnsignedInt(ast::UintTy::U16) => ConstInt::U16(0),
             UnsignedInt(ast::UintTy::U32) => ConstInt::U32(0),
             UnsignedInt(ast::UintTy::U64) => ConstInt::U64(0),
+            UnsignedInt(ast::UintTy::U128) => ConstInt::U128(0),
             UnsignedInt(ast::UintTy::Us) => match tcx.sess.target.uint_type {
                 ast::UintTy::U16 => ConstInt::Usize(ConstUsize::Us16(0)),
                 ast::UintTy::U32 => ConstInt::Usize(ConstUsize::Us32(0)),
@@ -91,11 +95,13 @@ impl IntTypeExt for attr::IntType {
             (SignedInt(ast::IntTy::I16), ConstInt::I16(_)) => {},
             (SignedInt(ast::IntTy::I32), ConstInt::I32(_)) => {},
             (SignedInt(ast::IntTy::I64), ConstInt::I64(_)) => {},
+            (SignedInt(ast::IntTy::I128), ConstInt::I128(_)) => {},
             (SignedInt(ast::IntTy::Is), ConstInt::Isize(_)) => {},
             (UnsignedInt(ast::UintTy::U8), ConstInt::U8(_)) => {},
             (UnsignedInt(ast::UintTy::U16), ConstInt::U16(_)) => {},
             (UnsignedInt(ast::UintTy::U32), ConstInt::U32(_)) => {},
             (UnsignedInt(ast::UintTy::U64), ConstInt::U64(_)) => {},
+            (UnsignedInt(ast::UintTy::U128), ConstInt::U128(_)) => {},
             (UnsignedInt(ast::UintTy::Us), ConstInt::Usize(_)) => {},
             _ => bug!("disr type mismatch: {:?} vs {:?}", self, val),
         }
@@ -114,9 +120,8 @@ impl IntTypeExt for attr::IntType {
 
 
 #[derive(Copy, Clone)]
-pub enum CopyImplementationError {
-    InfrigingField(Name),
-    InfrigingVariant(Name),
+pub enum CopyImplementationError<'tcx> {
+    InfrigingField(&'tcx ty::FieldDef),
     NotAnAdt,
     HasDestructor
 }
@@ -139,36 +144,29 @@ pub enum Representability {
 impl<'tcx> ParameterEnvironment<'tcx> {
     pub fn can_type_implement_copy<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                        self_type: Ty<'tcx>, span: Span)
-                                       -> Result<(),CopyImplementationError> {
+                                       -> Result<(), CopyImplementationError> {
         // FIXME: (@jroesch) float this code up
-        tcx.infer_ctxt(None, Some(self.clone()), Reveal::ExactMatch).enter(|infcx| {
-            let adt = match self_type.sty {
-                ty::TyAdt(adt, substs) => match adt.adt_kind() {
-                    AdtKind::Struct | AdtKind::Union => {
-                        for field in adt.all_fields() {
-                            let field_ty = field.ty(tcx, substs);
-                            if infcx.type_moves_by_default(field_ty, span) {
-                                return Err(CopyImplementationError::InfrigingField(
-                                    field.name))
-                            }
-                        }
-                        adt
-                    }
-                    AdtKind::Enum => {
-                        for variant in &adt.variants {
-                            for field in &variant.fields {
-                                let field_ty = field.ty(tcx, substs);
-                                if infcx.type_moves_by_default(field_ty, span) {
-                                    return Err(CopyImplementationError::InfrigingVariant(
-                                        variant.name))
-                                }
-                            }
-                        }
-                        adt
-                    }
-                },
+        tcx.infer_ctxt(self.clone(), Reveal::NotSpecializable).enter(|infcx| {
+            let (adt, substs) = match self_type.sty {
+                ty::TyAdt(adt, substs) => (adt, substs),
                 _ => return Err(CopyImplementationError::NotAnAdt)
             };
+
+            let field_implements_copy = |field: &ty::FieldDef| {
+                let cause = traits::ObligationCause::dummy();
+                match traits::fully_normalize(&infcx, cause, &field.ty(tcx, substs)) {
+                    Ok(ty) => !infcx.type_moves_by_default(ty, span),
+                    Err(..) => false
+                }
+            };
+
+            for variant in &adt.variants {
+                for field in &variant.fields {
+                    if !field_implements_copy(field) {
+                        return Err(CopyImplementationError::InfrigingField(field));
+                    }
+                }
+            }
 
             if adt.has_dtor() {
                 return Err(CopyImplementationError::HasDestructor);
@@ -431,7 +429,7 @@ impl<'a, 'gcx, 'tcx, W> TypeIdHasher<'a, 'gcx, 'tcx, W>
         self.def_path(&path)
     }
 
-    pub fn def_path(&mut self, def_path: &ast_map::DefPath) {
+    pub fn def_path(&mut self, def_path: &hir_map::DefPath) {
         def_path.deterministic_hash_to(self.tcx, &mut self.state);
     }
 }
@@ -483,7 +481,6 @@ impl<'a, 'gcx, 'tcx, W> TypeVisitor<'tcx> for TypeIdHasher<'a, 'gcx, 'tcx, W>
             TyBool |
             TyChar |
             TyStr |
-            TyBox(_) |
             TySlice(_) => {}
 
             TyError |
@@ -538,7 +535,7 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
             }
         }
         let result =
-            tcx.infer_ctxt(None, Some(param_env.clone()), Reveal::ExactMatch)
+            tcx.infer_ctxt(param_env.clone(), Reveal::ExactMatch)
             .enter(|infcx| {
                 traits::type_known_to_meet_bound(&infcx, self, def_id, span)
             });
@@ -565,7 +562,7 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
                 mutbl: hir::MutImmutable, ..
             }) => Some(false),
 
-            TyStr | TyBox(..) | TyRef(_, TypeAndMut {
+            TyStr | TyRef(_, TypeAndMut {
                 mutbl: hir::MutMutable, ..
             }) => Some(true),
 
@@ -608,7 +605,7 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
         // Fast-path for primitive types
         let result = match self.sty {
             TyBool | TyChar | TyInt(..) | TyUint(..) | TyFloat(..) |
-            TyBox(..) | TyRawPtr(..) | TyRef(..) | TyFnDef(..) | TyFnPtr(_) |
+            TyRawPtr(..) | TyRef(..) | TyFnDef(..) | TyFnPtr(_) |
             TyArray(..) | TyTuple(..) | TyClosure(..) | TyNever => Some(true),
 
             TyStr | TyDynamic(..) | TySlice(_) => Some(false),

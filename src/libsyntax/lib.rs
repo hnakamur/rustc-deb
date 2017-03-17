@@ -22,11 +22,10 @@
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/",
        test(attr(deny(warnings))))]
-#![cfg_attr(not(stage0), deny(warnings))]
+#![deny(warnings)]
 
 #![feature(associated_consts)]
 #![feature(const_fn)]
-#![feature(libc)]
 #![feature(optin_builtin_traits)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
@@ -35,10 +34,7 @@
 #![feature(rustc_diagnostic_macros)]
 #![feature(specialization)]
 
-extern crate core;
 extern crate serialize;
-extern crate term;
-extern crate libc;
 #[macro_use] extern crate log;
 #[macro_use] #[no_link] extern crate rustc_bitflags;
 extern crate std_unicode;
@@ -46,8 +42,9 @@ pub extern crate rustc_errors as errors;
 extern crate syntax_pos;
 extern crate rustc_data_structures;
 
-extern crate serialize as rustc_serialize; // used by deriving
+extern crate rustc_i128;
 
+extern crate serialize as rustc_serialize; // used by deriving
 
 // A variant of 'try!' that panics on an Err. This is used as a crutch on the
 // way towards a non-panic!-prone parser. It should be used for fatal parsing
@@ -92,6 +89,9 @@ pub mod util {
 
     mod thin_vec;
     pub use self::thin_vec::ThinVec;
+
+    mod rc_slice;
+    pub use self::rc_slice::RcSlice;
 }
 
 pub mod json;
@@ -132,7 +132,6 @@ pub mod ext {
     pub mod expand;
     pub mod placeholders;
     pub mod hygiene;
-    pub mod proc_macro_shim;
     pub mod quote;
     pub mod source_util;
 

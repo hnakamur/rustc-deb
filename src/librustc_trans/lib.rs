@@ -21,7 +21,7 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![cfg_attr(not(stage0), deny(warnings))]
+#![deny(warnings)]
 
 #![feature(associated_consts)]
 #![feature(box_patterns)]
@@ -36,13 +36,11 @@
 #![feature(slice_patterns)]
 #![feature(staged_api)]
 #![feature(unicode)]
+#![feature(conservative_impl_trait)]
 
 use rustc::dep_graph::WorkProduct;
 
-extern crate arena;
 extern crate flate;
-extern crate getopts;
-extern crate graphviz;
 extern crate libc;
 #[macro_use] extern crate rustc;
 extern crate rustc_back;
@@ -50,12 +48,12 @@ extern crate rustc_data_structures;
 extern crate rustc_incremental;
 pub extern crate rustc_llvm as llvm;
 extern crate rustc_platform_intrinsics as intrinsics;
-extern crate serialize;
 extern crate rustc_const_math;
 extern crate rustc_const_eval;
 #[macro_use]
 #[no_link]
 extern crate rustc_bitflags;
+extern crate rustc_i128;
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
@@ -95,8 +93,6 @@ mod asm;
 mod assert_module_sources;
 mod attributes;
 mod base;
-mod basic_block;
-mod build;
 mod builder;
 mod cabi_aarch64;
 mod cabi_arm;
@@ -104,9 +100,13 @@ mod cabi_asmjs;
 mod cabi_mips;
 mod cabi_mips64;
 mod cabi_msp430;
+mod cabi_nvptx;
+mod cabi_nvptx64;
 mod cabi_powerpc;
 mod cabi_powerpc64;
 mod cabi_s390x;
+mod cabi_sparc;
+mod cabi_sparc64;
 mod cabi_x86;
 mod cabi_x86_64;
 mod cabi_x86_win64;

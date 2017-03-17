@@ -58,6 +58,7 @@ mod apple_ios_base;
 mod arm_base;
 mod bitrig_base;
 mod dragonfly_base;
+mod emscripten_base;
 mod freebsd_base;
 mod haiku_base;
 mod linux_base;
@@ -69,6 +70,7 @@ mod windows_base;
 mod windows_msvc_base;
 mod thumb_base;
 mod fuchsia_base;
+mod redox_base;
 
 pub type TargetResult = Result<Target, String>;
 
@@ -156,6 +158,8 @@ supported_targets! {
     ("mips-unknown-linux-uclibc", mips_unknown_linux_uclibc),
     ("mipsel-unknown-linux-uclibc", mipsel_unknown_linux_uclibc),
 
+    ("sparc64-unknown-linux-gnu", sparc64_unknown_linux_gnu),
+
     ("i686-linux-android", i686_linux_android),
     ("arm-linux-androideabi", arm_linux_androideabi),
     ("armv7-linux-androideabi", armv7_linux_androideabi),
@@ -172,6 +176,7 @@ supported_targets! {
     ("i686-unknown-openbsd", i686_unknown_openbsd),
     ("x86_64-unknown-openbsd", x86_64_unknown_openbsd),
 
+    ("sparc64-unknown-netbsd", sparc64_unknown_netbsd),
     ("x86_64-unknown-netbsd", x86_64_unknown_netbsd),
     ("x86_64-rumprun-netbsd", x86_64_rumprun_netbsd),
 
@@ -183,6 +188,8 @@ supported_targets! {
 
     ("aarch64-unknown-fuchsia", aarch64_unknown_fuchsia),
     ("x86_64-unknown-fuchsia", x86_64_unknown_fuchsia),
+
+    ("x86_64-unknown-redox", x86_64_unknown_redox),
 
     ("i386-apple-ios", i386_apple_ios),
     ("x86_64-apple-ios", x86_64_apple_ios),
@@ -266,6 +273,9 @@ pub struct TargetOptions {
     /// Linker arguments that are unconditionally passed *after* any
     /// user-defined libraries.
     pub post_link_args: Vec<String>,
+
+    /// Extra arguments to pass to the external assembler (when used)
+    pub asm_args: Vec<String>,
 
     /// Default CPU to pass to LLVM. Corresponds to `llc -mcpu=$cpu`. Defaults
     /// to "generic".
@@ -370,6 +380,9 @@ pub struct TargetOptions {
     // file
     pub no_integrated_as: bool,
 
+    /// Don't use this field; instead use the `.min_atomic_width()` method.
+    pub min_atomic_width: Option<u64>,
+
     /// Don't use this field; instead use the `.max_atomic_width()` method.
     pub max_atomic_width: Option<u64>,
 
@@ -394,6 +407,7 @@ impl Default for TargetOptions {
             ar: option_env!("CFG_DEFAULT_AR").unwrap_or("ar").to_string(),
             pre_link_args: Vec::new(),
             post_link_args: Vec::new(),
+            asm_args: Vec::new(),
             cpu: "generic".to_string(),
             features: "".to_string(),
             dynamic_linking: false,
@@ -432,6 +446,7 @@ impl Default for TargetOptions {
             has_elf_tls: false,
             obj_is_bitcode: false,
             no_integrated_as: false,
+            min_atomic_width: None,
             max_atomic_width: None,
             panic_strategy: PanicStrategy::Unwind,
             abi_blacklist: vec![],
@@ -453,6 +468,12 @@ impl Target {
             },
             abi => abi
         }
+    }
+
+    /// Minimum integer size in bits that this target can perform atomic
+    /// operations on.
+    pub fn min_atomic_width(&self) -> u64 {
+        self.options.min_atomic_width.unwrap_or(8)
     }
 
     /// Maximum integer size in bits that this target can perform atomic
@@ -561,6 +582,7 @@ impl Target {
         key!(late_link_args, list);
         key!(post_link_objects, list);
         key!(post_link_args, list);
+        key!(asm_args, list);
         key!(cpu);
         key!(features);
         key!(dynamic_linking, bool);
@@ -596,6 +618,7 @@ impl Target {
         key!(obj_is_bitcode, bool);
         key!(no_integrated_as, bool);
         key!(max_atomic_width, Option<u64>);
+        key!(min_atomic_width, Option<u64>);
         try!(key!(panic_strategy, PanicStrategy));
         key!(crt_static_default, bool);
 
@@ -723,6 +746,7 @@ impl ToJson for Target {
         target_option_val!(late_link_args);
         target_option_val!(post_link_objects);
         target_option_val!(post_link_args);
+        target_option_val!(asm_args);
         target_option_val!(cpu);
         target_option_val!(features);
         target_option_val!(dynamic_linking);
@@ -757,6 +781,7 @@ impl ToJson for Target {
         target_option_val!(has_elf_tls);
         target_option_val!(obj_is_bitcode);
         target_option_val!(no_integrated_as);
+        target_option_val!(min_atomic_width);
         target_option_val!(max_atomic_width);
         target_option_val!(panic_strategy);
         target_option_val!(crt_static_default);

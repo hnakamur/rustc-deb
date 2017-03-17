@@ -253,7 +253,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                             f: F)
         where F: FnOnce(&mut Builder<'a, 'gcx, 'tcx>)
     {
-        let extent = self.extent_of_innermost_scope();
+        let extent = self.scopes.last().map(|scope| scope.extent).unwrap();
         let loop_scope = LoopScope {
             extent: extent.clone(),
             continue_block: loop_block,
@@ -411,10 +411,6 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         }
     }
 
-    pub fn extent_of_innermost_scope(&self) -> CodeExtent {
-        self.scopes.last().map(|scope| scope.extent).unwrap()
-    }
-
     /// Returns the extent of the scope which should be exited by a
     /// return.
     pub fn extent_of_return_scope(&self) -> CodeExtent {
@@ -503,7 +499,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     scope.needs_cleanup = true;
                 }
                 let tcx = self.hir.tcx();
-                let extent_span = extent.span(&tcx.region_maps, &tcx.map).unwrap();
+                let extent_span = extent.span(&tcx.region_maps, &tcx.hir).unwrap();
                 // Attribute scope exit drops to scope's closing brace
                 let scope_end = Span { lo: extent_span.hi, .. extent_span};
                 scope.drops.push(DropData {

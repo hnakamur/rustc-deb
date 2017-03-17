@@ -15,14 +15,15 @@ use net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use str::FromStr;
 use string::{String, ToString};
 use sys::syscall::EINVAL;
-use time;
+use time::{self, Duration};
 use vec::{IntoIter, Vec};
 
 use self::dns::{Dns, DnsQuery};
 
-pub extern crate libc as netc;
 pub use self::tcp::{TcpStream, TcpListener};
 pub use self::udp::UdpSocket;
+
+pub mod netc;
 
 mod dns;
 mod tcp;
@@ -68,6 +69,8 @@ pub fn lookup_host(host: &str) -> Result<LookupHost> {
         let my_ip = Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]);
         let dns_ip = Ipv4Addr::new(dns[0], dns[1], dns[2], dns[3]);
         let socket = UdpSocket::bind(&SocketAddr::V4(SocketAddrV4::new(my_ip, 0)))?;
+        socket.set_read_timeout(Some(Duration::new(5, 0)))?;
+        socket.set_write_timeout(Some(Duration::new(5, 0)))?;
         socket.connect(&SocketAddr::V4(SocketAddrV4::new(dns_ip, 53)))?;
         socket.send(&packet_data)?;
 

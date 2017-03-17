@@ -51,6 +51,12 @@ impl DepGraph {
         }
     }
 
+    /// True if we are actually building the full dep-graph.
+    #[inline]
+    pub fn is_fully_enabled(&self) -> bool {
+        self.data.thread.is_fully_enabled()
+    }
+
     pub fn query(&self) -> DepGraphQuery<DefId> {
         self.data.thread.query()
     }
@@ -119,6 +125,12 @@ impl DepGraph {
     /// used during saving of the dep-graph.
     pub fn work_products(&self) -> Ref<FxHashMap<Arc<WorkProductId>, WorkProduct>> {
         self.data.work_products.borrow()
+    }
+
+    /// Access the map of work-products created during the cached run. Only
+    /// used during saving of the dep-graph.
+    pub fn previous_work_products(&self) -> Ref<FxHashMap<Arc<WorkProductId>, WorkProduct>> {
+        self.data.previous_work_products.borrow()
     }
 }
 

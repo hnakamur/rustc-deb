@@ -16,6 +16,8 @@
 register_long_diagnostics! {
 
 E0001: r##"
+## Note: this error code is no longer emitted by the compiler.
+
 This error suggests that the expression arm corresponding to the noted pattern
 will never be reached as for all possible values of the expression being
 matched, one of the preceding patterns will match.
@@ -25,10 +27,10 @@ one is too specific or the ordering is incorrect.
 
 For example, the following `match` block has too many arms:
 
-```compile_fail,E0001
+```
 match Some(0) {
     Some(bar) => {/* ... */}
-    None => {/* ... */}
+    x => {/* ... */} // This handles the `None` case
     _ => {/* ... */} // All possible cases have already been handled
 }
 ```
@@ -576,18 +578,18 @@ https://doc.rust-lang.org/reference.html#ffi-attributes
 
 
 E0306: r##"
-In an array literal `[x; N]`, `N` is the number of elements in the array. This
+In an array type `[T; N]`, `N` is the number of elements in the array. This
 must be an unsigned integer. Erroneous code example:
 
 ```compile_fail,E0306
-let x = [0i32; true]; // error: expected positive integer for repeat count,
-                      //        found boolean
+const X: [i32; true] = [0]; // error: expected `usize` for array length,
+                            //        found boolean
 ```
 
 Working example:
 
 ```
-let x = [0i32; 2];
+const X: [i32; 1] = [0];
 ```
 "##,
 }

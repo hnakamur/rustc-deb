@@ -204,7 +204,6 @@ enum SelectionCandidate<'tcx> {
     ParamCandidate(ty::PolyTraitRef<'tcx>),
     ImplCandidate(DefId),
     DefaultImplCandidate(DefId),
-    DefaultImplObjectCandidate(DefId),
 
     /// This is a trait matching with a projected type as `Self`, and
     /// we found an applicable bound in the trait definition.
@@ -237,9 +236,6 @@ impl<'a, 'tcx> ty::Lift<'tcx> for SelectionCandidate<'a> {
             }
             ImplCandidate(def_id) => ImplCandidate(def_id),
             DefaultImplCandidate(def_id) => DefaultImplCandidate(def_id),
-            DefaultImplObjectCandidate(def_id) => {
-                DefaultImplObjectCandidate(def_id)
-            }
             ProjectionCandidate => ProjectionCandidate,
             FnPointerCandidate => FnPointerCandidate,
             ObjectCandidate => ObjectCandidate,
@@ -1431,17 +1427,9 @@ impl<'cx, 'gcx, 'tcx> SelectionContext<'cx, 'gcx, 'tcx> {
             match self_ty.sty {
                 ty::TyDynamic(..) => {
                     // For object types, we don't know what the closed
-                    // over types are. For most traits, this means we
-                    // conservatively say nothing; a candidate may be
-                    // added by `assemble_candidates_from_object_ty`.
-                    // However, for the kind of magic reflect trait,
-                    // we consider it to be implemented even for
-                    // object types, because it just lets you reflect
-                    // onto the object type, not into the object's
-                    // interior.
-                    if self.tcx().has_attr(def_id, "rustc_reflect_like") {
-                        candidates.vec.push(DefaultImplObjectCandidate(def_id));
-                    }
+                    // over types are. This means we conservatively
+                    // say nothing; a candidate may be added by
+                    // `assemble_candidates_from_object_ty`.
                 }
                 ty::TyParam(..) |
                 ty::TyProjection(..) |
@@ -1671,7 +1659,6 @@ impl<'cx, 'gcx, 'tcx> SelectionContext<'cx, 'gcx, 'tcx> {
                 FnPointerCandidate |
                 BuiltinObjectCandidate |
                 BuiltinUnsizeCandidate |
-                DefaultImplObjectCandidate(..) |
                 BuiltinCandidate { .. } => {
                     // We have a where-clause so don't go around looking
                     // for impls.
@@ -1748,7 +1735,7 @@ impl<'cx, 'gcx, 'tcx> SelectionContext<'cx, 'gcx, 'tcx> {
             ty::TyInfer(ty::IntVar(_)) | ty::TyInfer(ty::FloatVar(_)) |
             ty::TyUint(_) | ty::TyInt(_) | ty::TyBool | ty::TyFloat(_) |
             ty::TyFnDef(..) | ty::TyFnPtr(_) | ty::TyRawPtr(..) |
-            ty::TyChar | ty::TyBox(_) | ty::TyRef(..) |
+            ty::TyChar | ty::TyRef(..) |
             ty::TyArray(..) | ty::TyClosure(..) | ty::TyNever |
             ty::TyError => {
                 // safe for everything
@@ -1801,7 +1788,7 @@ impl<'cx, 'gcx, 'tcx> SelectionContext<'cx, 'gcx, 'tcx> {
                 Where(ty::Binder(Vec::new()))
             }
 
-            ty::TyBox(_) | ty::TyDynamic(..) | ty::TyStr | ty::TySlice(..) |
+            ty::TyDynamic(..) | ty::TyStr | ty::TySlice(..) |
             ty::TyClosure(..) |
             ty::TyRef(_, ty::TypeAndMut { ty: _, mutbl: hir::MutMutable }) => {
                 Never
@@ -1876,10 +1863,6 @@ impl<'cx, 'gcx, 'tcx> SelectionContext<'cx, 'gcx, 'tcx> {
             ty::TyInfer(ty::FreshFloatTy(_)) => {
                 bug!("asked to assemble constituent types of unexpected type: {:?}",
                      t);
-            }
-
-            ty::TyBox(referent_ty) => {  // Box<T>
-                vec![referent_ty]
             }
 
             ty::TyRawPtr(ty::TypeAndMut { ty: element_ty, ..}) |
@@ -1995,11 +1978,6 @@ impl<'cx, 'gcx, 'tcx> SelectionContext<'cx, 'gcx, 'tcx> {
 
             DefaultImplCandidate(trait_def_id) => {
                 let data = self.confirm_default_impl_candidate(obligation, trait_def_id);
-                Ok(VtableDefaultImpl(data))
-            }
-
-            DefaultImplObjectCandidate(trait_def_id) => {
-                let data = self.confirm_default_impl_object_candidate(obligation, trait_def_id);
                 Ok(VtableDefaultImpl(data))
             }
 
@@ -2136,42 +2114,6 @@ impl<'cx, 'gcx, 'tcx> SelectionContext<'cx, 'gcx, 'tcx> {
         let self_ty = self.infcx.shallow_resolve(obligation.predicate.skip_binder().self_ty());
         let types = self.constituent_types_for_ty(self_ty);
         self.vtable_default_impl(obligation, trait_def_id, ty::Binder(types))
-    }
-
-    fn confirm_default_impl_object_candidate(&mut self,
-                                             obligation: &TraitObligation<'tcx>,
-                                             trait_def_id: DefId)
-                                             -> VtableDefaultImplData<PredicateObligation<'tcx>>
-    {
-        debug!("confirm_default_impl_object_candidate({:?}, {:?})",
-               obligation,
-               trait_def_id);
-
-        assert!(self.tcx().has_attr(trait_def_id, "rustc_reflect_like"));
-
-        // OK to skip binder, it is reintroduced below
-        let self_ty = self.infcx.shallow_resolve(obligation.predicate.skip_binder().self_ty());
-        match self_ty.sty {
-            ty::TyDynamic(ref data, ..) => {
-                // OK to skip the binder, it is reintroduced below
-                let principal = data.principal().unwrap();
-                let input_types = principal.input_types();
-                let assoc_types = data.projection_bounds()
-                                      .map(|pb| pb.skip_binder().ty);
-                let all_types: Vec<_> = input_types.chain(assoc_types)
-                                                   .collect();
-
-                // reintroduce the two binding levels we skipped, then flatten into one
-                let all_types = ty::Binder(ty::Binder(all_types));
-                let all_types = self.tcx().flatten_late_bound_regions(&all_types);
-
-                self.vtable_default_impl(obligation, trait_def_id, all_types)
-            }
-            _ => {
-                bug!("asked to confirm default object implementation for non-object type: {:?}",
-                     self_ty);
-            }
-        }
     }
 
     /// See `confirm_default_impl_candidate`

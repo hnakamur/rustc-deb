@@ -363,15 +363,12 @@ fn find_type_parameters(ty: &ast::Ty,
 
     impl<'a, 'b> visit::Visitor<'a> for Visitor<'a, 'b> {
         fn visit_ty(&mut self, ty: &'a ast::Ty) {
-            match ty.node {
-                ast::TyKind::Path(_, ref path) if !path.global => {
-                    if let Some(segment) = path.segments.first() {
-                        if self.ty_param_names.contains(&segment.identifier.name) {
-                            self.types.push(P(ty.clone()));
-                        }
+            if let ast::TyKind::Path(_, ref path) = ty.node {
+                if let Some(segment) = path.segments.first() {
+                    if self.ty_param_names.contains(&segment.identifier.name) {
+                        self.types.push(P(ty.clone()));
                     }
                 }
-                _ => {}
             }
 
             visit::walk_ty(self, ty)
@@ -510,9 +507,8 @@ impl<'a> TraitDef<'a> {
             }
         });
 
-        let Generics { mut lifetimes, ty_params, mut where_clause, span } = self.generics
+        let Generics { mut lifetimes, mut ty_params, mut where_clause, span } = self.generics
             .to_generics(cx, self.span, type_ident, generics);
-        let mut ty_params = ty_params.into_vec();
 
         // Copy the lifetimes
         lifetimes.extend(generics.lifetimes.iter().cloned());
@@ -536,7 +532,7 @@ impl<'a> TraitDef<'a> {
                 bounds.push((*declared_bound).clone());
             }
 
-            cx.typaram(self.span, ty_param.ident, vec![], P::from_vec(bounds), None)
+            cx.typaram(self.span, ty_param.ident, vec![], bounds, None)
         }));
 
         // and similarly for where clauses
@@ -561,8 +557,8 @@ impl<'a> TraitDef<'a> {
                     ast::WherePredicate::EqPredicate(ast::WhereEqPredicate {
                         id: ast::DUMMY_NODE_ID,
                         span: self.span,
-                        path: we.path.clone(),
-                        ty: we.ty.clone(),
+                        lhs_ty: we.lhs_ty.clone(),
+                        rhs_ty: we.rhs_ty.clone(),
                     })
                 }
             }
@@ -599,7 +595,7 @@ impl<'a> TraitDef<'a> {
                         span: self.span,
                         bound_lifetimes: vec![],
                         bounded_ty: ty,
-                        bounds: P::from_vec(bounds),
+                        bounds: bounds,
                     };
 
                     let predicate = ast::WherePredicate::BoundPredicate(predicate);
@@ -610,7 +606,7 @@ impl<'a> TraitDef<'a> {
 
         let trait_generics = Generics {
             lifetimes: lifetimes,
-            ty_params: P::from_vec(ty_params),
+            ty_params: ty_params,
             where_clause: where_clause,
             span: span,
         };
@@ -785,12 +781,14 @@ fn find_repr_type_name(diagnostic: &Handler, type_attrs: &[ast::Attribute]) -> &
                 attr::ReprInt(attr::SignedInt(ast::IntTy::I16)) => "i16",
                 attr::ReprInt(attr::SignedInt(ast::IntTy::I32)) => "i32",
                 attr::ReprInt(attr::SignedInt(ast::IntTy::I64)) => "i64",
+                attr::ReprInt(attr::SignedInt(ast::IntTy::I128)) => "i128",
 
                 attr::ReprInt(attr::UnsignedInt(ast::UintTy::Us)) => "usize",
                 attr::ReprInt(attr::UnsignedInt(ast::UintTy::U8)) => "u8",
                 attr::ReprInt(attr::UnsignedInt(ast::UintTy::U16)) => "u16",
                 attr::ReprInt(attr::UnsignedInt(ast::UintTy::U32)) => "u32",
                 attr::ReprInt(attr::UnsignedInt(ast::UintTy::U64)) => "u64",
+                attr::ReprInt(attr::UnsignedInt(ast::UintTy::U128)) => "u128",
             }
         }
     }
@@ -1551,6 +1549,7 @@ impl<'a> TraitDef<'a> {
                                 ident: ident.unwrap(),
                                 pat: pat,
                                 is_shorthand: false,
+                                attrs: ast::ThinVec::new(),
                             },
                         }
                     })

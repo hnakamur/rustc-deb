@@ -16,7 +16,7 @@ use ty::{TyBool, TyChar, TyAdt};
 use ty::{TyError, TyStr, TyArray, TySlice, TyFloat, TyFnDef, TyFnPtr};
 use ty::{TyParam, TyRawPtr, TyRef, TyNever, TyTuple};
 use ty::{TyClosure, TyProjection, TyAnon};
-use ty::{TyBox, TyDynamic, TyInt, TyUint, TyInfer};
+use ty::{TyDynamic, TyInt, TyUint, TyInfer};
 use ty::{self, Ty, TyCtxt, TypeFoldable};
 
 use std::cell::Cell;
@@ -285,7 +285,7 @@ fn in_binder<'a, 'gcx, 'tcx, T, U>(f: &mut fmt::Formatter,
             ty::BrEnv => {
                 let name = Symbol::intern("'r");
                 let _ = write!(f, "{}", name);
-                ty::BrNamed(tcx.map.local_def_id(CRATE_NODE_ID),
+                ty::BrNamed(tcx.hir.local_def_id(CRATE_NODE_ID),
                             name,
                             ty::Issue32330::WontChange)
             }
@@ -336,13 +336,12 @@ impl<'tcx> fmt::Debug for ty::TypeParameterDef<'tcx> {
     }
 }
 
-impl<'tcx> fmt::Debug for ty::RegionParameterDef<'tcx> {
+impl fmt::Debug for ty::RegionParameterDef {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "RegionParameterDef({}, {:?}, {}, {:?})",
+        write!(f, "RegionParameterDef({}, {:?}, {})",
                self.name,
                self.def_id,
-               self.index,
-               self.bounds)
+               self.index)
     }
 }
 
@@ -520,16 +519,6 @@ impl<'tcx> fmt::Debug for ty::ParameterEnvironment<'tcx> {
             self.free_substs,
             self.implicit_region_bound,
             self.caller_bounds)
-    }
-}
-
-impl<'tcx> fmt::Debug for ty::ObjectLifetimeDefault<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            ty::ObjectLifetimeDefault::Ambiguous => write!(f, "Ambiguous"),
-            ty::ObjectLifetimeDefault::BaseDefault => write!(f, "BaseDefault"),
-            ty::ObjectLifetimeDefault::Specific(ref r) => write!(f, "{:?}", r),
-        }
     }
 }
 
@@ -719,7 +708,6 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
             TyInt(t) => write!(f, "{}", t.ty_to_string()),
             TyUint(t) => write!(f, "{}", t.ty_to_string()),
             TyFloat(t) => write!(f, "{}", t.ty_to_string()),
-            TyBox(typ) => write!(f, "Box<{}>",  typ),
             TyRawPtr(ref tm) => {
                 write!(f, "*{} {}", match tm.mutbl {
                     hir::MutMutable => "mut",
@@ -833,13 +821,13 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
                 let upvar_tys = substs.upvar_tys(did, tcx);
                 write!(f, "[closure")?;
 
-                if let Some(node_id) = tcx.map.as_local_node_id(did) {
-                    write!(f, "@{:?}", tcx.map.span(node_id))?;
+                if let Some(node_id) = tcx.hir.as_local_node_id(did) {
+                    write!(f, "@{:?}", tcx.hir.span(node_id))?;
                     let mut sep = " ";
                     tcx.with_freevars(node_id, |freevars| {
                         for (freevar, upvar_ty) in freevars.iter().zip(upvar_tys) {
                             let def_id = freevar.def.def_id();
-                            let node_id = tcx.map.as_local_node_id(def_id).unwrap();
+                            let node_id = tcx.hir.as_local_node_id(def_id).unwrap();
                             write!(f,
                                         "{}{}:{}",
                                         sep,

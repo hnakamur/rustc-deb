@@ -9,6 +9,7 @@
 // except according to those terms.
 
 // min-lldb-version: 310
+// ignore-gdb-version: 7.11.90 - 7.12
 
 // compile-flags:-g
 
@@ -26,9 +27,9 @@
 
 // lldb-command:run
 // lldb-command:print u
-// lldb-check:[...]$0 = { a = ('\x02', '\x02') b = 514 }
+// lldb-check:[...]$0 = U { a: ('\x02', '\x02'), b: 514 }
 // lldb-command:print union_smoke::SU
-// lldb-check:[...]$1 = 257
+// lldb-check:[...]$1 = U { a: ('\x01', '\x01'), b: 257 }
 
 #![allow(unused)]
 #![feature(omit_gdb_pretty_printer_section)]

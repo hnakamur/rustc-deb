@@ -13,29 +13,31 @@ use encoder;
 use locator;
 use schema;
 
-use rustc::middle::cstore::{InlinedItem, CrateStore, CrateSource, LibSource, DepKind, ExternCrate};
+use rustc::middle::cstore::{CrateStore, CrateSource, LibSource, DepKind, ExternCrate};
 use rustc::middle::cstore::{NativeLibrary, LinkMeta, LinkagePreference, LoadedMacro};
 use rustc::hir::def::{self, Def};
 use rustc::middle::lang_items;
+use rustc::middle::resolve_lifetime::ObjectLifetimeDefault;
 use rustc::session::Session;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::hir::def_id::{CrateNum, DefId, DefIndex, CRATE_DEF_INDEX, LOCAL_CRATE};
 
 use rustc::dep_graph::DepNode;
-use rustc::hir::map as hir_map;
-use rustc::hir::map::DefKey;
+use rustc::hir::map::{DefKey, DefPath, DisambiguatedDefPathData};
 use rustc::mir::Mir;
 use rustc::util::nodemap::{NodeSet, DefIdMap};
 use rustc_back::PanicStrategy;
 
 use syntax::ast;
 use syntax::attr;
-use syntax::parse::new_parser_from_source_str;
+use syntax::parse::filemap_to_tts;
 use syntax::symbol::Symbol;
 use syntax_pos::{mk_sp, Span};
 use rustc::hir::svh::Svh;
 use rustc_back::target::Target;
 use rustc::hir;
+
+use std::collections::BTreeMap;
 
 impl<'tcx> CrateStore<'tcx> for cstore::CStore {
     fn describe_def(&self, def: DefId) -> Option<Def> {
@@ -109,6 +111,17 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         self.get_crate_data(def.krate).get_generics(def.index, tcx)
     }
 
+    fn item_generics_own_param_counts(&self, def: DefId) -> (usize, usize) {
+        self.dep_graph.read(DepNode::MetaData(def));
+        self.get_crate_data(def.krate).generics_own_param_counts(def.index)
+    }
+
+    fn item_generics_object_lifetime_defaults(&self, def: DefId)
+                                              -> Vec<ObjectLifetimeDefault> {
+        self.dep_graph.read(DepNode::MetaData(def));
+        self.get_crate_data(def.krate).generics_object_lifetime_defaults(def.index)
+    }
+
     fn item_attrs(&self, def_id: DefId) -> Vec<ast::Attribute>
     {
         self.dep_graph.read(DepNode::MetaData(def_id));
@@ -129,7 +142,11 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
 
     fn fn_arg_names(&self, did: DefId) -> Vec<ast::Name>
     {
-        self.dep_graph.read(DepNode::MetaData(did));
+        // FIXME(#38501) We've skipped a `read` on the `HirBody` of
+        // a `fn` when encoding, so the dep-tracking wouldn't work.
+        // This is only used by rustdoc anyway, which shouldn't have
+        // incremental recompilation ever enabled.
+        assert!(!self.dep_graph.is_fully_enabled());
         self.get_crate_data(did.krate).get_fn_arg_names(did.index)
     }
 
@@ -189,7 +206,7 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         self.get_crate_data(def_id.krate).get_trait_of_item(def_id.index)
     }
 
-    fn associated_item<'a>(&self, def: DefId) -> Option<ty::AssociatedItem>
+    fn associated_item(&self, def: DefId) -> Option<ty::AssociatedItem>
     {
         self.dep_graph.read(DepNode::MetaData(def));
         self.get_crate_data(def.krate).get_associated_item(def.index)
@@ -219,6 +236,10 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
     fn is_statically_included_foreign_item(&self, def_id: DefId) -> bool
     {
         self.do_is_statically_included_foreign_item(def_id)
+    }
+
+    fn is_exported_symbol(&self, def_id: DefId) -> bool {
+        self.get_crate_data(def_id.krate).exported_symbols.contains(&def_id.index)
     }
 
     fn is_dllimport_foreign_item(&self, def_id: DefId) -> bool {
@@ -335,18 +356,20 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         self.get_crate_data(cnum).is_no_builtins()
     }
 
-    fn def_index_for_def_key(&self,
-                             cnum: CrateNum,
-                             def: DefKey)
-                             -> Option<DefIndex> {
+    fn retrace_path(&self,
+                    cnum: CrateNum,
+                    path: &[DisambiguatedDefPathData])
+                    -> Option<DefId> {
         let cdata = self.get_crate_data(cnum);
-        cdata.key_map.get(&def).cloned()
+        cdata.def_path_table
+             .retrace_path(&path)
+             .map(|index| DefId { krate: cnum, index: index })
     }
 
     /// Returns the `DefKey` for a given `DefId`. This indicates the
     /// parent `DefId` as well as some idea of what kind of data the
     /// `DefId` refers to.
-    fn def_key(&self, def: DefId) -> hir_map::DefKey {
+    fn def_key(&self, def: DefId) -> DefKey {
         // Note: loading the def-key (or def-path) for a def-id is not
         // a *read* of its metadata. This is because the def-id is
         // really just an interned shorthand for a def-path, which is the
@@ -356,7 +379,7 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         self.get_crate_data(def.krate).def_key(def.index)
     }
 
-    fn relative_def_path(&self, def: DefId) -> Option<hir_map::DefPath> {
+    fn def_path(&self, def: DefId) -> DefPath {
         // See `Note` above in `def_key()` for why this read is
         // commented out:
         //
@@ -388,19 +411,9 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         let (name, def) = data.get_macro(id.index);
         let source_name = format!("<{} macros>", name);
 
-        // NB: Don't use parse_tts_from_source_str because it parses with quote_depth > 0.
-        let mut parser = new_parser_from_source_str(&sess.parse_sess, source_name, def.body);
-
-        let lo = parser.span.lo;
-        let body = match parser.parse_all_token_trees() {
-            Ok(body) => body,
-            Err(mut err) => {
-                err.emit();
-                sess.abort_if_errors();
-                unreachable!();
-            }
-        };
-        let local_span = mk_sp(lo, parser.prev_span.hi);
+        let filemap = sess.parse_sess.codemap().new_filemap(source_name, None, def.body);
+        let local_span = mk_sp(filemap.start_pos, filemap.end_pos);
+        let body = filemap_to_tts(&sess.parse_sess, filemap);
 
         // Mark the attrs as used
         let attrs = data.get_item_attrs(id.index);
@@ -417,101 +430,34 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
             ident: ast::Ident::with_empty_ctxt(name),
             id: ast::DUMMY_NODE_ID,
             span: local_span,
-            imported_from: None, // FIXME
-            allow_internal_unstable: attr::contains_name(&attrs, "allow_internal_unstable"),
             attrs: attrs,
             body: body,
         })
     }
 
-    fn maybe_get_item_ast<'a>(&'tcx self,
-                              tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                              def_id: DefId)
-                              -> Option<(&'tcx InlinedItem, ast::NodeId)>
+    fn maybe_get_item_body<'a>(&'tcx self,
+                               tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                               def_id: DefId)
+                               -> Option<&'tcx hir::Body>
     {
+        if let Some(cached) = tcx.hir.get_inlined_body(def_id) {
+            return Some(cached);
+        }
+
         self.dep_graph.read(DepNode::MetaData(def_id));
+        debug!("maybe_get_item_body({}): inlining item", tcx.item_path_str(def_id));
 
-        match self.inlined_item_cache.borrow().get(&def_id) {
-            Some(&None) => {
-                return None; // Not inlinable
-            }
-            Some(&Some(ref cached_inlined_item)) => {
-                // Already inline
-                debug!("maybe_get_item_ast({}): already inline as node id {}",
-                          tcx.item_path_str(def_id), cached_inlined_item.item_id);
-                return Some((tcx.map.expect_inlined_item(cached_inlined_item.inlined_root),
-                             cached_inlined_item.item_id));
-            }
-            None => {
-                // Not seen yet
-            }
-        }
-
-        debug!("maybe_get_item_ast({}): inlining item", tcx.item_path_str(def_id));
-
-        let inlined = self.get_crate_data(def_id.krate).maybe_get_item_ast(tcx, def_id.index);
-
-        let cache_inlined_item = |original_def_id, inlined_item_id, inlined_root_node_id| {
-            let cache_entry = cstore::CachedInlinedItem {
-                inlined_root: inlined_root_node_id,
-                item_id: inlined_item_id,
-            };
-            self.inlined_item_cache
-                .borrow_mut()
-                .insert(original_def_id, Some(cache_entry));
-            self.defid_for_inlined_node
-                .borrow_mut()
-                .insert(inlined_item_id, original_def_id);
-        };
-
-        let find_inlined_item_root = |inlined_item_id| {
-            let mut node = inlined_item_id;
-
-            // If we can't find the inline root after a thousand hops, we can
-            // be pretty sure there's something wrong with the HIR map.
-            for _ in 0 .. 1000 {
-                let parent_node = tcx.map.get_parent_node(node);
-                if parent_node == node {
-                    return node;
-                }
-                node = parent_node;
-            }
-            bug!("cycle in HIR map parent chain")
-        };
-
-        match inlined {
-            None => {
-                self.inlined_item_cache
-                    .borrow_mut()
-                    .insert(def_id, None);
-            }
-            Some(&InlinedItem { ref body, .. }) => {
-                let inlined_root_node_id = find_inlined_item_root(body.id);
-                cache_inlined_item(def_id, inlined_root_node_id, inlined_root_node_id);
-            }
-        }
-
-        // We can be sure to hit the cache now
-        return self.maybe_get_item_ast(tcx, def_id);
+        self.get_crate_data(def_id.krate).maybe_get_item_body(tcx, def_id.index)
     }
 
-    fn local_node_for_inlined_defid(&'tcx self, def_id: DefId) -> Option<ast::NodeId> {
-        assert!(!def_id.is_local());
-        match self.inlined_item_cache.borrow().get(&def_id) {
-            Some(&Some(ref cached_inlined_item)) => {
-                Some(cached_inlined_item.item_id)
-            }
-            Some(&None) => {
-                None
-            }
-            _ => {
-                bug!("Trying to lookup inlined NodeId for unexpected item");
-            }
-        }
+    fn item_body_nested_bodies(&self, def: DefId) -> BTreeMap<hir::BodyId, hir::Body> {
+        self.dep_graph.read(DepNode::MetaData(def));
+        self.get_crate_data(def.krate).item_body_nested_bodies(def.index)
     }
 
-    fn defid_for_inlined_node(&'tcx self, node_id: ast::NodeId) -> Option<DefId> {
-        self.defid_for_inlined_node.borrow().get(&node_id).map(|x| *x)
+    fn const_is_rvalue_promotable_to_static(&self, def: DefId) -> bool {
+        self.dep_graph.read(DepNode::MetaData(def));
+        self.get_crate_data(def.krate).const_is_rvalue_promotable_to_static(def.index)
     }
 
     fn get_item_mir<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId) -> Mir<'tcx> {
@@ -524,11 +470,6 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
     fn is_item_mir_available(&self, def: DefId) -> bool {
         self.dep_graph.read(DepNode::MetaData(def));
         self.get_crate_data(def.krate).is_item_mir_available(def.index)
-    }
-
-    fn can_have_local_instance<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId) -> bool {
-        self.dep_graph.read(DepNode::MetaData(def));
-        def.is_local() || self.get_crate_data(def.krate).can_have_local_instance(tcx, def.index)
     }
 
     fn crates(&self) -> Vec<CrateNum>

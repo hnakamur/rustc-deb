@@ -28,7 +28,7 @@ use rustc::hir::def_id::DefId;
 use rustc::hir::intravisit as visit;
 use rustc::ty::TyCtxt;
 use rustc_data_structures::fnv;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 
 use super::def_path_hash::DefPathHashes;
 use super::caching_codemap_view::CachingCodemapView;
@@ -180,16 +180,16 @@ enum SawAbiComponent<'a> {
     SawLifetimeDef(usize),
 
     SawMod,
-    SawForeignItem,
+    SawForeignItem(SawForeignItemComponent),
     SawItem(SawItemComponent),
     SawTy(SawTyComponent),
+    SawFnDecl(bool),
     SawGenerics,
     SawTraitItem(SawTraitOrImplItemComponent),
     SawImplItem(SawTraitOrImplItemComponent),
     SawStructField,
-    SawVariant,
+    SawVariant(bool),
     SawQPath,
-    SawPath(bool),
     SawPathSegment,
     SawPathParameters,
     SawBlock,
@@ -265,7 +265,7 @@ enum SawExprComponent<'a> {
     SawExprPath,
     SawExprAddrOf(hir::Mutability),
     SawExprRet,
-    SawExprInlineAsm(&'a hir::InlineAsm),
+    SawExprInlineAsm(StableInlineAsm<'a>),
     SawExprStruct,
     SawExprRepeat,
 }
@@ -341,7 +341,7 @@ fn saw_expr<'a>(node: &'a Expr_,
         ExprBreak(label, _)      => (SawExprBreak(label.map(|l| l.name.as_str())), false),
         ExprAgain(label)         => (SawExprAgain(label.map(|l| l.name.as_str())), false),
         ExprRet(..)              => (SawExprRet, false),
-        ExprInlineAsm(ref a,..)  => (SawExprInlineAsm(a), false),
+        ExprInlineAsm(ref a,..)  => (SawExprInlineAsm(StableInlineAsm(a)), false),
         ExprStruct(..)           => (SawExprStruct, false),
         ExprRepeat(..)           => (SawExprRepeat, false),
     }
@@ -364,7 +364,7 @@ enum SawItemComponent {
     SawItemConst,
     SawItemFn(Unsafety, Constness, Abi),
     SawItemMod,
-    SawItemForeignMod,
+    SawItemForeignMod(Abi),
     SawItemTy,
     SawItemEnum,
     SawItemStruct,
@@ -382,7 +382,7 @@ fn saw_item(node: &Item_) -> SawItemComponent {
         ItemConst(..) =>SawItemConst,
         ItemFn(_, unsafety, constness, abi, _, _) => SawItemFn(unsafety, constness, abi),
         ItemMod(..) => SawItemMod,
-        ItemForeignMod(..) => SawItemForeignMod,
+        ItemForeignMod(ref fm) => SawItemForeignMod(fm.abi),
         ItemTy(..) => SawItemTy,
         ItemEnum(..) => SawItemEnum,
         ItemStruct(..) => SawItemStruct,
@@ -391,6 +391,12 @@ fn saw_item(node: &Item_) -> SawItemComponent {
         ItemDefaultImpl(unsafety, _) => SawItemDefaultImpl(unsafety),
         ItemImpl(unsafety, implpolarity, ..) => SawItemImpl(unsafety, implpolarity)
     }
+}
+
+#[derive(Hash)]
+enum SawForeignItemComponent {
+    Static { mutable: bool },
+    Fn,
 }
 
 #[derive(Hash)]
@@ -435,7 +441,6 @@ enum SawTyComponent {
     SawTyTup,
     SawTyPath,
     SawTyObjectSum,
-    SawTyPolyTraitRef,
     SawTyImplTrait,
     SawTyTypeof,
     SawTyInfer
@@ -451,8 +456,7 @@ fn saw_ty(node: &Ty_) -> SawTyComponent {
       TyNever => SawTyNever,
       TyTup(..) => SawTyTup,
       TyPath(_) => SawTyPath,
-      TyObjectSum(..) => SawTyObjectSum,
-      TyPolyTraitRef(..) => SawTyPolyTraitRef,
+      TyTraitObject(..) => SawTyObjectSum,
       TyImplTrait(..) => SawTyImplTrait,
       TyTypeof(..) => SawTyTypeof,
       TyInfer => SawTyInfer
@@ -467,12 +471,14 @@ enum SawTraitOrImplItemComponent {
     SawTraitOrImplItemType
 }
 
-fn saw_trait_item(ti: &TraitItem_) -> SawTraitOrImplItemComponent {
+fn saw_trait_item(ti: &TraitItemKind) -> SawTraitOrImplItemComponent {
     match *ti {
-        ConstTraitItem(..) => SawTraitOrImplItemConst,
-        MethodTraitItem(ref sig, ref body) =>
-            SawTraitOrImplItemMethod(sig.unsafety, sig.constness, sig.abi, body.is_some()),
-        TypeTraitItem(..) => SawTraitOrImplItemType
+        TraitItemKind::Const(..) => SawTraitOrImplItemConst,
+        TraitItemKind::Method(ref sig, TraitMethod::Required(_)) =>
+            SawTraitOrImplItemMethod(sig.unsafety, sig.constness, sig.abi, false),
+        TraitItemKind::Method(ref sig, TraitMethod::Provided(_)) =>
+            SawTraitOrImplItemMethod(sig.unsafety, sig.constness, sig.abi, true),
+        TraitItemKind::Type(..) => SawTraitOrImplItemType
     }
 }
 
@@ -490,6 +496,46 @@ enum SawSpanExpnKind {
     NoExpansion,
     CommandLine,
     SomeExpansion,
+}
+
+/// A wrapper that provides a stable Hash implementation.
+struct StableInlineAsm<'a>(&'a InlineAsm);
+
+impl<'a> Hash for StableInlineAsm<'a> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let InlineAsm {
+            asm,
+            asm_str_style,
+            ref outputs,
+            ref inputs,
+            ref clobbers,
+            volatile,
+            alignstack,
+            dialect,
+            expn_id: _, // This is used for error reporting
+        } = *self.0;
+
+        asm.as_str().hash(state);
+        asm_str_style.hash(state);
+        outputs.len().hash(state);
+        for output in outputs {
+            let InlineAsmOutput { constraint, is_rw, is_indirect } = *output;
+            constraint.as_str().hash(state);
+            is_rw.hash(state);
+            is_indirect.hash(state);
+        }
+        inputs.len().hash(state);
+        for input in inputs {
+            input.as_str().hash(state);
+        }
+        clobbers.len().hash(state);
+        for clobber in clobbers {
+            clobber.as_str().hash(state);
+        }
+        volatile.hash(state);
+        alignstack.hash(state);
+        dialect.hash(state);
+    }
 }
 
 macro_rules! hash_attrs {
@@ -515,7 +561,7 @@ macro_rules! hash_span {
 impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'hash, 'tcx> {
     fn nested_visit_map<'this>(&'this mut self) -> visit::NestedVisitorMap<'this, 'tcx> {
         if self.hash_bodies {
-            visit::NestedVisitorMap::OnlyBodies(&self.tcx.map)
+            visit::NestedVisitorMap::OnlyBodies(&self.tcx.hir)
         } else {
             visit::NestedVisitorMap::None
         }
@@ -538,7 +584,7 @@ impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'has
                      g: &'tcx Generics,
                      item_id: NodeId) {
         debug!("visit_variant: st={:?}", self.st);
-        SawVariant.hash(self.st);
+        SawVariant(v.node.disr_expr.is_some()).hash(self.st);
         hash_attrs!(self, &v.node.attrs);
         visit::walk_variant(self, v, g, item_id)
     }
@@ -570,7 +616,12 @@ impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'has
         // implicitly hashing the discriminant of SawExprComponent.
         hash_span!(self, ex.span, force_span);
         hash_attrs!(self, &ex.attrs);
-        visit::walk_expr(self, ex)
+
+        // Always hash nested constant bodies (e.g. n in `[x; n]`).
+        let hash_bodies = self.hash_bodies;
+        self.hash_bodies = true;
+        visit::walk_expr(self, ex);
+        self.hash_bodies = hash_bodies;
     }
 
     fn visit_stmt(&mut self, s: &'tcx Stmt) {
@@ -602,7 +653,17 @@ impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'has
     fn visit_foreign_item(&mut self, i: &'tcx ForeignItem) {
         debug!("visit_foreign_item: st={:?}", self.st);
 
-        SawForeignItem.hash(self.st);
+        match i.node {
+            ForeignItemFn(..) => {
+                SawForeignItem(SawForeignItemComponent::Fn)
+            }
+            ForeignItemStatic(_, mutable) => {
+                SawForeignItem(SawForeignItemComponent::Static {
+                    mutable: mutable
+                })
+            }
+        }.hash(self.st);
+
         hash_span!(self, i.span);
         hash_attrs!(self, &i.attrs);
         visit::walk_foreign_item(self, i)
@@ -630,13 +691,24 @@ impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'has
         debug!("visit_ty: st={:?}", self.st);
         SawTy(saw_ty(&t.node)).hash(self.st);
         hash_span!(self, t.span);
-        visit::walk_ty(self, t)
+
+        // Always hash nested constant bodies (e.g. N in `[T; N]`).
+        let hash_bodies = self.hash_bodies;
+        self.hash_bodies = true;
+        visit::walk_ty(self, t);
+        self.hash_bodies = hash_bodies;
     }
 
     fn visit_generics(&mut self, g: &'tcx Generics) {
         debug!("visit_generics: st={:?}", self.st);
         SawGenerics.hash(self.st);
         visit::walk_generics(self, g)
+    }
+
+    fn visit_fn_decl(&mut self, fd: &'tcx FnDecl) {
+        debug!("visit_fn_decl: st={:?}", self.st);
+        SawFnDecl(fd.variadic).hash(self.st);
+        visit::walk_fn_decl(self, fd)
     }
 
     fn visit_trait_item(&mut self, ti: &'tcx TraitItem) {
@@ -678,7 +750,6 @@ impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'has
 
     fn visit_path(&mut self, path: &'tcx Path, _: ast::NodeId) {
         debug!("visit_path: st={:?}", self.st);
-        SawPath(path.global).hash(self.st);
         hash_span!(self, path.span);
         visit::walk_path(self, path)
     }
@@ -757,7 +828,7 @@ impl<'a, 'hash, 'tcx> visit::Visitor<'tcx> for StrictVersionHashVisitor<'a, 'has
         visit::walk_ty_param_bound(self, bounds)
     }
 
-    fn visit_poly_trait_ref(&mut self, t: &'tcx PolyTraitRef, m: &'tcx TraitBoundModifier) {
+    fn visit_poly_trait_ref(&mut self, t: &'tcx PolyTraitRef, m: TraitBoundModifier) {
         debug!("visit_poly_trait_ref: st={:?}", self.st);
         SawPolyTraitRef.hash(self.st);
         m.hash(self.st);
@@ -963,18 +1034,14 @@ impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
                 hash_span!(self, span);
                 let tokenstream::Delimited {
                     ref delim,
-                    open_span,
                     ref tts,
-                    close_span,
                 } = **delimited;
 
                 delim.hash(self.st);
-                hash_span!(self, open_span);
                 tts.len().hash(self.st);
                 for sub_tt in tts {
                     self.hash_token_tree(sub_tt);
                 }
-                hash_span!(self, close_span);
             }
             tokenstream::TokenTree::Sequence(span, ref sequence_repetition) => {
                 hash_span!(self, span);
@@ -1096,8 +1163,9 @@ impl<'a, 'hash, 'tcx> StrictVersionHashVisitor<'a, 'hash, 'tcx> {
             // These fields are handled separately:
             exported_macros: _,
             items: _,
+            trait_items: _,
             impl_items: _,
-            exprs: _,
+            bodies: _,
         } = *krate;
 
         visit::Visitor::visit_mod(self, module, span, ast::CRATE_NODE_ID);

@@ -11,7 +11,6 @@ crate-type = ["dylib"]
 [dependencies]
 arena = { path = "../libarena" }
 log = { path = "../liblog" }
-serialize = { path = "../libserialize" }
 rustc = { path = "../librustc" }
 rustc_back = { path = "../librustc_back" }
 rustc_const_math = { path = "../librustc_const_math" }
@@ -20,3 +19,4 @@ rustc_errors = { path = "../librustc_errors" }
 syntax = { path = "../libsyntax" }
 graphviz = { path = "../libgraphviz" }
 syntax_pos = { path = "../libsyntax_pos" }
+rustc_i128 = { path = "../librustc_i128" }

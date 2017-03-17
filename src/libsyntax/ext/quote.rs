@@ -19,6 +19,7 @@ use parse::token;
 use ptr::P;
 use tokenstream::{self, TokenTree};
 
+
 /// Quasiquoting works via token trees.
 ///
 /// This is registered as a set of expression syntax extension called quote!
@@ -40,6 +41,7 @@ pub mod rt {
     pub use parse::new_parser_from_tts;
     pub use syntax_pos::{BytePos, Span, DUMMY_SP};
     pub use codemap::{dummy_spanned};
+    use rustc_i128::{u128};
 
     pub trait ToTokens {
         fn to_tokens(&self, _cx: &ExtCtxt) -> Vec<TokenTree>;
@@ -229,9 +231,7 @@ pub mod rt {
             }
             r.push(TokenTree::Delimited(self.span, Rc::new(tokenstream::Delimited {
                 delim: token::Bracket,
-                open_span: self.span,
                 tts: self.value.to_tokens(cx),
-                close_span: self.span,
             })));
             r
         }
@@ -248,9 +248,7 @@ pub mod rt {
         fn to_tokens(&self, _cx: &ExtCtxt) -> Vec<TokenTree> {
             vec![TokenTree::Delimited(DUMMY_SP, Rc::new(tokenstream::Delimited {
                 delim: token::Paren,
-                open_span: DUMMY_SP,
                 tts: vec![],
-                close_span: DUMMY_SP,
             }))]
         }
     }
@@ -288,7 +286,7 @@ pub mod rt {
                     } else {
                         *self
                     };
-                    let lit = ast::LitKind::Int(val as u64, ast::LitIntType::Signed($tag));
+                    let lit = ast::LitKind::Int(val as u128, ast::LitIntType::Signed($tag));
                     let lit = P(ast::Expr {
                         id: ast::DUMMY_NODE_ID,
                         node: ast::ExprKind::Lit(P(dummy_spanned(lit))),
@@ -310,7 +308,7 @@ pub mod rt {
         (unsigned, $t:ty, $tag:expr) => (
             impl ToTokens for $t {
                 fn to_tokens(&self, cx: &ExtCtxt) -> Vec<TokenTree> {
-                    let lit = ast::LitKind::Int(*self as u64, ast::LitIntType::Unsigned($tag));
+                    let lit = ast::LitKind::Int(*self as u128, ast::LitIntType::Unsigned($tag));
                     dummy_spanned(lit).to_tokens(cx)
                 }
             }
@@ -386,7 +384,7 @@ pub fn parse_arm_panic(parser: &mut Parser) -> Arm {
 }
 
 pub fn parse_ty_panic(parser: &mut Parser) -> P<Ty> {
-    panictry!(parser.parse_ty())
+    panictry!(parser.parse_ty_no_plus())
 }
 
 pub fn parse_stmt_panic(parser: &mut Parser) -> Option<Stmt> {
@@ -755,11 +753,11 @@ fn statements_mk_tt(cx: &ExtCtxt, tt: &TokenTree, matcher: bool) -> Vec<ast::Stm
                                     vec![e_tok]);
             vec![cx.stmt_expr(e_push)]
         },
-        TokenTree::Delimited(_, ref delimed) => {
-            statements_mk_tt(cx, &delimed.open_tt(), matcher).into_iter()
+        TokenTree::Delimited(span, ref delimed) => {
+            statements_mk_tt(cx, &delimed.open_tt(span), matcher).into_iter()
                 .chain(delimed.tts.iter()
                                   .flat_map(|tt| statements_mk_tt(cx, tt, matcher)))
-                .chain(statements_mk_tt(cx, &delimed.close_tt(), matcher))
+                .chain(statements_mk_tt(cx, &delimed.close_tt(span), matcher))
                 .collect()
         },
         TokenTree::Sequence(sp, ref seq) => {

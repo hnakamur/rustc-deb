@@ -17,6 +17,8 @@
             reason = "matches collection reform specification, \
                       waiting for dust to settle",
             issue = "37966")]
+#![rustc_deprecated(since = "1.16.0", reason = "long since replaced")]
+#![allow(deprecated)]
 
 use core::marker;
 use core::fmt;
@@ -276,7 +278,8 @@ impl<E: CLike> FromIterator<E> for EnumSet<E> {
     }
 }
 
-impl<'a, E> IntoIterator for &'a EnumSet<E> where E: CLike
+impl<'a, E> IntoIterator for &'a EnumSet<E>
+    where E: CLike
 {
     type Item = E;
     type IntoIter = Iter<E>;

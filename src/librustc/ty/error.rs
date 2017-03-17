@@ -181,7 +181,6 @@ impl<'a, 'gcx, 'lcx, 'tcx> ty::TyS<'tcx> {
             ty::TyTuple(ref tys) if tys.is_empty() => self.to_string(),
 
             ty::TyAdt(def, _) => format!("{} `{}`", def.descr(), tcx.item_path_str(def.did)),
-            ty::TyBox(_) => "box".to_string(),
             ty::TyArray(_, n) => format!("array of {} elements", n),
             ty::TySlice(_) => "slice".to_string(),
             ty::TyRawPtr(_) => "*-ptr".to_string(),
@@ -283,7 +282,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                                           expected.ty,
                                           found.ty));
 
-                match self.map.span_if_local(expected.def_id) {
+                match self.hir.span_if_local(expected.def_id) {
                     Some(span) => {
                         db.span_note(span, "a default was defined here...");
                     }
@@ -297,7 +296,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                     expected.origin_span,
                     "...that was applied to an unconstrained type variable here");
 
-                match self.map.span_if_local(found.def_id) {
+                match self.hir.span_if_local(found.def_id) {
                     Some(span) => {
                         db.span_note(span, "a second default was defined here...");
                     }

@@ -25,7 +25,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                               expr: &hir::Expr,
                               _capture: hir::CaptureClause,
                               decl: &'gcx hir::FnDecl,
-                              body_id: hir::ExprId,
+                              body_id: hir::BodyId,
                               expected: Expectation<'tcx>)
                               -> Ty<'tcx> {
         debug!("check_expr_closure(expr={:?},expected={:?})",
@@ -39,7 +39,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             Some(ty) => self.deduce_expectations_from_expected_type(ty),
             None => (None, None),
         };
-        let body = self.tcx.map.expr(body_id);
+        let body = self.tcx.hir.body(body_id);
         self.check_closure(expr, expected_kind, decl, body, expected_sig)
     }
 
@@ -47,14 +47,14 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                      expr: &hir::Expr,
                      opt_kind: Option<ty::ClosureKind>,
                      decl: &'gcx hir::FnDecl,
-                     body: &'gcx hir::Expr,
+                     body: &'gcx hir::Body,
                      expected_sig: Option<ty::FnSig<'tcx>>)
                      -> Ty<'tcx> {
         debug!("check_closure opt_kind={:?} expected_sig={:?}",
                opt_kind,
                expected_sig);
 
-        let expr_def_id = self.tcx.map.local_def_id(expr.id);
+        let expr_def_id = self.tcx.hir.local_def_id(expr.id);
         let mut fn_ty = AstConv::ty_of_closure(self,
                                                hir::Unsafety::Normal,
                                                decl,
@@ -73,10 +73,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
         debug!("check_closure: expr.id={:?} closure_type={:?}", expr.id, closure_type);
 
-        let fn_sig = self.tcx
-            .liberate_late_bound_regions(self.tcx.region_maps.call_site_extent(expr.id, body.id),
-                                         &fn_ty.sig);
-        let fn_sig = (**self).normalize_associated_types_in(body.span, body.id, &fn_sig);
+        let extent = self.tcx.region_maps.call_site_extent(expr.id, body.value.id);
+        let fn_sig = self.tcx.liberate_late_bound_regions(extent, &fn_ty.sig);
+        let fn_sig = self.inh.normalize_associated_types_in(body.value.span,
+                                                            body.value.id, &fn_sig);
 
         check_fn(self,
                  hir::Unsafety::Normal,
@@ -84,7 +84,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                  &fn_sig,
                  decl,
                  expr.id,
-                 &body);
+                 body);
 
         // Tuple up the arguments and insert the resulting function type into
         // the `closures` table.
@@ -99,10 +99,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                fn_ty.sig,
                opt_kind);
 
-        self.tables.borrow_mut().closure_tys.insert(expr_def_id, fn_ty);
+        self.tables.borrow_mut().closure_tys.insert(expr.id, fn_ty);
         match opt_kind {
             Some(kind) => {
-                self.tables.borrow_mut().closure_kinds.insert(expr_def_id, kind);
+                self.tables.borrow_mut().closure_kinds.insert(expr.id, kind);
             }
             None => {}
         }

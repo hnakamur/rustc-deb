@@ -14,7 +14,7 @@ use super::utils::{DIB, span_start};
 
 use llvm;
 use llvm::debuginfo::{DIScope, DISubprogram};
-use common::{CrateContext, FunctionContext};
+use common::CrateContext;
 use rustc::mir::{Mir, VisibilityScope};
 
 use libc::c_uint;
@@ -44,8 +44,8 @@ impl MirDebugScope {
 
 /// Produce DIScope DIEs for each MIR Scope which has variables defined in it.
 /// If debuginfo is disabled, the returned vector is empty.
-pub fn create_mir_scopes(fcx: &FunctionContext) -> IndexVec<VisibilityScope, MirDebugScope> {
-    let mir = fcx.mir();
+pub fn create_mir_scopes(ccx: &CrateContext, mir: &Mir, debug_context: &FunctionDebugContext)
+    -> IndexVec<VisibilityScope, MirDebugScope> {
     let null_scope = MirDebugScope {
         scope_metadata: ptr::null_mut(),
         file_start_pos: BytePos(0),
@@ -53,8 +53,8 @@ pub fn create_mir_scopes(fcx: &FunctionContext) -> IndexVec<VisibilityScope, Mir
     };
     let mut scopes = IndexVec::from_elem(null_scope, &mir.visibility_scopes);
 
-    let fn_metadata = match fcx.debug_context {
-        FunctionDebugContext::RegularContext(box ref data) => data.fn_metadata,
+    let fn_metadata = match *debug_context {
+        FunctionDebugContext::RegularContext(ref data) => data.fn_metadata,
         FunctionDebugContext::DebugInfoDisabled |
         FunctionDebugContext::FunctionWithoutDebugInfo => {
             return scopes;
@@ -71,7 +71,7 @@ pub fn create_mir_scopes(fcx: &FunctionContext) -> IndexVec<VisibilityScope, Mir
     // Instantiate all scopes.
     for idx in 0..mir.visibility_scopes.len() {
         let scope = VisibilityScope::new(idx);
-        make_mir_scope(fcx.ccx, &mir, &has_variables, fn_metadata, scope, &mut scopes);
+        make_mir_scope(ccx, &mir, &has_variables, fn_metadata, scope, &mut scopes);
     }
 
     scopes

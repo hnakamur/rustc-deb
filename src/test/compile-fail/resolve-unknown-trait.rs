@@ -10,10 +10,10 @@
 
 
 trait NewTrait : SomeNonExistentTrait {}
-//~^ ERROR trait `SomeNonExistentTrait` is not in scope
+//~^ ERROR cannot find trait `SomeNonExistentTrait` in this scope
 
 impl SomeNonExistentTrait for isize {}
-//~^ ERROR trait `SomeNonExistentTrait` is not in scope
+//~^ ERROR cannot find trait `SomeNonExistentTrait` in this scope
 
 fn f<T:SomeNonExistentTrait>() {}
-//~^ ERROR trait `SomeNonExistentTrait` is not in scope
+//~^ ERROR cannot find trait `SomeNonExistentTrait` in this scope

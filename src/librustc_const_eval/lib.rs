@@ -28,6 +28,7 @@
 #![feature(slice_patterns)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
+#![feature(const_fn)]
 
 extern crate arena;
 #[macro_use] extern crate syntax;
@@ -39,7 +40,8 @@ extern crate rustc_data_structures;
 extern crate rustc_errors;
 extern crate graphviz;
 extern crate syntax_pos;
-extern crate serialize as rustc_serialize; // used by deriving
+
+extern crate rustc_i128;
 
 // NB: This module needs to be declared first so diagnostics are
 // registered before they are used.

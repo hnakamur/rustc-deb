@@ -45,7 +45,7 @@ pub fn check(build: &mut Build) {
             let target = path.join(cmd);
             let mut cmd_alt = cmd.to_os_string();
             cmd_alt.push(".exe");
-            if target.exists() ||
+            if target.is_file() ||
                target.with_extension("exe").exists() ||
                target.join(cmd_alt).exists() {
                 return Some(target);
@@ -78,7 +78,11 @@ pub fn check(build: &mut Build) {
         }
         need_cmd("cmake".as_ref());
         if build.config.ninja {
-            need_cmd("ninja".as_ref())
+            // Some Linux distros rename `ninja` to `ninja-build`.
+            // CMake can work with either binary name.
+            if have_cmd("ninja-build".as_ref()).is_none() {
+                need_cmd("ninja".as_ref());
+            }
         }
         break
     }
@@ -143,7 +147,7 @@ pub fn check(build: &mut Build) {
     // Externally configured LLVM requires FileCheck to exist
     let filecheck = build.llvm_filecheck(&build.config.build);
     if !filecheck.starts_with(&build.out) && !filecheck.exists() && build.config.codegen_tests {
-        panic!("filecheck executable {:?} does not exist", filecheck);
+        panic!("FileCheck executable {:?} does not exist", filecheck);
     }
 
     for target in build.config.target.iter() {
@@ -193,10 +197,6 @@ package instead of cmake:
 $ pacman -R cmake && pacman -S mingw-w64-x86_64-cmake
 ");
             }
-        }
-
-        if target.contains("arm-linux-android") {
-            need_cmd("adb".as_ref());
         }
     }
 

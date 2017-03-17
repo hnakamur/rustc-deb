@@ -8,8 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use rustc::hir;
-use rustc::hir::{map as hir_map, FreevarMap, TraitMap};
+use rustc::hir::{self, map as hir_map};
 use rustc::hir::lowering::lower_crate;
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_mir as mir;
@@ -20,7 +19,7 @@ use rustc::session::search_paths::PathKind;
 use rustc::lint;
 use rustc::middle::{self, dependency_format, stability, reachable};
 use rustc::middle::privacy::AccessLevels;
-use rustc::ty::{self, TyCtxt};
+use rustc::ty::{self, TyCtxt, Resolutions, GlobalArenas};
 use rustc::util::common::time;
 use rustc::util::nodemap::{NodeSet, NodeMap};
 use rustc_borrowck as borrowck;
@@ -47,6 +46,7 @@ use std::mem;
 use std::ffi::{OsString, OsStr};
 use std::fs;
 use std::io::{self, Write};
+use std::iter;
 use std::path::{Path, PathBuf};
 use syntax::{ast, diagnostics, visit};
 use syntax::attr;
@@ -56,15 +56,9 @@ use syntax::symbol::Symbol;
 use syntax::util::node_count::NodeCounter;
 use syntax;
 use syntax_ext;
+use arena::DroplessArena;
 
 use derive_registrar;
-
-#[derive(Clone)]
-pub struct Resolutions {
-    pub freevars: FreevarMap,
-    pub trait_map: TraitMap,
-    pub maybe_unused_trait_imports: NodeSet,
-}
 
 pub fn compile_input(sess: &Session,
                      cstore: &CStore,
@@ -131,7 +125,8 @@ pub fn compile_input(sess: &Session,
 
         write_out_deps(sess, &outputs, &crate_name);
 
-        let arenas = ty::CtxtArenas::new();
+        let arena = DroplessArena::new();
+        let arenas = GlobalArenas::new();
 
         // Construct the HIR map
         let hir_map = time(sess.time_passes(),
@@ -146,6 +141,7 @@ pub fn compile_input(sess: &Session,
                                                                   sess,
                                                                   outdir,
                                                                   output,
+                                                                  &arena,
                                                                   &arenas,
                                                                   &cstore,
                                                                   &hir_map,
@@ -172,6 +168,7 @@ pub fn compile_input(sess: &Session,
                                     hir_map,
                                     analysis,
                                     resolutions,
+                                    &arena,
                                     &arenas,
                                     &crate_name,
                                     |tcx, analysis, incremental_hashes_map, result| {
@@ -184,7 +181,7 @@ pub fn compile_input(sess: &Session,
                                                                    outdir,
                                                                    output,
                                                                    opt_crate,
-                                                                   tcx.map.krate(),
+                                                                   tcx.hir.krate(),
                                                                    &analysis,
                                                                    tcx,
                                                                    &crate_name);
@@ -339,10 +336,11 @@ pub struct CompileState<'a, 'tcx: 'a> {
     pub output_filenames: Option<&'a OutputFilenames>,
     pub out_dir: Option<&'a Path>,
     pub out_file: Option<&'a Path>,
-    pub arenas: Option<&'tcx ty::CtxtArenas<'tcx>>,
+    pub arena: Option<&'tcx DroplessArena>,
+    pub arenas: Option<&'tcx GlobalArenas<'tcx>>,
     pub expanded_crate: Option<&'a ast::Crate>,
     pub hir_crate: Option<&'a hir::Crate>,
-    pub ast_map: Option<&'a hir_map::Map<'tcx>>,
+    pub hir_map: Option<&'a hir_map::Map<'tcx>>,
     pub resolutions: Option<&'a Resolutions>,
     pub analysis: Option<&'a ty::CrateAnalysis<'tcx>>,
     pub tcx: Option<TyCtxt<'a, 'tcx, 'tcx>>,
@@ -359,6 +357,7 @@ impl<'a, 'tcx> CompileState<'a, 'tcx> {
             session: session,
             out_dir: out_dir.as_ref().map(|s| &**s),
             out_file: None,
+            arena: None,
             arenas: None,
             krate: None,
             registry: None,
@@ -367,7 +366,7 @@ impl<'a, 'tcx> CompileState<'a, 'tcx> {
             output_filenames: None,
             expanded_crate: None,
             hir_crate: None,
-            ast_map: None,
+            hir_map: None,
             resolutions: None,
             analysis: None,
             tcx: None,
@@ -413,7 +412,8 @@ impl<'a, 'tcx> CompileState<'a, 'tcx> {
                                 session: &'tcx Session,
                                 out_dir: &'a Option<PathBuf>,
                                 out_file: &'a Option<PathBuf>,
-                                arenas: &'tcx ty::CtxtArenas<'tcx>,
+                                arena: &'tcx DroplessArena,
+                                arenas: &'tcx GlobalArenas<'tcx>,
                                 cstore: &'a CStore,
                                 hir_map: &'a hir_map::Map<'tcx>,
                                 analysis: &'a ty::CrateAnalysis<'static>,
@@ -424,9 +424,10 @@ impl<'a, 'tcx> CompileState<'a, 'tcx> {
                                 -> Self {
         CompileState {
             crate_name: Some(crate_name),
+            arena: Some(arena),
             arenas: Some(arenas),
             cstore: Some(cstore),
-            ast_map: Some(hir_map),
+            hir_map: Some(hir_map),
             analysis: Some(analysis),
             resolutions: Some(resolutions),
             expanded_crate: Some(krate),
@@ -600,6 +601,7 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
         }
     });
 
+    let whitelisted_legacy_custom_derives = registry.take_whitelisted_custom_derives();
     let Registry { syntax_exts, early_lint_passes, late_lint_passes, lint_groups,
                    llvm_passes, attributes, mir_passes, .. } = registry;
 
@@ -639,6 +641,7 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
     let resolver_arenas = Resolver::arenas();
     let mut resolver =
         Resolver::new(sess, &krate, make_glob_map, &mut crate_loader, &resolver_arenas);
+    resolver.whitelisted_legacy_custom_derives = whitelisted_legacy_custom_derives;
     syntax_ext::register_builtins(&mut resolver, syntax_exts, sess.features.borrow().quote);
 
     krate = time(time_passes, "expansion", || {
@@ -665,7 +668,10 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
                     new_path.push(path);
                 }
             }
-            env::set_var("PATH", &env::join_paths(new_path).unwrap());
+            env::set_var("PATH",
+                &env::join_paths(new_path.iter()
+                                         .filter(|p| env::join_paths(iter::once(p)).is_ok()))
+                     .unwrap());
         }
         let features = sess.features.borrow();
         let cfg = syntax::ext::expand::ExpansionConfig {
@@ -675,6 +681,7 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
             should_test: sess.opts.test,
             ..syntax::ext::expand::ExpansionConfig::default(crate_name.to_string())
         };
+
         let mut ecx = ExtCtxt::new(&sess.parse_sess, cfg, &mut resolver);
         let err_count = ecx.parse_sess.span_diagnostic.err_count();
 
@@ -734,17 +741,6 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
          "checking for inline asm in case the target doesn't support it",
          || no_asm::check_crate(sess, &krate));
 
-    // Needs to go *after* expansion to be able to check the results of macro expansion.
-    time(time_passes, "complete gated feature checking", || {
-        sess.track_errors(|| {
-            syntax::feature_gate::check_crate(&krate,
-                                              &sess.parse_sess,
-                                              &sess.features.borrow(),
-                                              &attributes,
-                                              sess.opts.unstable_features);
-        })
-    })?;
-
     time(sess.time_passes(),
          "early lint checks",
          || lint::check_ast_crate(sess, &krate));
@@ -760,6 +756,17 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
 
         resolver.resolve_crate(&krate);
         Ok(())
+    })?;
+
+    // Needs to go *after* expansion to be able to check the results of macro expansion.
+    time(time_passes, "complete gated feature checking", || {
+        sess.track_errors(|| {
+            syntax::feature_gate::check_crate(&krate,
+                                              &sess.parse_sess,
+                                              &sess.features.borrow(),
+                                              &attributes,
+                                              sess.opts.unstable_features);
+        })
     })?;
 
     // Lower ast -> hir.
@@ -805,7 +812,8 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
                                                hir_map: hir_map::Map<'tcx>,
                                                mut analysis: ty::CrateAnalysis<'tcx>,
                                                resolutions: Resolutions,
-                                               arenas: &'tcx ty::CtxtArenas<'tcx>,
+                                               arena: &'tcx DroplessArena,
+                                               arenas: &'tcx GlobalArenas<'tcx>,
                                                name: &str,
                                                f: F)
                                                -> Result<R, usize>
@@ -863,11 +871,10 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
 
     TyCtxt::create_and_enter(sess,
                              arenas,
-                             resolutions.trait_map,
+                             arena,
+                             resolutions,
                              named_region_map,
                              hir_map,
-                             resolutions.freevars,
-                             resolutions.maybe_unused_trait_imports,
                              region_map,
                              lang_items,
                              index,
@@ -1189,9 +1196,6 @@ pub fn collect_crate_types(session: &Session, attrs: &[ast::Attribute]) -> Vec<c
                          Some(ref n) if *n == "rlib" => {
                              Some(config::CrateTypeRlib)
                          }
-                         Some(ref n) if *n == "metadata" => {
-                             Some(config::CrateTypeMetadata)
-                         }
                          Some(ref n) if *n == "dylib" => {
                              Some(config::CrateTypeDylib)
                          }
@@ -1335,9 +1339,10 @@ pub fn build_output_filenames(input: &Input,
                                            .values()
                                            .filter(|a| a.is_none())
                                            .count();
-            let ofile = if unnamed_output_types > 1 {
-                sess.warn("ignoring specified output filename because multiple outputs were \
-                           requested");
+            let ofile = if unnamed_output_types > 1 &&
+                            sess.opts.output_types.contains_key(&OutputType::Exe) {
+                sess.warn("ignoring specified output filename for 'link' output because multiple \
+                           outputs were requested");
                 None
             } else {
                 Some(out_file.clone())

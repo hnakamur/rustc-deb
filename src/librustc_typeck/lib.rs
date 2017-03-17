@@ -70,13 +70,14 @@ This API is completely unstable and subject to change.
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![cfg_attr(not(stage0), deny(warnings))]
+#![deny(warnings)]
 
 #![allow(non_camel_case_types)]
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(conservative_impl_trait)]
+#![feature(loop_break_value)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
@@ -126,7 +127,6 @@ pub mod diagnostics;
 
 pub mod check;
 pub mod check_unused;
-mod rscope;
 mod astconv;
 pub mod collect;
 mod constrained_type_params;
@@ -177,7 +177,7 @@ fn require_same_types<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                 expected: Ty<'tcx>,
                                 actual: Ty<'tcx>)
                                 -> bool {
-    ccx.tcx.infer_ctxt(None, None, Reveal::NotSpecializable).enter(|infcx| {
+    ccx.tcx.infer_ctxt((), Reveal::NotSpecializable).enter(|infcx| {
         match infcx.eq_types(false, &cause, expected, actual) {
             Ok(InferOk { obligations, .. }) => {
                 // FIXME(#32730) propagate obligations
@@ -185,7 +185,7 @@ fn require_same_types<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                 true
             }
             Err(err) => {
-                infcx.report_mismatched_types(cause, expected, actual, err);
+                infcx.report_mismatched_types(cause, expected, actual, err).emit();
                 false
             }
         }
@@ -196,11 +196,11 @@ fn check_main_fn_ty(ccx: &CrateCtxt,
                     main_id: ast::NodeId,
                     main_span: Span) {
     let tcx = ccx.tcx;
-    let main_def_id = tcx.map.local_def_id(main_id);
+    let main_def_id = tcx.hir.local_def_id(main_id);
     let main_t = tcx.item_type(main_def_id);
     match main_t.sty {
         ty::TyFnDef(..) => {
-            match tcx.map.find(main_id) {
+            match tcx.hir.find(main_id) {
                 Some(hir_map::NodeItem(it)) => {
                     match it.node {
                         hir::ItemFn(.., ref generics, _) => {
@@ -244,11 +244,11 @@ fn check_start_fn_ty(ccx: &CrateCtxt,
                      start_id: ast::NodeId,
                      start_span: Span) {
     let tcx = ccx.tcx;
-    let start_def_id = ccx.tcx.map.local_def_id(start_id);
+    let start_def_id = ccx.tcx.hir.local_def_id(start_id);
     let start_t = tcx.item_type(start_def_id);
     match start_t.sty {
         ty::TyFnDef(..) => {
-            match tcx.map.find(start_id) {
+            match tcx.hir.find(start_id) {
                 Some(hir_map::NodeItem(it)) => {
                     match it.node {
                         hir::ItemFn(..,ref ps,_)

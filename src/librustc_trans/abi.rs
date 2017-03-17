@@ -10,8 +10,8 @@
 
 use llvm::{self, ValueRef, Integer, Pointer, Float, Double, Struct, Array, Vector, AttributePlace};
 use base;
-use build::AllocaFcx;
-use common::{type_is_fat_ptr, BlockAndBuilder, C_uint};
+use builder::Builder;
+use common::{type_is_fat_ptr, C_uint};
 use context::CrateContext;
 use cabi_x86;
 use cabi_x86_64;
@@ -25,6 +25,10 @@ use cabi_mips;
 use cabi_mips64;
 use cabi_asmjs;
 use cabi_msp430;
+use cabi_sparc;
+use cabi_sparc64;
+use cabi_nvptx;
+use cabi_nvptx64;
 use machine::{llalign_of_min, llsize_of, llsize_of_alloc};
 use type_::Type;
 use type_of;
@@ -59,7 +63,7 @@ mod attr_impl {
     // The subset of llvm::Attribute needed for arguments, packed into a bitfield.
     bitflags! {
         #[derive(Default, Debug)]
-        flags ArgAttribute : u8 {
+        flags ArgAttribute : u16 {
             const ByVal     = 1 << 0,
             const NoAlias   = 1 << 1,
             const NoCapture = 1 << 2,
@@ -68,6 +72,7 @@ mod attr_impl {
             const SExt      = 1 << 5,
             const StructRet = 1 << 6,
             const ZExt      = 1 << 7,
+            const InReg     = 1 << 8,
         }
     }
 }
@@ -81,7 +86,7 @@ macro_rules! for_each_kind {
 impl ArgAttribute {
     fn for_each_kind<F>(&self, mut f: F) where F: FnMut(llvm::Attribute) {
         for_each_kind!(self, f,
-                       ByVal, NoAlias, NoCapture, NonNull, ReadOnly, SExt, StructRet, ZExt)
+                       ByVal, NoAlias, NoCapture, NonNull, ReadOnly, SExt, StructRet, ZExt, InReg)
     }
 }
 
@@ -99,18 +104,8 @@ impl ArgAttributes {
         self
     }
 
-    pub fn unset(&mut self, attr: ArgAttribute) -> &mut Self {
-        self.regular = self.regular - attr;
-        self
-    }
-
     pub fn set_dereferenceable(&mut self, bytes: u64) -> &mut Self {
         self.dereferenceable_bytes = bytes;
-        self
-    }
-
-    pub fn unset_dereferenceable(&mut self) -> &mut Self {
-        self.dereferenceable_bytes = 0;
         self
     }
 
@@ -242,11 +237,11 @@ impl ArgType {
     /// lvalue for the original Rust type of this argument/return.
     /// Can be used for both storing formal arguments into Rust variables
     /// or results of call/invoke instructions into their destinations.
-    pub fn store(&self, bcx: &BlockAndBuilder, mut val: ValueRef, dst: ValueRef) {
+    pub fn store(&self, bcx: &Builder, mut val: ValueRef, dst: ValueRef) {
         if self.is_ignore() {
             return;
         }
-        let ccx = bcx.ccx();
+        let ccx = bcx.ccx;
         if self.is_indirect() {
             let llsz = llsize_of(ccx, self.ty);
             let llalign = llalign_of_min(ccx, self.ty);
@@ -257,11 +252,8 @@ impl ArgType {
             let can_store_through_cast_ptr = false;
             if can_store_through_cast_ptr {
                 let cast_dst = bcx.pointercast(dst, ty.ptr_to());
-                let store = bcx.store(val, cast_dst);
                 let llalign = llalign_of_min(ccx, self.ty);
-                unsafe {
-                    llvm::LLVMSetAlignment(store, llalign);
-                }
+                bcx.store(val, cast_dst, Some(llalign));
             } else {
                 // The actual return type is a struct, but the ABI
                 // adaptation code has cast it into some scalar type.  The
@@ -278,11 +270,11 @@ impl ArgType {
                 //   bitcasting to the struct type yields invalid cast errors.
 
                 // We instead thus allocate some scratch space...
-                let llscratch = AllocaFcx(bcx.fcx(), ty, "abi_cast");
+                let llscratch = bcx.alloca(ty, "abi_cast");
                 base::Lifetime::Start.call(bcx, llscratch);
 
                 // ...where we first store the value...
-                bcx.store(val, llscratch);
+                bcx.store(val, llscratch, None);
 
                 // ...and then memcpy it to the intended destination.
                 base::call_memcpy(bcx,
@@ -298,18 +290,18 @@ impl ArgType {
             if self.original_ty == Type::i1(ccx) {
                 val = bcx.zext(val, Type::i8(ccx));
             }
-            bcx.store(val, dst);
+            bcx.store(val, dst, None);
         }
     }
 
-    pub fn store_fn_arg(&self, bcx: &BlockAndBuilder, idx: &mut usize, dst: ValueRef) {
+    pub fn store_fn_arg(&self, bcx: &Builder, idx: &mut usize, dst: ValueRef) {
         if self.pad.is_some() {
             *idx += 1;
         }
         if self.is_ignore() {
             return;
         }
-        let val = llvm::get_param(bcx.fcx().llfn, *idx as c_uint);
+        let val = llvm::get_param(bcx.llfn(), *idx as c_uint);
         *idx += 1;
         self.store(bcx, val, dst);
     }
@@ -320,7 +312,7 @@ impl ArgType {
 ///
 /// I will do my best to describe this structure, but these
 /// comments are reverse-engineered and may be inaccurate. -NDM
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FnType {
     /// The LLVM types of each argument.
     pub args: Vec<ArgType>,
@@ -359,9 +351,12 @@ impl FnType {
             Fastcall => llvm::X86FastcallCallConv,
             Vectorcall => llvm::X86_VectorCall,
             C => llvm::CCallConv,
+            Unadjusted => llvm::CCallConv,
             Win64 => llvm::X86_64_Win64,
             SysV64 => llvm::X86_64_SysV,
             Aapcs => llvm::ArmAapcsCallConv,
+            PtxKernel => llvm::PtxKernel,
+            Msp430Interrupt => llvm::Msp430Intr,
 
             // These API constants ought to be more specific...
             Cdecl => llvm::CCallConv,
@@ -431,10 +426,10 @@ impl FnType {
         let ret_ty = sig.output();
         let mut ret = arg_of(ret_ty, true);
 
-        if !type_is_fat_ptr(ccx.tcx(), ret_ty) {
+        if !type_is_fat_ptr(ccx, ret_ty) {
             // The `noalias` attribute on the return value is useful to a
             // function ptr caller.
-            if let ty::TyBox(_) = ret_ty.sty {
+            if ret_ty.is_box() {
                 // `Box` pointer return values never alias because ownership
                 // is transferred
                 ret.attrs.set(ArgAttribute::NoAlias);
@@ -443,9 +438,13 @@ impl FnType {
             // We can also mark the return value as `dereferenceable` in certain cases
             match ret_ty.sty {
                 // These are not really pointers but pairs, (pointer, len)
-                ty::TyRef(_, ty::TypeAndMut { ty, .. }) |
-                ty::TyBox(ty) => {
+                ty::TyRef(_, ty::TypeAndMut { ty, .. }) => {
                     let llty = type_of::sizing_type_of(ccx, ty);
+                    let llsz = llsize_of_alloc(ccx, llty);
+                    ret.attrs.set_dereferenceable(llsz);
+                }
+                ty::TyAdt(def, _) if def.is_box() => {
+                    let llty = type_of::sizing_type_of(ccx, ret_ty.boxed_ty());
                     let llsz = llsize_of_alloc(ccx, llty);
                     ret.attrs.set_dereferenceable(llsz);
                 }
@@ -458,9 +457,9 @@ impl FnType {
         // Handle safe Rust thin and fat pointers.
         let rust_ptr_attrs = |ty: Ty<'tcx>, arg: &mut ArgType| match ty.sty {
             // `Box` pointer parameters never alias because ownership is transferred
-            ty::TyBox(inner) => {
+            ty::TyAdt(def, _) if def.is_box() => {
                 arg.attrs.set(ArgAttribute::NoAlias);
-                Some(inner)
+                Some(ty.boxed_ty())
             }
 
             ty::TyRef(b, mt) => {
@@ -496,7 +495,7 @@ impl FnType {
         for ty in inputs.iter().chain(extra_args.iter()) {
             let mut arg = arg_of(ty, false);
 
-            if type_is_fat_ptr(ccx.tcx(), ty) {
+            if type_is_fat_ptr(ccx, ty) {
                 let original_tys = arg.original_ty.field_types();
                 let sizing_tys = arg.ty.field_types();
                 assert_eq!((original_tys.len(), sizing_tys.len()), (2, 2));
@@ -534,6 +533,8 @@ impl FnType {
                                     ccx: &CrateContext<'a, 'tcx>,
                                     abi: Abi,
                                     sig: &ty::FnSig<'tcx>) {
+        if abi == Abi::Unadjusted { return }
+
         if abi == Abi::Rust || abi == Abi::RustCall ||
            abi == Abi::RustIntrinsic || abi == Abi::PlatformIntrinsic {
             let fixup = |arg: &mut ArgType| {
@@ -569,7 +570,7 @@ impl FnType {
             };
             // Fat pointers are returned by-value.
             if !self.ret.is_ignore() {
-                if !type_is_fat_ptr(ccx.tcx(), sig.output()) {
+                if !type_is_fat_ptr(ccx, sig.output()) {
                     fixup(&mut self.ret);
                 }
             }
@@ -584,7 +585,14 @@ impl FnType {
         }
 
         match &ccx.sess().target.target.arch[..] {
-            "x86" => cabi_x86::compute_abi_info(ccx, self),
+            "x86" => {
+                let flavor = if abi == Abi::Fastcall {
+                    cabi_x86::Flavor::Fastcall
+                } else {
+                    cabi_x86::Flavor::General
+                };
+                cabi_x86::compute_abi_info(ccx, self, flavor);
+            },
             "x86_64" => if abi == Abi::SysV64 {
                 cabi_x86_64::compute_abi_info(ccx, self);
             } else if abi == Abi::Win64 || ccx.sess().target.target.options.is_like_windows {
@@ -609,6 +617,10 @@ impl FnType {
             "asmjs" => cabi_asmjs::compute_abi_info(ccx, self),
             "wasm32" => cabi_asmjs::compute_abi_info(ccx, self),
             "msp430" => cabi_msp430::compute_abi_info(ccx, self),
+            "sparc" => cabi_sparc::compute_abi_info(ccx, self),
+            "sparc64" => cabi_sparc64::compute_abi_info(ccx, self),
+            "nvptx" => cabi_nvptx::compute_abi_info(ccx, self),
+            "nvptx64" => cabi_nvptx64::compute_abi_info(ccx, self),
             a => ccx.sess().fatal(&format!("unrecognized arch \"{}\" in target specification", a))
         }
 

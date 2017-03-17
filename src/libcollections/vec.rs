@@ -77,13 +77,14 @@ use core::hash::{self, Hash};
 use core::intrinsics::{arith_offset, assume};
 use core::iter::{FromIterator, FusedIterator, TrustedLen};
 use core::mem;
-use core::ops::{Index, IndexMut};
+use core::ops::{InPlace, Index, IndexMut, Place, Placer};
 use core::ops;
 use core::ptr;
 use core::ptr::Shared;
 use core::slice;
 
 use super::range::RangeArgument;
+use Bound::{Excluded, Included, Unbounded};
 
 /// A contiguous growable array type, written `Vec<T>` but pronounced 'vector'.
 ///
@@ -370,7 +371,8 @@ impl<T> Vec<T> {
     /// * `capacity` needs to be the capacity that the pointer was allocated with.
     ///
     /// Violating these may cause problems like corrupting the allocator's
-    /// internal datastructures.
+    /// internal datastructures. For example it is **not** safe
+    /// to build a `Vec<u8>` from a pointer to a C `char` array and a `size_t`.
     ///
     /// The ownership of `ptr` is effectively transferred to the
     /// `Vec<T>` which may then deallocate, reallocate or change the
@@ -818,15 +820,13 @@ impl<T> Vec<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(dedup_by)]
-    ///
     /// let mut vec = vec![10, 20, 21, 30, 20];
     ///
     /// vec.dedup_by_key(|i| *i / 10);
     ///
     /// assert_eq!(vec, [10, 20, 30, 20]);
     /// ```
-    #[unstable(feature = "dedup_by", reason = "recently added", issue = "37087")]
+    #[stable(feature = "dedup_by", since = "1.16.0")]
     #[inline]
     pub fn dedup_by_key<F, K>(&mut self, mut key: F) where F: FnMut(&mut T) -> K, K: PartialEq {
         self.dedup_by(|a, b| key(a) == key(b))
@@ -839,7 +839,6 @@ impl<T> Vec<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(dedup_by)]
     /// use std::ascii::AsciiExt;
     ///
     /// let mut vec = vec!["foo", "bar", "Bar", "baz", "bar"];
@@ -848,7 +847,7 @@ impl<T> Vec<T> {
     ///
     /// assert_eq!(vec, ["foo", "bar", "baz", "bar"]);
     /// ```
-    #[unstable(feature = "dedup_by", reason = "recently added", issue = "37087")]
+    #[stable(feature = "dedup_by", since = "1.16.0")]
     pub fn dedup_by<F>(&mut self, mut same_bucket: F) where F: FnMut(&mut T, &mut T) -> bool {
         unsafe {
             // Although we have a mutable reference to `self`, we cannot make
@@ -1021,8 +1020,8 @@ impl<T> Vec<T> {
     /// Create a draining iterator that removes the specified range in the vector
     /// and yields the removed items.
     ///
-    /// Note 1: The element range is removed even if the iterator is not
-    /// consumed until the end.
+    /// Note 1: The element range is removed even if the iterator is only
+    /// partially consumed or not consumed at all.
     ///
     /// Note 2: It is unspecified how many elements are removed from the vector,
     /// if the `Drain` value is leaked.
@@ -1059,8 +1058,16 @@ impl<T> Vec<T> {
         // the hole, and the vector length is restored to the new length.
         //
         let len = self.len();
-        let start = *range.start().unwrap_or(&0);
-        let end = *range.end().unwrap_or(&len);
+        let start = match range.start() {
+            Included(&n) => n,
+            Excluded(&n) => n + 1,
+            Unbounded    => 0,
+        };
+        let end = match range.end() {
+            Included(&n) => n + 1,
+            Excluded(&n) => n,
+            Unbounded    => len,
+        };
         assert!(start <= end);
         assert!(end <= len);
 
@@ -1245,6 +1252,29 @@ impl<T: Clone> Vec<T> {
     #[stable(feature = "vec_extend_from_slice", since = "1.6.0")]
     pub fn extend_from_slice(&mut self, other: &[T]) {
         self.spec_extend(other.iter())
+    }
+
+    /// Returns a place for insertion at the back of the `Vec`.
+    ///
+    /// Using this method with placement syntax is equivalent to [`push`](#method.push),
+    /// but may be more efficient.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(collection_placement)]
+    /// #![feature(placement_in_syntax)]
+    ///
+    /// let mut vec = vec![1, 2];
+    /// vec.place_back() <- 3;
+    /// vec.place_back() <- 4;
+    /// assert_eq!(&vec, &[1, 2, 3, 4]);
+    /// ```
+    #[unstable(feature = "collection_placement",
+               reason = "placement protocol is subject to change",
+               issue = "30172")]
+    pub fn place_back(&mut self) -> PlaceBack<T> {
+        PlaceBack { vec: self }
     }
 }
 
@@ -1763,8 +1793,7 @@ impl<T: Ord> Ord for Vec<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T> Drop for Vec<T> {
-    #[unsafe_destructor_blind_to_params]
+unsafe impl<#[may_dangle] T> Drop for Vec<T> {
     fn drop(&mut self) {
         unsafe {
             // use drop for [T]
@@ -2033,8 +2062,7 @@ impl<T: Clone> Clone for IntoIter<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T> Drop for IntoIter<T> {
-    #[unsafe_destructor_blind_to_params]
+unsafe impl<#[may_dangle] T> Drop for IntoIter<T> {
     fn drop(&mut self) {
         // destroy the remaining elements
         for _x in self.by_ref() {}
@@ -2119,3 +2147,52 @@ impl<'a, T> ExactSizeIterator for Drain<'a, T> {
 
 #[unstable(feature = "fused", issue = "35602")]
 impl<'a, T> FusedIterator for Drain<'a, T> {}
+
+/// A place for insertion at the back of a `Vec`.
+///
+/// See [`Vec::place_back`](struct.Vec.html#method.place_back) for details.
+#[must_use = "places do nothing unless written to with `<-` syntax"]
+#[unstable(feature = "collection_placement",
+           reason = "struct name and placement protocol are subject to change",
+           issue = "30172")]
+pub struct PlaceBack<'a, T: 'a> {
+    vec: &'a mut Vec<T>,
+}
+
+#[unstable(feature = "collection_placement",
+           reason = "placement protocol is subject to change",
+           issue = "30172")]
+impl<'a, T> Placer<T> for PlaceBack<'a, T> {
+    type Place = PlaceBack<'a, T>;
+
+    fn make_place(self) -> Self {
+        // This will panic or abort if we would allocate > isize::MAX bytes
+        // or if the length increment would overflow for zero-sized types.
+        if self.vec.len == self.vec.buf.cap() {
+            self.vec.buf.double();
+        }
+        self
+    }
+}
+
+#[unstable(feature = "collection_placement",
+           reason = "placement protocol is subject to change",
+           issue = "30172")]
+impl<'a, T> Place<T> for PlaceBack<'a, T> {
+    fn pointer(&mut self) -> *mut T {
+        unsafe { self.vec.as_mut_ptr().offset(self.vec.len as isize) }
+    }
+}
+
+#[unstable(feature = "collection_placement",
+           reason = "placement protocol is subject to change",
+           issue = "30172")]
+impl<'a, T> InPlace<T> for PlaceBack<'a, T> {
+    type Owner = &'a mut T;
+
+    unsafe fn finalize(mut self) -> &'a mut T {
+        let ptr = self.pointer();
+        self.vec.len += 1;
+        &mut *ptr
+    }
+}

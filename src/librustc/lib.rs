@@ -21,29 +21,28 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![cfg_attr(not(stage0), deny(warnings))]
+#![deny(warnings)]
 
 #![feature(associated_consts)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(collections)]
 #![feature(conservative_impl_trait)]
 #![feature(const_fn)]
 #![feature(core_intrinsics)]
-#![cfg_attr(stage0, feature(item_like_imports))]
+#![feature(field_init_shorthand)]
 #![feature(libc)]
+#![feature(loop_break_value)]
 #![feature(nonzero)]
+#![feature(pub_restricted)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
 #![feature(slice_patterns)]
 #![feature(staged_api)]
 #![feature(unboxed_closures)]
-#![cfg_attr(test, feature(test))]
 
 extern crate arena;
 extern crate core;
-extern crate flate;
 extern crate fmt_macros;
 extern crate getopts;
 extern crate graphviz;
@@ -52,18 +51,17 @@ extern crate rustc_llvm as llvm;
 extern crate rustc_back;
 extern crate rustc_data_structures;
 extern crate serialize;
-extern crate collections;
 extern crate rustc_const_math;
 extern crate rustc_errors as errors;
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
-#[macro_use] extern crate syntax_pos;
+extern crate syntax_pos;
 #[macro_use] #[no_link] extern crate rustc_bitflags;
 
 extern crate serialize as rustc_serialize; // used by deriving
 
-#[cfg(test)]
-extern crate test;
+// SNAP:
+extern crate rustc_i128;
 
 #[macro_use]
 mod macros;
@@ -80,9 +78,8 @@ pub mod lint;
 
 pub mod middle {
     pub mod astconv_util;
-    pub mod expr_use_visitor; // STAGE0: increase glitch immunity
+    pub mod expr_use_visitor;
     pub mod const_val;
-    pub mod const_qualif;
     pub mod cstore;
     pub mod dataflow;
     pub mod dead;

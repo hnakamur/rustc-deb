@@ -56,9 +56,9 @@ almost any function that takes a pointer argument isn't valid for all possible
 inputs since the pointer could be dangling, and raw pointers fall outside of
 Rust's safe memory model.
 
-When declaring the argument types to a foreign function, the Rust compiler can
-not check if the declaration is correct, so specifying it correctly is part of
-keeping the binding correct at runtime.
+When declaring the argument types to a foreign function, the Rust compiler
+cannot check if the declaration is correct, so specifying it correctly is part
+of keeping the binding correct at runtime.
 
 The `extern` block can be extended to cover the entire snappy API:
 
@@ -309,7 +309,7 @@ However it is often desired that the callback is targeted to a special
 Rust object. This could be the object that represents the wrapper for the
 respective C object.
 
-This can be achieved by passing an raw pointer to the object down to the
+This can be achieved by passing a raw pointer to the object down to the
 C library. The C library can then include the pointer to the Rust object in
 the notification. This will allow the callback to unsafely access the
 referenced Rust object.
@@ -574,6 +574,31 @@ The [`libc` crate on crates.io][libc] includes type aliases and function
 definitions for the C standard library in the `libc` module, and Rust links
 against `libc` and `libm` by default.
 
+# Variadic functions
+
+In C, functions can be 'variadic', meaning they accept a variable number of arguments. This can
+be achieved in Rust by specifying `...` within the argument list of a foreign function declaration:
+
+```no_run
+extern {
+    fn foo(x: i32, ...);
+}
+
+fn main() {
+    unsafe {
+        foo(10, 20, 30, 40, 50);
+    }
+}
+```
+
+Normal Rust functions can *not* be variadic:
+
+```ignore
+// This will not compile
+
+fn foo(x: i32, ...) { }
+```
+
 # The "nullable pointer optimization"
 
 Certain Rust types are defined to never be `null`. This includes references (`&T`,
@@ -685,7 +710,7 @@ Please note that [`catch_unwind()`] will only catch unwinding panics, not
 those who abort the process. See the documentation of [`catch_unwind()`]
 for more information.
 
-[`catch_unwind()`]: https://doc.rust-lang.org/std/panic/fn.catch_unwind.html
+[`catch_unwind()`]: ../std/panic/fn.catch_unwind.html
 
 # Representing opaque structs
 

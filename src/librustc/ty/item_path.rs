@@ -52,7 +52,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
     /// Returns a string identifying this local node-id.
     pub fn node_path_str(self, id: ast::NodeId) -> String {
-        self.item_path_str(self.map.local_def_id(id))
+        self.item_path_str(self.hir.local_def_id(id))
     }
 
     /// Returns a string identifying this def-id. This string is
@@ -158,11 +158,6 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             DefPathData::CrateRoot => {
                 assert!(key.parent.is_none());
                 self.push_krate_path(buffer, def_id.krate);
-            }
-
-            DefPathData::InlinedRoot(ref root_path) => {
-                assert!(key.parent.is_none());
-                self.push_item_path(buffer, root_path.def_id);
             }
 
             DefPathData::Impl => {
@@ -291,8 +286,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         // only occur very early in the compiler pipeline.
         let parent_def_id = self.parent_def_id(impl_def_id).unwrap();
         self.push_item_path(buffer, parent_def_id);
-        let node_id = self.map.as_local_node_id(impl_def_id).unwrap();
-        let item = self.map.expect_item(node_id);
+        let node_id = self.hir.as_local_node_id(impl_def_id).unwrap();
+        let item = self.hir.expect_item(node_id);
         let span_str = self.sess.codemap().span_to_string(item.span);
         buffer.push(&format!("<impl at {}>", span_str));
     }
@@ -319,8 +314,7 @@ pub fn characteristic_def_id_of_type(ty: Ty) -> Option<DefId> {
         ty::TyDynamic(data, ..) => data.principal().map(|p| p.def_id()),
 
         ty::TyArray(subty, _) |
-        ty::TySlice(subty) |
-        ty::TyBox(subty) => characteristic_def_id_of_type(subty),
+        ty::TySlice(subty) => characteristic_def_id_of_type(subty),
 
         ty::TyRawPtr(mt) |
         ty::TyRef(_, mt) => characteristic_def_id_of_type(mt.ty),

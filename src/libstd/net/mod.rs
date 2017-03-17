@@ -12,6 +12,7 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
+use fmt;
 use io::{self, Error, ErrorKind};
 use sys_common::net as net_imp;
 
@@ -105,6 +106,13 @@ impl Iterator for LookupHost {
     fn next(&mut self) -> Option<SocketAddr> { self.0.next() }
 }
 
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl fmt::Debug for LookupHost {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("LookupHost { .. }")
+    }
+}
+
 /// Resolve the host specified by `host` as a number of `SocketAddr` instances.
 ///
 /// This method may perform a DNS query to resolve `host` and may also inspect
@@ -121,7 +129,7 @@ impl Iterator for LookupHost {
 /// use std::net;
 ///
 /// # fn foo() -> std::io::Result<()> {
-/// for host in try!(net::lookup_host("rust-lang.org")) {
+/// for host in net::lookup_host("rust-lang.org")? {
 ///     println!("found address: {}", host);
 /// }
 /// # Ok(())

@@ -29,10 +29,10 @@ pub enum DepNode<D: Clone + Debug> {
     // Represents the `Krate` as a whole (the `hir::Krate` value) (as
     // distinct from the krate module). This is basically a hash of
     // the entire krate, so if you read from `Krate` (e.g., by calling
-    // `tcx.map.krate()`), we will have to assume that any change
+    // `tcx.hir.krate()`), we will have to assume that any change
     // means that you need to be recompiled. This is because the
     // `Krate` value gives you access to all other items. To avoid
-    // this fate, do not call `tcx.map.krate()`; instead, prefer
+    // this fate, do not call `tcx.hir.krate()`; instead, prefer
     // wrappers like `tcx.visit_all_items_in_krate()`.  If there is no
     // suitable wrapper, you can use `tcx.dep_graph.ignore()` to gain
     // access to the krate, but you must remember to add suitable
@@ -78,7 +78,6 @@ pub enum DepNode<D: Clone + Debug> {
     Variance,
     WfCheck(D),
     TypeckItemType(D),
-    TypeckItemBody(D),
     Dropck,
     DropckImpl(D),
     UnusedTraitCheck,
@@ -113,6 +112,7 @@ pub enum DepNode<D: Clone + Debug> {
     SizedConstraint(D),
     AssociatedItemDefIds(D),
     InherentImpls(D),
+    TypeckTables(D),
 
     // The set of impls for a given trait. Ultimately, it would be
     // nice to get more fine-grained here (e.g., to include a
@@ -157,11 +157,11 @@ impl<D: Clone + Debug> DepNode<D> {
             HirBody,
             TransCrateItem,
             TypeckItemType,
-            TypeckItemBody,
             AssociatedItems,
             ItemSignature,
             AssociatedItemDefIds,
             InherentImpls,
+            TypeckTables,
             TraitImpls,
             ReprHints,
         }
@@ -214,7 +214,6 @@ impl<D: Clone + Debug> DepNode<D> {
             CoherenceOrphanCheck(ref d) => op(d).map(CoherenceOrphanCheck),
             WfCheck(ref d) => op(d).map(WfCheck),
             TypeckItemType(ref d) => op(d).map(TypeckItemType),
-            TypeckItemBody(ref d) => op(d).map(TypeckItemBody),
             DropckImpl(ref d) => op(d).map(DropckImpl),
             CheckConst(ref d) => op(d).map(CheckConst),
             IntrinsicCheck(ref d) => op(d).map(IntrinsicCheck),
@@ -230,6 +229,7 @@ impl<D: Clone + Debug> DepNode<D> {
             SizedConstraint(ref d) => op(d).map(SizedConstraint),
             AssociatedItemDefIds(ref d) => op(d).map(AssociatedItemDefIds),
             InherentImpls(ref d) => op(d).map(InherentImpls),
+            TypeckTables(ref d) => op(d).map(TypeckTables),
             TraitImpls(ref d) => op(d).map(TraitImpls),
             TraitItems(ref d) => op(d).map(TraitItems),
             ReprHints(ref d) => op(d).map(ReprHints),

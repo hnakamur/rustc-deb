@@ -188,13 +188,10 @@ pub fn check_loans<'a, 'b, 'c, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                      dfcx_loans: &LoanDataFlow<'b, 'tcx>,
                                      move_data: &move_data::FlowedMoveData<'c, 'tcx>,
                                      all_loans: &[Loan<'tcx>],
-                                     fn_id: ast::NodeId,
-                                     decl: &hir::FnDecl,
-                                     body: &hir::Expr) {
-    debug!("check_loans(body id={})", body.id);
+                                     body: &hir::Body) {
+    debug!("check_loans(body id={})", body.value.id);
 
-    let param_env = ty::ParameterEnvironment::for_item(bccx.tcx, fn_id);
-    let infcx = bccx.tcx.borrowck_fake_infer_ctxt(param_env);
+    let infcx = bccx.tcx.borrowck_fake_infer_ctxt(body.id());
     let mut clcx = CheckLoanCtxt {
         bccx: bccx,
         dfcx_loans: dfcx_loans,
@@ -202,7 +199,7 @@ pub fn check_loans<'a, 'b, 'c, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
         all_loans: all_loans,
         param_env: &infcx.parameter_environment
     };
-    euv::ExprUseVisitor::new(&mut clcx, &infcx).walk_fn(decl, body);
+    euv::ExprUseVisitor::new(&mut clcx, &infcx).consume_body(body);
 }
 
 #[derive(PartialEq)]
@@ -463,7 +460,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
             // 3. Where does old loan expire.
 
             let previous_end_span =
-                self.tcx().map.span(old_loan.kill_scope.node_id(&self.tcx().region_maps))
+                self.tcx().hir.span(old_loan.kill_scope.node_id(&self.tcx().region_maps))
                               .end_point();
 
             let mut err = match (new_loan.kind, old_loan.kind) {
@@ -707,7 +704,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                                        borrow_kind: ty::BorrowKind)
                                        -> UseError<'tcx> {
         debug!("analyze_restrictions_on_use(expr_id={}, use_path={:?})",
-               self.tcx().map.node_to_string(expr_id),
+               self.tcx().hir.node_to_string(expr_id),
                use_path);
 
         let mut ret = UseOk;

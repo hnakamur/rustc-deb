@@ -36,7 +36,8 @@ fn main() {
     // targets, which means we have to build the alloc_jemalloc crate
     // for targets like emscripten, even if we don't use it.
     if target.contains("rumprun") || target.contains("bitrig") || target.contains("openbsd") ||
-       target.contains("msvc") || target.contains("emscripten") || target.contains("fuchsia") {
+       target.contains("msvc") || target.contains("emscripten") || target.contains("fuchsia") ||
+       target.contains("redox") {
         println!("cargo:rustc-cfg=dummy_jemalloc");
         return;
     }
@@ -150,6 +151,12 @@ fn main() {
     cmd.arg(format!("--host={}", build_helper::gnu_target(&target)));
     cmd.arg(format!("--build={}", build_helper::gnu_target(&host)));
 
+    // for some reason, jemalloc configure doesn't detect this value
+    // automatically for this target
+    if target == "sparc64-unknown-linux-gnu" {
+        cmd.arg("--with-lg-quantum=4");
+    }
+
     run(&mut cmd);
     let mut make = Command::new(build_helper::make(&host));
     make.current_dir(&build_dir)
@@ -173,5 +180,16 @@ fn main() {
         println!("cargo:rustc-link-lib=gcc");
     } else if !target.contains("windows") && !target.contains("musl") {
         println!("cargo:rustc-link-lib=pthread");
+    }
+
+    // The pthread_atfork symbols is used by jemalloc on android but the really
+    // old android we're building on doesn't have them defined, so just make
+    // sure the symbols are available.
+    if target.contains("androideabi") {
+        println!("cargo:rerun-if-changed=pthread_atfork_dummy.c");
+        gcc::Config::new()
+            .flag("-fvisibility=hidden")
+            .file("pthread_atfork_dummy.c")
+            .compile("libpthread_atfork_dummy.a");
     }
 }

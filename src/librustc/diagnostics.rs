@@ -327,6 +327,69 @@ struct ListNode {
 This works because `Box` is a pointer, so its size is well-known.
 "##,
 
+E0106: r##"
+This error indicates that a lifetime is missing from a type. If it is an error
+inside a function signature, the problem may be with failing to adhere to the
+lifetime elision rules (see below).
+
+Here are some simple examples of where you'll run into this error:
+
+```compile_fail,E0106
+struct Foo { x: &bool }        // error
+struct Foo<'a> { x: &'a bool } // correct
+
+enum Bar { A(u8), B(&bool), }        // error
+enum Bar<'a> { A(u8), B(&'a bool), } // correct
+
+type MyStr = &str;        // error
+type MyStr<'a> = &'a str; // correct
+```
+
+Lifetime elision is a special, limited kind of inference for lifetimes in
+function signatures which allows you to leave out lifetimes in certain cases.
+For more background on lifetime elision see [the book][book-le].
+
+The lifetime elision rules require that any function signature with an elided
+output lifetime must either have
+
+ - exactly one input lifetime
+ - or, multiple input lifetimes, but the function must also be a method with a
+   `&self` or `&mut self` receiver
+
+In the first case, the output lifetime is inferred to be the same as the unique
+input lifetime. In the second case, the lifetime is instead inferred to be the
+same as the lifetime on `&self` or `&mut self`.
+
+Here are some examples of elision errors:
+
+```compile_fail,E0106
+// error, no input lifetimes
+fn foo() -> &str { }
+
+// error, `x` and `y` have distinct lifetimes inferred
+fn bar(x: &str, y: &str) -> &str { }
+
+// error, `y`'s lifetime is inferred to be distinct from `x`'s
+fn baz<'a>(x: &'a str, y: &str) -> &str { }
+```
+
+Here's an example that is currently an error, but may work in a future version
+of Rust:
+
+```compile_fail,E0106
+struct Foo<'a>(&'a str);
+
+trait Quux { }
+impl Quux for Foo { }
+```
+
+Lifetime elision in implementation headers was part of the lifetime elision
+RFC. It is, however, [currently unimplemented][iss15872].
+
+[book-le]: https://doc.rust-lang.org/nightly/book/lifetimes.html#lifetime-elision
+[iss15872]: https://github.com/rust-lang/rust/issues/15872
+"##,
+
 E0109: r##"
 You tried to give a type parameter to a type which doesn't need it. Erroneous
 code example:
@@ -1236,6 +1299,23 @@ struct Foo<'a, T: 'a> {
     foo: &'a T
 }
 ```
+
+To see why this is important, consider the case where `T` is itself a reference
+(e.g., `T = &str`). If we don't include the restriction that `T: 'a`, the
+following code would be perfectly legal:
+
+```compile_fail,E0309
+struct Foo<'a, T> {
+    foo: &'a T
+}
+
+fn main() {
+    let v = "42".to_string();
+    let f = Foo{foo: &v};
+    drop(v);
+    println!("{}", f.foo); // but we've already dropped v!
+}
+```
 "##,
 
 E0310: r##"
@@ -1437,6 +1517,40 @@ struct Prince<'kiss, 'SnowWhite: 'kiss> { // You say here that 'kiss must live
 ```
 "##,
 
+E0491: r##"
+A reference has a longer lifetime than the data it references.
+
+Erroneous code example:
+
+```compile_fail,E0491
+// struct containing a reference requires a lifetime parameter,
+// because the data the reference points to must outlive the struct (see E0106)
+struct Struct<'a> {
+    ref_i32: &'a i32,
+}
+
+// However, a nested struct like this, the signature itself does not tell
+// whether 'a outlives 'b or the other way around.
+// So it could be possible that 'b of reference outlives 'a of the data.
+struct Nested<'a, 'b> {
+    ref_struct: &'b Struct<'a>, // compile error E0491
+}
+```
+
+To fix this issue, you can specify a bound to the lifetime like below:
+
+```
+struct Struct<'a> {
+    ref_i32: &'a i32,
+}
+
+// 'a: 'b means 'a outlives 'b
+struct Nested<'a: 'b, 'b> {
+    ref_struct: &'b Struct<'a>,
+}
+```
+"##,
+
 E0496: r##"
 A lifetime name is shadowing another lifetime name. Erroneous code example:
 
@@ -1601,8 +1715,7 @@ fn cookie() -> ! { // error: definition of an unknown language item: `cookie`
 "##,
 
 E0525: r##"
-A closure was attempted to get used whereas it doesn't implement the expected
-trait.
+A closure was used but didn't implement the expected trait.
 
 Erroneous code example:
 
@@ -1644,6 +1757,30 @@ To understand better how closures work in Rust, read:
 https://doc.rust-lang.org/book/closures.html
 "##,
 
+E0580: r##"
+The `main` function was incorrectly declared.
+
+Erroneous code example:
+
+```compile_fail,E0580
+fn main() -> i32 { // error: main function has wrong type
+    0
+}
+```
+
+The `main` function prototype should never take arguments or return type.
+Example:
+
+```
+fn main() {
+    // your code
+}
+```
+
+If you want to get command-line arguments, use `std::env::args`. To exit with a
+specified exit code, use `std::process::exit`.
+"##,
+
 }
 
 
@@ -1681,7 +1818,6 @@ register_diagnostics! {
     E0488, // lifetime of variable does not enclose its declaration
     E0489, // type/lifetime parameter not in scope here
     E0490, // a value of type `..` is borrowed for too long
-    E0491, // in type `..`, reference has a longer lifetime than the data it...
     E0495, // cannot infer an appropriate lifetime due to conflicting requirements
     E0566  // conflicting representation hints
 }

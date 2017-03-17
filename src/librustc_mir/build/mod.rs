@@ -126,27 +126,26 @@ pub fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
                                        arguments: A,
                                        abi: Abi,
                                        return_ty: Ty<'gcx>,
-                                       ast_body: &'gcx hir::Expr)
+                                       body: &'gcx hir::Body)
                                        -> Mir<'tcx>
     where A: Iterator<Item=(Ty<'gcx>, Option<&'gcx hir::Pat>)>
 {
     let arguments: Vec<_> = arguments.collect();
 
     let tcx = hir.tcx();
-    let span = tcx.map.span(fn_id);
+    let span = tcx.hir.span(fn_id);
     let mut builder = Builder::new(hir, span, arguments.len(), return_ty);
 
-    let body_id = ast_body.id;
     let call_site_extent =
         tcx.region_maps.lookup_code_extent(
-            CodeExtentData::CallSiteScope { fn_id: fn_id, body_id: body_id });
+            CodeExtentData::CallSiteScope { fn_id: fn_id, body_id: body.value.id });
     let arg_extent =
         tcx.region_maps.lookup_code_extent(
-            CodeExtentData::ParameterScope { fn_id: fn_id, body_id: body_id });
+            CodeExtentData::ParameterScope { fn_id: fn_id, body_id: body.value.id });
     let mut block = START_BLOCK;
     unpack!(block = builder.in_scope(call_site_extent, block, |builder| {
         unpack!(block = builder.in_scope(arg_extent, block, |builder| {
-            builder.args_and_body(block, &arguments, arg_extent, ast_body)
+            builder.args_and_body(block, &arguments, arg_extent, &body.value)
         }));
         // Attribute epilogue to function's closing brace
         let fn_end = Span { lo: span.hi, ..span };
@@ -169,8 +168,8 @@ pub fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
     // Gather the upvars of a closure, if any.
     let upvar_decls: Vec<_> = tcx.with_freevars(fn_id, |freevars| {
         freevars.iter().map(|fv| {
-            let var_id = tcx.map.as_local_node_id(fv.def.def_id()).unwrap();
-            let by_ref = tcx.tables().upvar_capture(ty::UpvarId {
+            let var_id = tcx.hir.as_local_node_id(fv.def.def_id()).unwrap();
+            let by_ref = hir.tables().upvar_capture(ty::UpvarId {
                 var_id: var_id,
                 closure_expr_id: fn_id
             }).map_or(false, |capture| match capture {
@@ -181,7 +180,7 @@ pub fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
                 debug_name: keywords::Invalid.name(),
                 by_ref: by_ref
             };
-            if let Some(hir::map::NodeLocal(pat)) = tcx.map.find(var_id) {
+            if let Some(hir::map::NodeLocal(pat)) = tcx.hir.find(var_id) {
                 if let hir::PatKind::Binding(_, _, ref ident, _) = pat.node {
                     decl.debug_name = ident.node;
                 }
@@ -196,12 +195,12 @@ pub fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
 }
 
 pub fn construct_const<'a, 'gcx, 'tcx>(hir: Cx<'a, 'gcx, 'tcx>,
-                                       item_id: ast::NodeId,
-                                       ast_expr: &'tcx hir::Expr)
+                                       body_id: hir::BodyId)
                                        -> Mir<'tcx> {
     let tcx = hir.tcx();
-    let ty = tcx.tables().expr_ty_adjusted(ast_expr);
-    let span = tcx.map.span(item_id);
+    let ast_expr = &tcx.hir.body(body_id).value;
+    let ty = hir.tables().expr_ty_adjusted(ast_expr);
+    let span = tcx.hir.span(tcx.hir.body_owner(body_id));
     let mut builder = Builder::new(hir, span, 0, ty);
 
     let extent = tcx.region_maps.temporary_scope(ast_expr.id)
@@ -306,7 +305,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             let lvalue = Lvalue::Local(Local::new(index + 1));
 
             if let Some(pattern) = pattern {
-                let pattern = Pattern::from_hir(self.hir.tcx(), pattern);
+                let pattern = Pattern::from_hir(self.hir.tcx(), self.hir.tables(), pattern);
                 scope = self.declare_bindings(scope, ast_body.span, &pattern);
                 unpack!(block = self.lvalue_into_pattern(block, pattern, &lvalue));
             }

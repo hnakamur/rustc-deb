@@ -143,9 +143,25 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
                     err.emit();
                 });
             }
-            TyKind::ObjectSum(_, ref bounds) |
-            TyKind::PolyTraitRef(ref bounds) => {
+            TyKind::TraitObject(ref bounds) => {
+                let mut any_lifetime_bounds = false;
+                for bound in bounds {
+                    if let RegionTyParamBound(ref lifetime) = *bound {
+                        if any_lifetime_bounds {
+                            span_err!(self.session, lifetime.span, E0226,
+                                      "only a single explicit lifetime bound is permitted");
+                            break;
+                        }
+                        any_lifetime_bounds = true;
+                    }
+                }
                 self.no_questions_in_bounds(bounds, "trait object types", false);
+            }
+            TyKind::ImplTrait(ref bounds) => {
+                if !bounds.iter()
+                          .any(|b| if let TraitTyParamBound(..) = *b { true } else { false }) {
+                    self.err_handler().span_err(ty.span, "at least one trait must be specified");
+                }
             }
             _ => {}
         }
@@ -154,8 +170,8 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
     }
 
     fn visit_path(&mut self, path: &'a Path, id: NodeId) {
-        if path.global && path.segments.len() > 0 {
-            let ident = path.segments[0].identifier;
+        if path.segments.len() >= 2 && path.is_global() {
+            let ident = path.segments[1].identifier;
             if token::Ident(ident).is_path_segment_keyword() {
                 self.session.add_lint(lint::builtin::SUPER_OR_SELF_IN_GLOBAL_PATH,
                                       id,
@@ -171,7 +187,7 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
         match item.node {
             ItemKind::Use(ref view_path) => {
                 let path = view_path.node.path();
-                if !path.segments.iter().all(|segment| segment.parameters.is_empty()) {
+                if path.segments.iter().any(|segment| segment.parameters.is_some()) {
                     self.err_handler()
                         .span_err(path.span, "type or lifetime parameters in import path");
                 }
@@ -275,7 +291,7 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
     fn visit_vis(&mut self, vis: &'a Visibility) {
         match *vis {
             Visibility::Restricted { ref path, .. } => {
-                if !path.segments.iter().all(|segment| segment.parameters.is_empty()) {
+                if !path.segments.iter().all(|segment| segment.parameters.is_none()) {
                     self.err_handler()
                         .span_err(path.span, "type or lifetime parameters in visibility path");
                 }
@@ -284,6 +300,26 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
         }
 
         visit::walk_vis(self, vis)
+    }
+
+    fn visit_generics(&mut self, g: &'a Generics) {
+        let mut seen_default = None;
+        for ty_param in &g.ty_params {
+            if ty_param.default.is_some() {
+                seen_default = Some(ty_param.span);
+            } else if let Some(span) = seen_default {
+                self.err_handler()
+                    .span_err(span, "type parameters with a default must be trailing");
+                break
+            }
+        }
+        for predicate in &g.where_clause.predicates {
+            if let WherePredicate::EqPredicate(ref predicate) = *predicate {
+                self.err_handler().span_err(predicate.span, "equality constraints are not yet \
+                                                             supported in where clauses (#20041)");
+            }
+        }
+        visit::walk_generics(self, g)
     }
 }
 

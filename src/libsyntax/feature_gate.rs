@@ -26,11 +26,11 @@ use self::AttributeType::*;
 use self::AttributeGate::*;
 
 use abi::Abi;
-use ast::{self, NodeId, PatKind};
+use ast::{self, NodeId, PatKind, RangeEnd};
 use attr;
 use codemap::{CodeMap, Spanned};
 use syntax_pos::Span;
-use errors::{DiagnosticBuilder, Handler};
+use errors::{DiagnosticBuilder, Handler, FatalError};
 use visit::{self, FnKind, Visitor};
 use parse::ParseSess;
 use symbol::Symbol;
@@ -124,11 +124,7 @@ declare_features! (
     (active, advanced_slice_patterns, "1.0.0", Some(23121)),
     (active, box_syntax, "1.0.0", Some(27779)),
     (active, placement_in_syntax, "1.0.0", Some(27779)),
-    (active, reflect, "1.0.0", Some(27749)),
     (active, unboxed_closures, "1.0.0", Some(29625)),
-
-    // rustc internal.
-    (active, pushpop_unsafe, "1.2.0", None),
 
     (active, allocator, "1.0.0", Some(27389)),
     (active, fundamental, "1.0.0", Some(29635)),
@@ -251,6 +247,9 @@ declare_features! (
     // a...b and ...b
     (active, inclusive_range_syntax, "1.7.0", Some(28237)),
 
+    // X..Y patterns
+    (active, exclusive_range_pattern, "1.11.0", Some(37854)),
+
     // impl specialization (RFC 1210)
     (active, specialization, "1.7.0", Some(31844)),
 
@@ -298,9 +297,6 @@ declare_features! (
     // The #![windows_subsystem] attribute
     (active, windows_subsystem, "1.14.0", Some(37499)),
 
-    // Allows using `Self` and associated types in struct expressions and patterns.
-    (active, more_struct_aliases, "1.14.0", Some(37544)),
-
     // Allows #[link(..., cfg(..))]
     (active, link_cfg, "1.14.0", Some(37406)),
 
@@ -311,6 +307,24 @@ declare_features! (
 
     // Allows #[target_feature(...)]
     (active, target_feature, "1.15.0", None),
+
+    // `extern "ptx-*" fn()`
+    (active, abi_ptx, "1.15.0", None),
+
+    // The `i128` type
+    (active, i128_type, "1.16.0", Some(35118)),
+
+    // The `unadjusted` ABI. Perma unstable.
+    (active, abi_unadjusted, "1.16.0", None),
+
+    // Macros 1.1
+    (active, proc_macro, "1.16.0", Some(35900)),
+
+    // Allows attributes on struct literal fields.
+    (active, struct_field_attributes, "1.16.0", Some(38814)),
+
+    // `extern "msp430-interrupt" fn()`
+    (active, abi_msp430_interrupt, "1.16.0", Some(38487)),
 );
 
 declare_features! (
@@ -318,6 +332,7 @@ declare_features! (
     (removed, managed_boxes, "1.0.0", None),
     // Allows use of unary negate on unsigned integers, e.g. -e for e: u8
     (removed, negate_unsigned, "1.0.0", Some(29645)),
+    (removed, reflect, "1.0.0", Some(27749)),
     // A way to temporarily opt out of opt in copy. This will *never* be accepted.
     (removed, opt_out_copy, "1.0.0", None),
     (removed, quad_precision_float, "1.0.0", None),
@@ -328,6 +343,7 @@ declare_features! (
     // Allows using items which are missing stability attributes
     // rustc internal
     (removed, unmarked_api, "1.0.0", None),
+    (removed, pushpop_unsafe, "1.2.0", None),
 );
 
 declare_features! (
@@ -361,8 +377,8 @@ declare_features! (
     // Allows `..` in tuple (struct) patterns
     (accepted, dotdot_in_tuple_patterns, "1.14.0", Some(33627)),
     (accepted, item_like_imports, "1.14.0", Some(35120)),
-    // Macros 1.1
-    (accepted, proc_macro, "1.15.0", Some(35900)),
+    // Allows using `Self` and associated types in struct expressions and patterns.
+    (accepted, more_struct_aliases, "1.14.0", Some(37544)),
 );
 // (changing above list without updating src/doc/reference.md makes @cmr sad)
 
@@ -428,6 +444,10 @@ macro_rules! cfg_fn {
 
 pub fn deprecated_attributes() -> Vec<&'static (&'static str, AttributeType, AttributeGate)> {
     BUILTIN_ATTRIBUTES.iter().filter(|a| a.2.is_deprecated()).collect()
+}
+
+pub fn is_builtin_attr(attr: &ast::Attribute) -> bool {
+    BUILTIN_ATTRIBUTES.iter().any(|&(builtin_name, _, _)| attr.check_name(builtin_name))
 }
 
 // Attributes that have a special meaning to rustc or rustdoc
@@ -678,10 +698,10 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
                                                        cfg_fn!(omit_gdb_pretty_printer_section))),
     ("unsafe_destructor_blind_to_params",
      Normal,
-     Gated(Stability::Unstable,
+     Gated(Stability::Deprecated("https://github.com/rust-lang/rust/issues/34761"),
            "dropck_parametricity",
-           "unsafe_destructor_blind_to_params has unstable semantics \
-            and may be removed in the future",
+           "unsafe_destructor_blind_to_params has been replaced by \
+            may_dangle and will be removed in the future",
            cfg_fn!(dropck_parametricity))),
     ("may_dangle",
      Normal,
@@ -712,16 +732,22 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
                                         "unboxed_closures",
                                         "unboxed_closures are still evolving",
                                         cfg_fn!(unboxed_closures))),
-    ("rustc_reflect_like", Whitelisted, Gated(Stability::Unstable,
-                                              "reflect",
-                                              "defining reflective traits is still evolving",
-                                              cfg_fn!(reflect))),
 
     ("windows_subsystem", Whitelisted, Gated(Stability::Unstable,
                                              "windows_subsystem",
                                              "the windows subsystem attribute \
                                               is currently unstable",
                                              cfg_fn!(windows_subsystem))),
+
+    ("proc_macro_attribute", Normal, Gated(Stability::Unstable,
+                                           "proc_macro",
+                                           "attribute proc macros are currently unstable",
+                                           cfg_fn!(proc_macro))),
+
+    ("rustc_derive_registrar", Normal, Gated(Stability::Unstable,
+                                             "rustc_derive_registrar",
+                                             "used internally by rustc",
+                                             cfg_fn!(rustc_attrs))),
 
     // Crate level attributes
     ("crate_name", CrateLevel, Ungated),
@@ -865,9 +891,10 @@ fn find_lang_feature_issue(feature: &str) -> Option<u32> {
         issue
     } else {
         // search in Accepted or Removed features
-        ACCEPTED_FEATURES.iter().chain(REMOVED_FEATURES.iter())
-            .find(|t| t.0 == feature)
-            .unwrap().2
+        match ACCEPTED_FEATURES.iter().chain(REMOVED_FEATURES).find(|t| t.0 == feature) {
+            Some(&(_, _, issue)) => issue,
+            None => panic!("Feature `{}` is not declared anywhere", feature),
+        }
     }
 }
 
@@ -976,7 +1003,27 @@ impl<'a> PostExpansionVisitor<'a> {
                 gate_feature_post!(&self, abi_sysv64, span,
                                    "sysv64 ABI is experimental and subject to change");
             },
-            _ => {}
+            Abi::PtxKernel => {
+                gate_feature_post!(&self, abi_ptx, span,
+                                   "PTX ABIs are experimental and subject to change");
+            },
+            Abi::Unadjusted => {
+                gate_feature_post!(&self, abi_unadjusted, span,
+                                   "unadjusted ABI is an implementation detail and perma-unstable");
+            },
+            Abi::Msp430Interrupt => {
+                gate_feature_post!(&self, abi_msp430_interrupt, span,
+                                   "msp430-interrupt ABI is experimental and subject to change");
+            },
+            // Stable
+            Abi::Cdecl |
+            Abi::Stdcall |
+            Abi::Fastcall |
+            Abi::Aapcs |
+            Abi::Win64 |
+            Abi::Rust |
+            Abi::C |
+            Abi::System => {}
         }
     }
 }
@@ -1190,6 +1237,18 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                 gate_feature_post!(&self, loop_break_value, e.span,
                                    "`break` with a value is experimental");
             }
+            ast::ExprKind::Lit(ref lit) => {
+                if let ast::LitKind::Int(_, ref ty) = lit.node {
+                    match *ty {
+                        ast::LitIntType::Signed(ast::IntTy::I128) |
+                        ast::LitIntType::Unsigned(ast::UintTy::U128) => {
+                            gate_feature_post!(&self, i128_type, e.span,
+                                               "128-bit integers are not stable");
+                        }
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
         visit::walk_expr(self, e);
@@ -1222,6 +1281,10 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                                           "numeric fields in struct patterns are unstable");
                     }
                 }
+            }
+            PatKind::Range(_, _, RangeEnd::Excluded) => {
+                gate_feature_post!(&self, exclusive_range_pattern, pattern.span,
+                                   "exclusive range pattern syntax is experimental");
             }
             _ => {}
         }
@@ -1336,6 +1399,8 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
 pub fn get_features(span_handler: &Handler, krate_attrs: &[ast::Attribute]) -> Features {
     let mut features = Features::new();
 
+    let mut feature_checker = MutexFeatureChecker::default();
+
     for attr in krate_attrs {
         if !attr.check_name("feature") {
             continue
@@ -1359,6 +1424,7 @@ pub fn get_features(span_handler: &Handler, krate_attrs: &[ast::Attribute]) -> F
                     if let Some(&(_, _, _, setter)) = ACTIVE_FEATURES.iter()
                         .find(|& &(n, _, _, _)| name == n) {
                         *(setter(&mut features)) = true;
+                        feature_checker.collect(&features, mi.span);
                     }
                     else if let Some(&(_, _, _)) = REMOVED_FEATURES.iter()
                         .find(|& &(n, _, _)| name == n) {
@@ -1375,7 +1441,43 @@ pub fn get_features(span_handler: &Handler, krate_attrs: &[ast::Attribute]) -> F
         }
     }
 
+    feature_checker.check(span_handler);
+
     features
+}
+
+// A collector for mutually-exclusive features and their flag spans
+#[derive(Default)]
+struct MutexFeatureChecker {
+    proc_macro: Option<Span>,
+    custom_attribute: Option<Span>,
+}
+
+impl MutexFeatureChecker {
+    // If this method turns out to be a hotspot due to branching,
+    // the branching can be eliminated by modifying `setter!()` to set these spans
+    // only for the features that need to be checked for mutual exclusion.
+    fn collect(&mut self, features: &Features, span: Span) {
+        if features.proc_macro {
+            // If self.proc_macro is None, set to Some(span)
+            self.proc_macro = self.proc_macro.or(Some(span));
+        }
+
+        if features.custom_attribute {
+            self.custom_attribute = self.custom_attribute.or(Some(span));
+        }
+    }
+
+    fn check(self, handler: &Handler) {
+        if let (Some(pm_span), Some(ca_span)) = (self.proc_macro, self.custom_attribute) {
+            handler.struct_span_err(pm_span, "Cannot use `#![feature(proc_macro)]` and \
+                                              `#![feature(custom_attribute)] at the same time")
+                .span_note(ca_span, "`#![feature(custom_attribute)]` declared here")
+                .emit();
+
+            panic!(FatalError);
+        }
+    }
 }
 
 pub fn check_crate(krate: &ast::Crate,

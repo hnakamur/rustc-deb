@@ -45,7 +45,8 @@ macro_rules! panic {
 /// Other use-cases of `assert!` include [testing] and enforcing run-time
 /// invariants in safe code (whose violation cannot result in unsafety).
 ///
-/// This macro has a second version, where a custom panic message can be provided.
+/// This macro has a second version, where a custom panic message can
+/// be provided with or without arguments for formatting.
 ///
 /// [testing]: ../book/testing.html
 ///
@@ -87,12 +88,17 @@ macro_rules! assert {
 /// On panic, this macro will print the values of the expressions with their
 /// debug representations.
 ///
+/// Like `assert!()`, this macro has a second version, where a custom
+/// panic message can be provided.
+///
 /// # Examples
 ///
 /// ```
 /// let a = 3;
 /// let b = 1 + 2;
 /// assert_eq!(a, b);
+///
+/// assert_eq!(a, b, "we are testing addition with {} and {}", a, b);
 /// ```
 #[macro_export]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -125,12 +131,17 @@ macro_rules! assert_eq {
 /// On panic, this macro will print the values of the expressions with their
 /// debug representations.
 ///
+/// Like `assert!()`, this macro has a second version, where a custom
+/// panic message can be provided.
+///
 /// # Examples
 ///
 /// ```
 /// let a = 3;
 /// let b = 2;
 /// assert_ne!(a, b);
+///
+/// assert_ne!(a, b, "we are testing that the values are not equal");
 /// ```
 #[macro_export]
 #[stable(feature = "assert_ne", since = "1.12.0")]
@@ -404,10 +415,11 @@ macro_rules! write {
 /// use std::io::Write;
 ///
 /// let mut w = Vec::new();
+/// writeln!(&mut w).unwrap();
 /// writeln!(&mut w, "test").unwrap();
 /// writeln!(&mut w, "formatted {}", "arguments").unwrap();
 ///
-/// assert_eq!(&w[..], "test\nformatted arguments\n".as_bytes());
+/// assert_eq!(&w[..], "\ntest\nformatted arguments\n".as_bytes());
 /// ```
 ///
 /// A module can import both `std::fmt::Write` and `std::io::Write` and call `write!` on objects
@@ -427,6 +439,9 @@ macro_rules! write {
 #[macro_export]
 #[stable(feature = "rust1", since = "1.0.0")]
 macro_rules! writeln {
+    ($dst:expr) => (
+        write!($dst, "\n")
+    );
     ($dst:expr, $fmt:expr) => (
         write!($dst, concat!($fmt, "\n"))
     );
