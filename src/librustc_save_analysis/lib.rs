@@ -15,7 +15,7 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![cfg_attr(not(stage0), deny(warnings))]
+#![deny(warnings)]
 
 #![feature(custom_attribute)]
 #![allow(unused_attributes)]
@@ -84,6 +84,7 @@ pub mod recorder {
 
 pub struct SaveContext<'l, 'tcx: 'l> {
     tcx: TyCtxt<'l, 'tcx, 'tcx>,
+    tables: &'l ty::TypeckTables<'tcx>,
     analysis: &'l ty::CrateAnalysis<'tcx>,
     span_utils: SpanUtils<'tcx>,
 }
@@ -93,24 +94,6 @@ macro_rules! option_try(
 );
 
 impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
-    pub fn new(tcx: TyCtxt<'l, 'tcx, 'tcx>,
-               analysis: &'l ty::CrateAnalysis<'tcx>)
-               -> SaveContext<'l, 'tcx> {
-        let span_utils = SpanUtils::new(&tcx.sess);
-        SaveContext::from_span_utils(tcx, analysis, span_utils)
-    }
-
-    pub fn from_span_utils(tcx: TyCtxt<'l, 'tcx, 'tcx>,
-                           analysis: &'l ty::CrateAnalysis<'tcx>,
-                           span_utils: SpanUtils<'tcx>)
-                           -> SaveContext<'l, 'tcx> {
-        SaveContext {
-            tcx: tcx,
-            analysis: analysis,
-            span_utils: span_utils,
-        }
-    }
-
     // List external crates used by the current crate.
     pub fn get_external_crates(&self) -> Vec<CrateData> {
         let mut result = Vec::new();
@@ -152,6 +135,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     visibility: From::from(&item.vis),
                     parent: None,
                     docs: docs_for_attrs(&item.attrs),
+                    sig: self.sig_base(item),
                 }))
             }
             ast::ItemKind::Static(ref typ, mt, ref expr) => {
@@ -179,6 +163,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     type_value: ty_to_string(&typ),
                     visibility: From::from(&item.vis),
                     docs: docs_for_attrs(&item.attrs),
+                    sig: Some(self.sig_base(item)),
                 }))
             }
             ast::ItemKind::Const(ref typ, ref expr) => {
@@ -197,6 +182,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     type_value: ty_to_string(&typ),
                     visibility: From::from(&item.vis),
                     docs: docs_for_attrs(&item.attrs),
+                    sig: Some(self.sig_base(item)),
                 }))
             }
             ast::ItemKind::Mod(ref m) => {
@@ -207,6 +193,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
 
                 let sub_span = self.span_utils.sub_span_after_keyword(item.span, keywords::Mod);
                 filter!(self.span_utils, sub_span, item.span, None);
+
                 Some(Data::ModData(ModData {
                     id: item.id,
                     name: item.ident.to_string(),
@@ -217,6 +204,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     items: m.items.iter().map(|i| i.id).collect(),
                     visibility: From::from(&item.vis),
                     docs: docs_for_attrs(&item.attrs),
+                    sig: self.sig_base(item),
                 }))
             }
             ast::ItemKind::Enum(ref def, _) => {
@@ -239,6 +227,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     variants: def.variants.iter().map(|v| v.node.data.id()).collect(),
                     visibility: From::from(&item.vis),
                     docs: docs_for_attrs(&item.attrs),
+                    sig: self.sig_base(item),
                 }))
             }
             ast::ItemKind::Impl(.., ref trait_ref, ref typ, _) => {
@@ -287,26 +276,43 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
         }
     }
 
-    pub fn get_field_data(&self, field: &ast::StructField,
-                          scope: NodeId) -> Option<VariableData> {
+    pub fn get_field_data(&self,
+                          field: &ast::StructField,
+                          scope: NodeId)
+                          -> Option<VariableData> {
         if let Some(ident) = field.ident {
+            let name = ident.to_string();
             let qualname = format!("::{}::{}", self.tcx.node_path_str(scope), ident);
-            let def_id = self.tcx.map.local_def_id(field.id);
-            let typ = self.tcx.item_type(def_id).to_string();
             let sub_span = self.span_utils.sub_span_before_token(field.span, token::Colon);
             filter!(self.span_utils, sub_span, field.span, None);
+            let def_id = self.tcx.hir.local_def_id(field.id);
+            let typ = self.tcx.item_type(def_id).to_string();
+
+            let span = field.span;
+            let text = self.span_utils.snippet(field.span);
+            let ident_start = text.find(&name).unwrap();
+            let ident_end = ident_start + name.len();
+            let sig = Signature {
+                span: span,
+                text: text,
+                ident_start: ident_start,
+                ident_end: ident_end,
+                defs: vec![],
+                refs: vec![],
+            };
             Some(VariableData {
                 id: field.id,
                 kind: VariableKind::Field,
-                name: ident.to_string(),
+                name: name,
                 qualname: qualname,
                 span: sub_span.unwrap(),
                 scope: scope,
-                parent: Some(make_def_id(scope, &self.tcx.map)),
+                parent: Some(make_def_id(scope, &self.tcx.hir)),
                 value: "".to_owned(),
                 type_value: typ,
                 visibility: From::from(&field.vis),
                 docs: docs_for_attrs(&field.attrs),
+                sig: Some(sig),
             })
         } else {
             None
@@ -320,13 +326,13 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
         // The qualname for a method is the trait name or name of the struct in an impl in
         // which the method is declared in, followed by the method's name.
         let (qualname, parent_scope, decl_id, vis, docs) =
-          match self.tcx.impl_of_method(self.tcx.map.local_def_id(id)) {
-            Some(impl_id) => match self.tcx.map.get_if_local(impl_id) {
+          match self.tcx.impl_of_method(self.tcx.hir.local_def_id(id)) {
+            Some(impl_id) => match self.tcx.hir.get_if_local(impl_id) {
                 Some(Node::NodeItem(item)) => {
                     match item.node {
                         hir::ItemImpl(.., ref ty, _) => {
                             let mut result = String::from("<");
-                            result.push_str(&rustc::hir::print::ty_to_string(&ty));
+                            result.push_str(&self.tcx.hir.node_to_pretty_string(ty.id));
 
                             let trait_id = self.tcx.trait_id_of_impl(impl_id);
                             let mut decl_id = None;
@@ -359,9 +365,9 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                               r);
                 }
             },
-            None => match self.tcx.trait_of_item(self.tcx.map.local_def_id(id)) {
+            None => match self.tcx.trait_of_item(self.tcx.hir.local_def_id(id)) {
                 Some(def_id) => {
-                    match self.tcx.map.get_if_local(def_id) {
+                    match self.tcx.hir.get_if_local(def_id) {
                         Some(Node::NodeItem(item)) => {
                             (format!("::{}", self.tcx.item_path_str(def_id)),
                              Some(def_id), None,
@@ -388,9 +394,23 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
 
         let sub_span = self.span_utils.sub_span_after_keyword(span, keywords::Fn);
         filter!(self.span_utils, sub_span, span, None);
+
+        let name = name.to_string();
+        let text = self.span_utils.signature_string_for_span(span);
+        let ident_start = text.find(&name).unwrap();
+        let ident_end = ident_start + name.len();
+        let sig = Signature {
+            span: span,
+            text: text,
+            ident_start: ident_start,
+            ident_end: ident_end,
+            defs: vec![],
+            refs: vec![],
+        };
+
         Some(FunctionData {
             id: id,
-            name: name.to_string(),
+            name: name,
             qualname: qualname,
             declaration: decl_id,
             span: sub_span.unwrap(),
@@ -400,6 +420,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
             visibility: vis,
             parent: parent_scope,
             docs: docs,
+            sig: sig,
         })
     }
 
@@ -421,14 +442,14 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
     }
 
     pub fn get_expr_data(&self, expr: &ast::Expr) -> Option<Data> {
-        let hir_node = self.tcx.map.expect_expr(expr.id);
-        let ty = self.tcx.tables().expr_ty_adjusted_opt(&hir_node);
+        let hir_node = self.tcx.hir.expect_expr(expr.id);
+        let ty = self.tables.expr_ty_adjusted_opt(&hir_node);
         if ty.is_none() || ty.unwrap().sty == ty::TyError {
             return None;
         }
         match expr.node {
             ast::ExprKind::Field(ref sub_ex, ident) => {
-                let hir_node = match self.tcx.map.find(sub_ex.id) {
+                let hir_node = match self.tcx.hir.find(sub_ex.id) {
                     Some(Node::NodeExpr(expr)) => expr,
                     _ => {
                         debug!("Missing or weird node for sub-expression {} in {:?}",
@@ -436,7 +457,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                         return None;
                     }
                 };
-                match self.tcx.tables().expr_ty_adjusted(&hir_node).sty {
+                match self.tables.expr_ty_adjusted(&hir_node).sty {
                     ty::TyAdt(def, _) if !def.is_enum() => {
                         let f = def.struct_variant().field_named(ident.node.name);
                         let sub_span = self.span_utils.span_for_last_ident(expr.span);
@@ -455,7 +476,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                 }
             }
             ast::ExprKind::Struct(ref path, ..) => {
-                match self.tcx.tables().expr_ty_adjusted(&hir_node).sty {
+                match self.tables.expr_ty_adjusted(&hir_node).sty {
                     ty::TyAdt(def, _) if !def.is_enum() => {
                         let sub_span = self.span_utils.span_for_last_ident(path.span);
                         filter!(self.span_utils, sub_span, path.span, None);
@@ -476,7 +497,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
             }
             ast::ExprKind::MethodCall(..) => {
                 let method_call = ty::MethodCall::expr(expr.id);
-                let method_id = self.tcx.tables().method_map[&method_call].def_id;
+                let method_id = self.tables.method_map[&method_call].def_id;
                 let (def_id, decl_id) = match self.tcx.associated_item(method_id).container {
                     ty::ImplContainer(_) => (Some(method_id), None),
                     ty::TraitContainer(_) => (None, Some(method_id)),
@@ -502,7 +523,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
     }
 
     pub fn get_path_def(&self, id: NodeId) -> Def {
-        match self.tcx.map.get(id) {
+        match self.tcx.hir.get(id) {
             Node::NodeTraitRef(tr) => tr.path.def,
 
             Node::NodeItem(&hir::Item { node: hir::ItemUse(ref path, _), .. }) |
@@ -513,7 +534,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
             Node::NodePat(&hir::Pat { node: hir::PatKind::Path(ref qpath), .. }) |
             Node::NodePat(&hir::Pat { node: hir::PatKind::Struct(ref qpath, ..), .. }) |
             Node::NodePat(&hir::Pat { node: hir::PatKind::TupleStruct(ref qpath, ..), .. }) => {
-                self.tcx.tables().qpath_def(qpath, id)
+                self.tables.qpath_def(qpath, id)
             }
 
             Node::NodeLocal(&hir::Pat { node: hir::PatKind::Binding(_, def_id, ..), .. }) => {
@@ -695,9 +716,24 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
         }
     }
 
+    fn sig_base(&self, item: &ast::Item) -> Signature {
+        let text = self.span_utils.signature_string_for_span(item.span);
+        let name = item.ident.to_string();
+        let ident_start = text.find(&name).expect("Name not in signature?");
+        let ident_end = ident_start + name.len();
+        Signature {
+            span: mk_sp(item.span.lo, item.span.lo + BytePos(text.len() as u32)),
+            text: text,
+            ident_start: ident_start,
+            ident_end: ident_end,
+            defs: vec![],
+            refs: vec![],
+        }
+    }
+
     #[inline]
     pub fn enclosing_scope(&self, id: NodeId) -> NodeId {
-        self.tcx.map.get_enclosing_scope(id).unwrap_or(CRATE_NODE_ID)
+        self.tcx.hir.get_enclosing_scope(id).unwrap_or(CRATE_NODE_ID)
     }
 }
 
@@ -861,7 +897,12 @@ pub fn process_crate<'l, 'tcx>(tcx: TyCtxt<'l, 'tcx, 'tcx>,
     root_path.pop();
     let output = &mut output_file;
 
-    let save_ctxt = SaveContext::new(tcx, analysis);
+    let save_ctxt = SaveContext {
+        tcx: tcx,
+        tables: &ty::TypeckTables::empty(),
+        analysis: analysis,
+        span_utils: SpanUtils::new(&tcx.sess),
+    };
 
     macro_rules! dump {
         ($new_dumper: expr) => {{

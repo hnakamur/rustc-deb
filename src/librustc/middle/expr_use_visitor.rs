@@ -287,28 +287,22 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         }
     }
 
-    pub fn walk_fn(&mut self,
-                   decl: &hir::FnDecl,
-                   body: &hir::Expr) {
-        self.walk_arg_patterns(decl, body);
-        self.consume_expr(body);
-    }
-
-    fn walk_arg_patterns(&mut self,
-                         decl: &hir::FnDecl,
-                         body: &hir::Expr) {
-        for arg in &decl.inputs {
+    pub fn consume_body(&mut self, body: &hir::Body) {
+        for arg in &body.arguments {
             let arg_ty = return_if_err!(self.mc.infcx.node_ty(arg.pat.id));
 
-            let fn_body_scope_r = self.tcx().node_scope_region(body.id);
+            let fn_body_scope_r = self.tcx().node_scope_region(body.value.id);
             let arg_cmt = self.mc.cat_rvalue(
                 arg.id,
                 arg.pat.span,
                 fn_body_scope_r, // Args live only as long as the fn body.
+                fn_body_scope_r,
                 arg_ty);
 
             self.walk_irrefutable_pat(arg_cmt, &arg.pat);
         }
+
+        self.consume_expr(&body.value);
     }
 
     fn tcx(&self) -> TyCtxt<'a, 'gcx, 'tcx> {
@@ -537,9 +531,8 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 }
             }
 
-            hir::ExprRepeat(ref base, ref count) => {
+            hir::ExprRepeat(ref base, _) => {
                 self.consume_expr(&base);
-                self.consume_expr(&count);
             }
 
             hir::ExprClosure(.., fn_decl_span) => {
@@ -716,7 +709,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
     fn walk_adjustment(&mut self, expr: &hir::Expr) {
         let infcx = self.mc.infcx;
         //NOTE(@jroesch): mixed RefCell borrow causes crash
-        let adj = infcx.adjustments().get(&expr.id).map(|x| x.clone());
+        let adj = infcx.tables.borrow().adjustments.get(&expr.id).map(|x| x.clone());
         if let Some(adjustment) = adj {
             match adjustment.kind {
                 adjustment::Adjust::NeverToAny |
@@ -997,7 +990,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 PatKind::Struct(ref qpath, ..) => qpath,
                 _ => return
             };
-            let def = tcx.tables().qpath_def(qpath, pat.id);
+            let def = infcx.tables.borrow().qpath_def(qpath, pat.id);
             match def {
                 Def::Variant(variant_did) |
                 Def::VariantCtor(variant_did, ..) => {
@@ -1028,7 +1021,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         self.tcx().with_freevars(closure_expr.id, |freevars| {
             for freevar in freevars {
                 let def_id = freevar.def.def_id();
-                let id_var = self.tcx().map.as_local_node_id(def_id).unwrap();
+                let id_var = self.tcx().hir.as_local_node_id(def_id).unwrap();
                 let upvar_id = ty::UpvarId { var_id: id_var,
                                              closure_expr_id: closure_expr.id };
                 let upvar_capture = self.mc.infcx.upvar_capture(upvar_id).unwrap();
@@ -1060,7 +1053,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                         -> mc::McResult<mc::cmt<'tcx>> {
         // Create the cmt for the variable being borrowed, from the
         // caller's perspective
-        let var_id = self.tcx().map.as_local_node_id(upvar_def.def_id()).unwrap();
+        let var_id = self.tcx().hir.as_local_node_id(upvar_def.def_id()).unwrap();
         let var_ty = self.mc.infcx.node_ty(var_id)?;
         self.mc.cat_def(closure_id, closure_span, var_ty, upvar_def)
     }

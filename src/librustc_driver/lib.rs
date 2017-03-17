@@ -21,7 +21,7 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![cfg_attr(not(stage0), deny(warnings))]
+#![deny(warnings)]
 
 #![feature(box_syntax)]
 #![feature(libc)]
@@ -32,7 +32,6 @@
 #![feature(staged_api)]
 
 extern crate arena;
-extern crate flate;
 extern crate getopts;
 extern crate graphviz;
 extern crate libc;
@@ -57,7 +56,6 @@ extern crate serialize;
 extern crate rustc_llvm as llvm;
 #[macro_use]
 extern crate log;
-#[macro_use]
 extern crate syntax;
 extern crate syntax_ext;
 extern crate syntax_pos;
@@ -82,6 +80,7 @@ use rustc::util::common::time;
 
 use serialize::json::ToJson;
 
+use std::any::Any;
 use std::cmp::max;
 use std::cmp::Ordering::Equal;
 use std::default::Default;
@@ -455,13 +454,14 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
                 };
                 control.after_hir_lowering.callback = box move |state| {
                     pretty::print_after_hir_lowering(state.session,
-                                                     state.ast_map.unwrap(),
+                                                     state.hir_map.unwrap(),
                                                      state.analysis.unwrap(),
                                                      state.resolutions.unwrap(),
                                                      state.input,
                                                      &state.expanded_crate.take().unwrap(),
                                                      state.crate_name.unwrap(),
                                                      ppm,
+                                                     state.arena.unwrap(),
                                                      state.arenas.unwrap(),
                                                      opt_uii.clone(),
                                                      state.out_file);
@@ -493,7 +493,8 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
             control.after_hir_lowering.stop = Compilation::Stop;
         }
 
-        if !sess.opts.output_types.keys().any(|&i| i == OutputType::Exe) {
+        if !sess.opts.output_types.keys().any(|&i| i == OutputType::Exe ||
+                                                   i == OutputType::Metadata) {
             control.after_llvm.stop = Compilation::Stop;
         }
 
@@ -903,7 +904,7 @@ fn print_flag_list<T>(cmdline_opt: &str,
 /// should continue, returns a getopts::Matches object parsed from args,
 /// otherwise returns None.
 ///
-/// The compiler's handling of options is a little complication as it ties into
+/// The compiler's handling of options is a little complicated as it ties into
 /// our stability story, and it's even *more* complicated by historical
 /// accidents. The current intention of each compiler option is to have one of
 /// three modes:
@@ -1016,15 +1017,34 @@ fn parse_crate_attrs<'a>(sess: &'a Session, input: &Input) -> PResult<'a, Vec<as
     }
 }
 
+/// Runs `f` in a suitable thread for running `rustc`; returns a
+/// `Result` with either the return value of `f` or -- if a panic
+/// occurs -- the panic value.
+pub fn in_rustc_thread<F, R>(f: F) -> Result<R, Box<Any + Send>>
+    where F: FnOnce() -> R + Send + 'static,
+          R: Send + 'static,
+{
+    // Temporarily have stack size set to 16MB to deal with nom-using crates failing
+    const STACK_SIZE: usize = 16 * 1024 * 1024; // 16MB
+
+    let mut cfg = thread::Builder::new().name("rustc".to_string());
+
+    // FIXME: Hacks on hacks. If the env is trying to override the stack size
+    // then *don't* set it explicitly.
+    if env::var_os("RUST_MIN_STACK").is_none() {
+        cfg = cfg.stack_size(STACK_SIZE);
+    }
+
+    let thread = cfg.spawn(f);
+    thread.unwrap().join()
+}
+
 /// Run a procedure which will detect panics in the compiler and print nicer
 /// error messages rather than just failing the test.
 ///
 /// The diagnostic emitter yielded to the procedure should be used for reporting
 /// errors of the compiler.
 pub fn monitor<F: FnOnce() + Send + 'static>(f: F) {
-    // Temporarily have stack size set to 16MB to deal with nom-using crates failing
-    const STACK_SIZE: usize = 16 * 1024 * 1024; // 16MB
-
     struct Sink(Arc<Mutex<Vec<u8>>>);
     impl Write for Sink {
         fn write(&mut self, data: &[u8]) -> io::Result<usize> {
@@ -1038,20 +1058,12 @@ pub fn monitor<F: FnOnce() + Send + 'static>(f: F) {
     let data = Arc::new(Mutex::new(Vec::new()));
     let err = Sink(data.clone());
 
-    let mut cfg = thread::Builder::new().name("rustc".to_string());
+    let result = in_rustc_thread(move || {
+        io::set_panic(Some(box err));
+        f()
+    });
 
-    // FIXME: Hacks on hacks. If the env is trying to override the stack size
-    // then *don't* set it explicitly.
-    if env::var_os("RUST_MIN_STACK").is_none() {
-        cfg = cfg.stack_size(STACK_SIZE);
-    }
-
-    let thread = cfg.spawn(move || {
-         io::set_panic(Some(box err));
-         f()
-     });
-
-     if let Err(value) = thread.unwrap().join() {
+    if let Err(value) = result {
         // Thread panicked without emitting a fatal diagnostic
         if !value.is::<errors::FatalError>() {
             let emitter =

@@ -490,7 +490,7 @@ impl<'a, 'tcx> MoveData<'tcx> {
     /// Adds a new record for a match of `base_lp`, downcast to
     /// variant `lp`, that occurs at location `pattern_id`.  (One
     /// should be able to recover the span info from the
-    /// `pattern_id` and the ast_map, I think.)
+    /// `pattern_id` and the hir_map, I think.)
     pub fn add_variant_match(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
                              lp: Rc<LoanPath<'tcx>>,
                              pattern_id: ast::NodeId,
@@ -655,13 +655,12 @@ impl<'a, 'tcx> FlowedMoveData<'a, 'tcx> {
                tcx: TyCtxt<'a, 'tcx, 'tcx>,
                cfg: &cfg::CFG,
                id_range: IdRange,
-               decl: &hir::FnDecl,
-               body: &hir::Expr)
+               body: &hir::Body)
                -> FlowedMoveData<'a, 'tcx> {
         let mut dfcx_moves =
             DataFlowContext::new(tcx,
                                  "flowed_move_data_moves",
-                                 Some(decl),
+                                 Some(body),
                                  cfg,
                                  MoveDataFlowOperator,
                                  id_range,
@@ -669,7 +668,7 @@ impl<'a, 'tcx> FlowedMoveData<'a, 'tcx> {
         let mut dfcx_assign =
             DataFlowContext::new(tcx,
                                  "flowed_move_data_assigns",
-                                 Some(decl),
+                                 Some(body),
                                  cfg,
                                  AssignDataFlowOperator,
                                  id_range,

@@ -16,7 +16,7 @@ use schema;
 
 use rustc::dep_graph::DepGraph;
 use rustc::hir::def_id::{CRATE_DEF_INDEX, LOCAL_CRATE, CrateNum, DefIndex, DefId};
-use rustc::hir::map::DefKey;
+use rustc::hir::map::definitions::DefPathTable;
 use rustc::hir::svh::Svh;
 use rustc::middle::cstore::{DepKind, ExternCrate};
 use rustc_back::PanicStrategy;
@@ -78,7 +78,9 @@ pub struct CrateMetadata {
     /// hashmap, which gives the reverse mapping.  This allows us to
     /// quickly retrace a `DefPath`, which is needed for incremental
     /// compilation support.
-    pub key_map: FxHashMap<DefKey, DefIndex>,
+    pub def_path_table: DefPathTable,
+
+    pub exported_symbols: FxHashSet<DefIndex>,
 
     pub dep_kind: Cell<DepKind>,
     pub source: CrateSource,
@@ -86,13 +88,6 @@ pub struct CrateMetadata {
     pub proc_macros: Option<Vec<(ast::Name, Rc<SyntaxExtension>)>>,
     // Foreign items imported from a dylib (Windows only)
     pub dllimport_foreign_items: FxHashSet<DefIndex>,
-}
-
-pub struct CachedInlinedItem {
-    /// The NodeId of the RootInlinedParent HIR map entry
-    pub inlined_root: ast::NodeId,
-    /// The local NodeId of the inlined entity
-    pub item_id: ast::NodeId,
 }
 
 pub struct CStore {
@@ -104,8 +99,6 @@ pub struct CStore {
     used_link_args: RefCell<Vec<String>>,
     statically_included_foreign_items: RefCell<FxHashSet<DefIndex>>,
     pub dllimport_foreign_items: RefCell<FxHashSet<DefIndex>>,
-    pub inlined_item_cache: RefCell<DefIdMap<Option<CachedInlinedItem>>>,
-    pub defid_for_inlined_node: RefCell<NodeMap<DefId>>,
     pub visible_parent_map: RefCell<DefIdMap<DefId>>,
 }
 
@@ -120,8 +113,6 @@ impl CStore {
             statically_included_foreign_items: RefCell::new(FxHashSet()),
             dllimport_foreign_items: RefCell::new(FxHashSet()),
             visible_parent_map: RefCell::new(FxHashMap()),
-            inlined_item_cache: RefCell::new(FxHashMap()),
-            defid_for_inlined_node: RefCell::new(FxHashMap()),
         }
     }
 

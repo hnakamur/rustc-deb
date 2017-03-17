@@ -490,6 +490,35 @@ pub fn type_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
     debug!("type_metadata: {:?}", t);
 
     let sty = &t.sty;
+    let ptr_metadata = |ty: Ty<'tcx>| {
+        match ty.sty {
+            ty::TySlice(typ) => {
+                Ok(vec_slice_metadata(cx, t, typ, unique_type_id, usage_site_span))
+            }
+            ty::TyStr => {
+                Ok(vec_slice_metadata(cx, t, cx.tcx().types.u8, unique_type_id, usage_site_span))
+            }
+            ty::TyDynamic(..) => {
+                Ok(MetadataCreationResult::new(
+                    trait_pointer_metadata(cx, ty, Some(t), unique_type_id),
+                    false))
+            }
+            _ => {
+                let pointee_metadata = type_metadata(cx, ty, usage_site_span);
+
+                match debug_context(cx).type_map
+                                        .borrow()
+                                        .find_metadata_for_unique_id(unique_type_id) {
+                    Some(metadata) => return Err(metadata),
+                    None => { /* proceed normally */ }
+                };
+
+                Ok(MetadataCreationResult::new(pointer_type_metadata(cx, t, pointee_metadata),
+                   false))
+            }
+        }
+    };
+
     let MetadataCreationResult { metadata, already_stored_in_typemap } = match *sty {
         ty::TyNever    |
         ty::TyBool     |
@@ -516,34 +545,17 @@ pub fn type_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                         trait_pointer_metadata(cx, t, None, unique_type_id),
             false)
         }
-        ty::TyBox(ty) |
         ty::TyRawPtr(ty::TypeAndMut{ty, ..}) |
         ty::TyRef(_, ty::TypeAndMut{ty, ..}) => {
-            match ty.sty {
-                ty::TySlice(typ) => {
-                    vec_slice_metadata(cx, t, typ, unique_type_id, usage_site_span)
-                }
-                ty::TyStr => {
-                    vec_slice_metadata(cx, t, cx.tcx().types.u8, unique_type_id, usage_site_span)
-                }
-                ty::TyDynamic(..) => {
-                    MetadataCreationResult::new(
-                        trait_pointer_metadata(cx, ty, Some(t), unique_type_id),
-                        false)
-                }
-                _ => {
-                    let pointee_metadata = type_metadata(cx, ty, usage_site_span);
-
-                    match debug_context(cx).type_map
-                                           .borrow()
-                                           .find_metadata_for_unique_id(unique_type_id) {
-                        Some(metadata) => return metadata,
-                        None => { /* proceed normally */ }
-                    };
-
-                    MetadataCreationResult::new(pointer_type_metadata(cx, t, pointee_metadata),
-                                                false)
-                }
+            match ptr_metadata(ty) {
+                Ok(res) => res,
+                Err(metadata) => return metadata,
+            }
+        }
+        ty::TyAdt(def, _) if def.is_box() => {
+            match ptr_metadata(t.boxed_ty()) {
+                Ok(res) => res,
+                Err(metadata) => return metadata,
             }
         }
         ty::TyFnDef(.., ref barefnty) | ty::TyFnPtr(ref barefnty) => {
@@ -906,7 +918,7 @@ impl<'tcx> StructMemberDescriptionFactory<'tcx> {
 
             MemberDescription {
                 name: name,
-                llvm_type: type_of::type_of(cx, fty),
+                llvm_type: type_of::in_memory_type_of(cx, fty),
                 type_metadata: type_metadata(cx, fty, self.span),
                 offset: offset,
                 flags: DIFlags::FlagZero,
@@ -1460,7 +1472,8 @@ fn prepare_enum_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                 llvm::LLVMRustDIBuilderCreateEnumerator(
                     DIB(cx),
                     name.as_ptr(),
-                    v.disr_val.to_u64_unchecked())
+                    // FIXME: what if enumeration has i128 discriminant?
+                    v.disr_val.to_u128_unchecked() as u64)
             }
         })
         .collect();
@@ -1737,15 +1750,7 @@ pub fn create_global_var_metadata(cx: &CrateContext,
 
     let tcx = cx.tcx();
 
-    // Don't create debuginfo for globals inlined from other crates. The other
-    // crate should already contain debuginfo for it. More importantly, the
-    // global might not even exist in un-inlined form anywhere which would lead
-    // to a linker errors.
-    if tcx.map.is_inlined_node_id(node_id) {
-        return;
-    }
-
-    let node_def_id = tcx.map.local_def_id(node_id);
+    let node_def_id = tcx.hir.local_def_id(node_id);
     let (var_scope, span) = get_namespace_and_span_for_item(cx, node_def_id);
 
     let (file_metadata, line_number) = if span != syntax_pos::DUMMY_SP {

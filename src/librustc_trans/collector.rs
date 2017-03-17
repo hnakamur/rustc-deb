@@ -52,7 +52,7 @@
 //!   the LLVM artifact produced for A references the LLVM artifact produced
 //!   for B.
 //!
-//! - Translation items and the references between them for a directed graph,
+//! - Translation items and the references between them form a directed graph,
 //!   where the translation items are the nodes and references form the edges.
 //!   Let's call this graph the "translation item graph".
 //!
@@ -193,27 +193,28 @@ use rustc::hir::itemlikevisit::ItemLikeVisitor;
 
 use rustc::hir::map as hir_map;
 use rustc::hir::def_id::DefId;
-use rustc::middle::lang_items::{ExchangeFreeFnLangItem, ExchangeMallocFnLangItem};
+use rustc::middle::lang_items::{BoxFreeFnLangItem, ExchangeMallocFnLangItem};
 use rustc::traits;
-use rustc::ty::subst::{Substs, Subst};
+use rustc::ty::subst::{Kind, Substs, Subst};
 use rustc::ty::{self, TypeFoldable, TyCtxt};
 use rustc::ty::adjustment::CustomCoerceUnsized;
 use rustc::mir::{self, Location};
 use rustc::mir::visit as mir_visit;
 use rustc::mir::visit::Visitor as MirVisitor;
 
-use rustc_const_eval as const_eval;
-
 use syntax::abi::Abi;
 use syntax_pos::DUMMY_SP;
 use base::custom_coerce_unsize_info;
+use callee::needs_fn_once_adapter_shim;
 use context::SharedCrateContext;
-use common::{fulfill_obligation, type_is_sized};
+use common::fulfill_obligation;
 use glue::{self, DropGlueKind};
 use monomorphize::{self, Instance};
 use util::nodemap::{FxHashSet, FxHashMap, DefIdMap};
 
-use trans_item::{TransItem, DefPathBasedNames};
+use trans_item::{TransItem, DefPathBasedNames, InstantiationMode};
+
+use std::iter;
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 pub enum TransItemCollectionMode {
@@ -308,7 +309,7 @@ fn collect_roots<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
             output: &mut roots,
         };
 
-        scx.tcx().map.krate().visit_all_item_likes(&mut visitor);
+        scx.tcx().hir.krate().visit_all_item_likes(&mut visitor);
     }
 
     roots
@@ -335,46 +336,30 @@ fn collect_items_rec<'a, 'tcx: 'a>(scx: &SharedCrateContext<'a, 'tcx>,
             recursion_depth_reset = None;
         }
         TransItem::Static(node_id) => {
-            let def_id = scx.tcx().map.local_def_id(node_id);
+            let def_id = scx.tcx().hir.local_def_id(node_id);
+
+            // Sanity check whether this ended up being collected accidentally
+            debug_assert!(should_trans_locally(scx.tcx(), def_id));
+
             let ty = scx.tcx().item_type(def_id);
-            let ty = glue::get_drop_glue_type(scx.tcx(), ty);
+            let ty = glue::get_drop_glue_type(scx, ty);
             neighbors.push(TransItem::DropGlue(DropGlueKind::Ty(ty)));
 
             recursion_depth_reset = None;
 
-            // Scan the MIR in order to find function calls, closures, and
-            // drop-glue
-            let mir = scx.tcx().item_mir(def_id);
-
-            let empty_substs = scx.empty_substs_for_def_id(def_id);
-            let visitor = MirNeighborCollector {
-                scx: scx,
-                mir: &mir,
-                output: &mut neighbors,
-                param_substs: empty_substs
-            };
-
-            visit_mir_and_promoted(visitor, &mir);
+            collect_neighbours(scx, Instance::mono(scx, def_id), &mut neighbors);
         }
         TransItem::Fn(instance) => {
+            // Sanity check whether this ended up being collected accidentally
+            debug_assert!(should_trans_locally(scx.tcx(), instance.def));
+
             // Keep track of the monomorphization recursion depth
             recursion_depth_reset = Some(check_recursion_limit(scx.tcx(),
                                                                instance,
                                                                recursion_depths));
             check_type_length_limit(scx.tcx(), instance);
 
-            // Scan the MIR in order to find function calls, closures, and
-            // drop-glue
-            let mir = scx.tcx().item_mir(instance.def);
-
-            let visitor = MirNeighborCollector {
-                scx: scx,
-                mir: &mir,
-                output: &mut neighbors,
-                param_substs: instance.substs
-            };
-
-            visit_mir_and_promoted(visitor, &mir);
+            collect_neighbours(scx, instance, &mut neighbors);
         }
     }
 
@@ -396,7 +381,7 @@ fn record_inlining_canditates<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                         callees: &[TransItem<'tcx>],
                                         inlining_map: &mut InliningMap<'tcx>) {
     let is_inlining_candidate = |trans_item: &TransItem<'tcx>| {
-        trans_item.needs_local_copy(tcx)
+        trans_item.instantiation_mode(tcx) == InstantiationMode::LocalCopy
     };
 
     let inlining_candidates = callees.into_iter()
@@ -421,8 +406,8 @@ fn check_recursion_limit<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     if recursion_depth > tcx.sess.recursion_limit.get() {
         let error = format!("reached the recursion limit while instantiating `{}`",
                             instance);
-        if let Some(node_id) = tcx.map.as_local_node_id(instance.def) {
-            tcx.sess.span_fatal(tcx.map.span(node_id), &error);
+        if let Some(node_id) = tcx.hir.as_local_node_id(instance.def) {
+            tcx.sess.span_fatal(tcx.hir.span(node_id), &error);
         } else {
             tcx.sess.fatal(&error);
         }
@@ -453,8 +438,8 @@ fn check_type_length_limit<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         let instance_name = instance.to_string();
         let msg = format!("reached the type-length limit while instantiating `{:.64}...`",
                           instance_name);
-        let mut diag = if let Some(node_id) = tcx.map.as_local_node_id(instance.def) {
-            tcx.sess.struct_span_fatal(tcx.map.span(node_id), &msg)
+        let mut diag = if let Some(node_id) = tcx.hir.as_local_node_id(instance.def) {
+            tcx.sess.struct_span_fatal(tcx.hir.span(node_id), &msg)
         } else {
             tcx.sess.struct_fatal(&msg)
         };
@@ -512,15 +497,16 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                         .require(ExchangeMallocFnLangItem)
                         .unwrap_or_else(|e| self.scx.sess().fatal(&e));
 
-                assert!(can_have_local_instance(self.scx.tcx(), exchange_malloc_fn_def_id));
-                let empty_substs = self.scx.empty_substs_for_def_id(exchange_malloc_fn_def_id);
-                let exchange_malloc_fn_trans_item =
-                    create_fn_trans_item(self.scx,
-                                         exchange_malloc_fn_def_id,
-                                         empty_substs,
-                                         self.param_substs);
+                if should_trans_locally(self.scx.tcx(), exchange_malloc_fn_def_id) {
+                    let empty_substs = self.scx.empty_substs_for_def_id(exchange_malloc_fn_def_id);
+                    let exchange_malloc_fn_trans_item =
+                        create_fn_trans_item(self.scx,
+                                             exchange_malloc_fn_def_id,
+                                             empty_substs,
+                                             self.param_substs);
 
-                self.output.push(exchange_malloc_fn_trans_item);
+                    self.output.push(exchange_malloc_fn_trans_item);
+                }
             }
             _ => { /* not interesting */ }
         }
@@ -542,7 +528,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                                                       self.param_substs,
                                                       &ty);
             assert!(ty.is_normalized_for_trans());
-            let ty = glue::get_drop_glue_type(self.scx.tcx(), ty);
+            let ty = glue::get_drop_glue_type(self.scx, ty);
             self.output.push(TransItem::DropGlue(DropGlueKind::Ty(ty)));
         }
 
@@ -561,33 +547,12 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                     // This is not a callee, but we still have to look for
                     // references to `const` items
                     if let mir::Literal::Item { def_id, substs } = constant.literal {
-                        let tcx = self.scx.tcx();
                         let substs = monomorphize::apply_param_substs(self.scx,
                                                                       self.param_substs,
                                                                       &substs);
 
-                        // If the constant referred to here is an associated
-                        // item of a trait, we need to resolve it to the actual
-                        // constant in the corresponding impl. Luckily
-                        // const_eval::lookup_const_by_id() does that for us.
-                        if let Some((expr, _)) = const_eval::lookup_const_by_id(tcx,
-                                                                                def_id,
-                                                                                Some(substs)) {
-                            // The hir::Expr we get here is the initializer of
-                            // the constant, what we really want is the item
-                            // DefId.
-                            let const_node_id = tcx.map.get_parent(expr.id);
-                            let def_id = if tcx.map.is_inlined_node_id(const_node_id) {
-                                tcx.sess.cstore.defid_for_inlined_node(const_node_id).unwrap()
-                            } else {
-                                tcx.map.local_def_id(const_node_id)
-                            };
-
-                            collect_const_item_neighbours(self.scx,
-                                                          def_id,
-                                                          substs,
-                                                          self.output);
-                        }
+                        let instance = Instance::new(def_id, substs).resolve_const(self.scx);
+                        collect_neighbours(self.scx, instance, self.output);
                     }
 
                     None
@@ -612,7 +577,11 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                                                 callee_substs,
                                                 self.param_substs);
 
-            if let Some((callee_def_id, callee_substs)) = dispatched {
+            if let StaticDispatchResult::Dispatched {
+                    def_id: callee_def_id,
+                    substs: callee_substs,
+                    fn_once_adjustment,
+                } = dispatched {
                 // if we have a concrete impl (which we might not have
                 // in the case of something compiler generated like an
                 // object shim or a closure that is handled differently),
@@ -625,6 +594,17 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                                                           callee_substs,
                                                           self.param_substs);
                     self.output.push(trans_item);
+
+                    // This call will instantiate an FnOnce adapter, which drops
+                    // the closure environment. Therefore we need to make sure
+                    // that we collect the drop-glue for the environment type.
+                    if let Some(env_ty) = fn_once_adjustment {
+                        let env_ty = glue::get_drop_glue_type(self.scx, env_ty);
+                        if self.scx.type_needs_drop(env_ty) {
+                            let dg = DropGlueKind::Ty(env_ty);
+                            self.output.push(TransItem::DropGlue(dg));
+                        }
+                    }
                 }
             }
         }
@@ -635,25 +615,19 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                                               def_id: DefId)
                                               -> bool {
             match tcx.item_type(def_id).sty {
-                ty::TyFnDef(def_id, _, f) => {
+                ty::TyFnDef(def_id, _, _) => {
                     // Some constructors also have type TyFnDef but they are
-                    // always instantiated inline and don't result in
+                    // always instantiated inline and don't result in a
                     // translation item. Same for FFI functions.
-                    if let Some(hir_map::NodeForeignItem(_)) = tcx.map.get_if_local(def_id) {
+                    if let Some(hir_map::NodeForeignItem(_)) = tcx.hir.get_if_local(def_id) {
                         return false;
-                    }
-
-                    if let Some(adt_def) = f.sig.output().skip_binder().ty_adt_def() {
-                        if adt_def.variants.iter().any(|v| def_id == v.did) {
-                            return false;
-                        }
                     }
                 }
                 ty::TyClosure(..) => {}
                 _ => return false
             }
 
-            can_have_local_instance(tcx, def_id)
+            should_trans_locally(tcx, def_id)
         }
     }
 
@@ -678,7 +652,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                             let operand_ty = monomorphize::apply_param_substs(self.scx,
                                                                               self.param_substs,
                                                                               &mt.ty);
-                            let ty = glue::get_drop_glue_type(tcx, operand_ty);
+                            let ty = glue::get_drop_glue_type(self.scx, operand_ty);
                             self.output.push(TransItem::DropGlue(DropGlueKind::Ty(ty)));
                         } else {
                             bug!("Has the drop_in_place() intrinsic's signature changed?")
@@ -703,10 +677,37 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
     }
 }
 
-fn can_have_local_instance<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                     def_id: DefId)
-                                     -> bool {
-    tcx.sess.cstore.can_have_local_instance(tcx, def_id)
+// Returns true if we should translate an instance in the local crate.
+// Returns false if we can just link to the upstream crate and therefore don't
+// need a translation item.
+fn should_trans_locally<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                  def_id: DefId)
+                                  -> bool {
+    if let ty::TyFnDef(_, _, f) = tcx.item_type(def_id).sty {
+        if let Some(adt_def) = f.sig.output().skip_binder().ty_adt_def() {
+            if adt_def.variants.iter().any(|v| def_id == v.did) {
+                // HACK: ADT constructors are translated in-place and
+                // do not have a trans-item.
+                return false;
+            }
+        }
+    }
+
+    if def_id.is_local() {
+        true
+    } else {
+        if tcx.sess.cstore.is_exported_symbol(def_id) ||
+           tcx.sess.cstore.is_foreign_item(def_id) {
+            // We can link to the item in question, no instance needed in this
+            // crate
+            false
+        } else {
+            if !tcx.sess.cstore.is_item_mir_available(def_id) {
+                bug!("Cannot create local trans-item for {:?}", def_id)
+            }
+            true
+        }
+    }
 }
 
 fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
@@ -723,23 +724,17 @@ fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
 
     debug!("find_drop_glue_neighbors: {}", type_to_string(scx.tcx(), ty));
 
-    // Make sure the exchange_free_fn() lang-item gets translated if
-    // there is a boxed value.
-    if let ty::TyBox(_) = ty.sty {
-        let exchange_free_fn_def_id = scx.tcx()
-                                         .lang_items
-                                         .require(ExchangeFreeFnLangItem)
-                                         .unwrap_or_else(|e| scx.sess().fatal(&e));
-
-        assert!(can_have_local_instance(scx.tcx(), exchange_free_fn_def_id));
-        let fn_substs = scx.empty_substs_for_def_id(exchange_free_fn_def_id);
-        let exchange_free_fn_trans_item =
-            create_fn_trans_item(scx,
-                                 exchange_free_fn_def_id,
-                                 fn_substs,
-                                 scx.tcx().intern_substs(&[]));
-
-        output.push(exchange_free_fn_trans_item);
+    // Make sure the BoxFreeFn lang-item gets translated if there is a boxed value.
+    if ty.is_box() {
+        let def_id = scx.tcx().require_lang_item(BoxFreeFnLangItem);
+        if should_trans_locally(scx.tcx(), def_id) {
+            let box_free_fn_trans_item =
+                create_fn_trans_item(scx,
+                                     def_id,
+                                     scx.tcx().mk_substs(iter::once(Kind::from(ty.boxed_ty()))),
+                                     scx.tcx().intern_substs(&[]));
+            output.push(box_free_fn_trans_item);
+        }
     }
 
     // If the type implements Drop, also add a translation item for the
@@ -749,7 +744,7 @@ fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
         _ => None
     };
 
-    if let Some(destructor_did) = destructor_did {
+    if let (Some(destructor_did), false) = (destructor_did, ty.is_box()) {
         use rustc::ty::ToPolyTraitRef;
 
         let drop_trait_def_id = scx.tcx()
@@ -769,7 +764,7 @@ fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
             _ => bug!()
         };
 
-        if can_have_local_instance(scx.tcx(), destructor_did) {
+        if should_trans_locally(scx.tcx(), destructor_did) {
             let trans_item = create_fn_trans_item(scx,
                                                   destructor_did,
                                                   substs,
@@ -798,39 +793,44 @@ fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
         ty::TyDynamic(..)  => {
             /* nothing to do */
         }
-        ty::TyAdt(adt_def, substs) => {
-            for field in adt_def.all_fields() {
+        ty::TyAdt(def, _) if def.is_box() => {
+            let inner_type = glue::get_drop_glue_type(scx, ty.boxed_ty());
+            if scx.type_needs_drop(inner_type) {
+                output.push(TransItem::DropGlue(DropGlueKind::Ty(inner_type)));
+            }
+        }
+        ty::TyAdt(def, substs) => {
+            for field in def.all_fields() {
                 let field_type = scx.tcx().item_type(field.did);
                 let field_type = monomorphize::apply_param_substs(scx,
                                                                   substs,
                                                                   &field_type);
-                let field_type = glue::get_drop_glue_type(scx.tcx(), field_type);
+                let field_type = glue::get_drop_glue_type(scx, field_type);
 
-                if glue::type_needs_drop(scx.tcx(), field_type) {
+                if scx.type_needs_drop(field_type) {
                     output.push(TransItem::DropGlue(DropGlueKind::Ty(field_type)));
                 }
             }
         }
         ty::TyClosure(def_id, substs) => {
             for upvar_ty in substs.upvar_tys(def_id, scx.tcx()) {
-                let upvar_ty = glue::get_drop_glue_type(scx.tcx(), upvar_ty);
-                if glue::type_needs_drop(scx.tcx(), upvar_ty) {
+                let upvar_ty = glue::get_drop_glue_type(scx, upvar_ty);
+                if scx.type_needs_drop(upvar_ty) {
                     output.push(TransItem::DropGlue(DropGlueKind::Ty(upvar_ty)));
                 }
             }
         }
-        ty::TyBox(inner_type)      |
         ty::TySlice(inner_type)    |
         ty::TyArray(inner_type, _) => {
-            let inner_type = glue::get_drop_glue_type(scx.tcx(), inner_type);
-            if glue::type_needs_drop(scx.tcx(), inner_type) {
+            let inner_type = glue::get_drop_glue_type(scx, inner_type);
+            if scx.type_needs_drop(inner_type) {
                 output.push(TransItem::DropGlue(DropGlueKind::Ty(inner_type)));
             }
         }
         ty::TyTuple(args) => {
             for arg in args {
-                let arg = glue::get_drop_glue_type(scx.tcx(), arg);
-                if glue::type_needs_drop(scx.tcx(), arg) {
+                let arg = glue::get_drop_glue_type(scx, arg);
+                if scx.type_needs_drop(arg) {
                     output.push(TransItem::DropGlue(DropGlueKind::Ty(arg)));
                 }
             }
@@ -843,15 +843,13 @@ fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
             bug!("encountered unexpected type");
         }
     }
-
-
 }
 
 fn do_static_dispatch<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                                 fn_def_id: DefId,
                                 fn_substs: &'tcx Substs<'tcx>,
                                 param_substs: &'tcx Substs<'tcx>)
-                                -> Option<(DefId, &'tcx Substs<'tcx>)> {
+                                -> StaticDispatchResult<'tcx> {
     debug!("do_static_dispatch(fn_def_id={}, fn_substs={:?}, param_substs={:?})",
            def_id_to_string(scx.tcx(), fn_def_id),
            fn_substs,
@@ -868,8 +866,28 @@ fn do_static_dispatch<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
         debug!(" => regular function");
         // The function is not part of an impl or trait, no dispatching
         // to be done
-        Some((fn_def_id, fn_substs))
+        StaticDispatchResult::Dispatched {
+            def_id: fn_def_id,
+            substs: fn_substs,
+            fn_once_adjustment: None,
+        }
     }
+}
+
+enum StaticDispatchResult<'tcx> {
+    // The call could be resolved statically as going to the method with
+    // `def_id` and `substs`.
+    Dispatched {
+        def_id: DefId,
+        substs: &'tcx Substs<'tcx>,
+
+        // If this is a call to a closure that needs an FnOnce adjustment,
+        // this contains the new self type of the call (= type of the closure
+        // environment)
+        fn_once_adjustment: Option<ty::Ty<'tcx>>,
+    },
+    // This goes to somewhere that we don't know at compile-time
+    Unknown
 }
 
 // Given a trait-method and substitution information, find out the actual
@@ -879,7 +897,7 @@ fn do_static_trait_method_dispatch<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                                              trait_id: DefId,
                                              callee_substs: &'tcx Substs<'tcx>,
                                              param_substs: &'tcx Substs<'tcx>)
-                                             -> Option<(DefId, &'tcx Substs<'tcx>)> {
+                                             -> StaticDispatchResult<'tcx> {
     let tcx = scx.tcx();
     debug!("do_static_trait_method_dispatch(trait_method={}, \
                                             trait_id={}, \
@@ -900,17 +918,56 @@ fn do_static_trait_method_dispatch<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
     // the actual function:
     match vtbl {
         traits::VtableImpl(impl_data) => {
-            Some(traits::find_method(tcx, trait_method.name, rcvr_substs, &impl_data))
+            let (def_id, substs) = traits::find_method(tcx,
+                                                       trait_method.name,
+                                                       rcvr_substs,
+                                                       &impl_data);
+            StaticDispatchResult::Dispatched {
+                def_id: def_id,
+                substs: substs,
+                fn_once_adjustment: None,
+            }
         }
         traits::VtableClosure(closure_data) => {
-            Some((closure_data.closure_def_id, closure_data.substs.substs))
+            let closure_def_id = closure_data.closure_def_id;
+            let trait_closure_kind = tcx.lang_items.fn_trait_kind(trait_id).unwrap();
+            let actual_closure_kind = tcx.closure_kind(closure_def_id);
+
+            let needs_fn_once_adapter_shim =
+                match needs_fn_once_adapter_shim(actual_closure_kind,
+                                                 trait_closure_kind) {
+                Ok(true) => true,
+                _ => false,
+            };
+
+            let fn_once_adjustment = if needs_fn_once_adapter_shim {
+                Some(tcx.mk_closure_from_closure_substs(closure_def_id,
+                                                        closure_data.substs))
+            } else {
+                None
+            };
+
+            StaticDispatchResult::Dispatched {
+                def_id: closure_def_id,
+                substs: closure_data.substs.substs,
+                fn_once_adjustment: fn_once_adjustment,
+            }
         }
-        // Trait object and function pointer shims are always
-        // instantiated in-place, and as they are just an ABI-adjusting
-        // indirect call they do not have any dependencies.
-        traits::VtableFnPointer(..) |
+        traits::VtableFnPointer(ref data) => {
+            // If we know the destination of this fn-pointer, we'll have to make
+            // sure that this destination actually gets instantiated.
+            if let ty::TyFnDef(def_id, substs, _) = data.fn_ty.sty {
+                // The destination of the pointer might be something that needs
+                // further dispatching, such as a trait method, so we do that.
+                do_static_dispatch(scx, def_id, substs, param_substs)
+            } else {
+                StaticDispatchResult::Unknown
+            }
+        }
+        // Trait object shims are always instantiated in-place, and as they are
+        // just an ABI-adjusting indirect call they do not have any dependencies.
         traits::VtableObject(..) => {
-            None
+            StaticDispatchResult::Unknown
         }
         _ => {
             bug!("static call to invalid vtable: {:?}", vtbl)
@@ -959,21 +1016,24 @@ fn find_vtable_types_for_unsizing<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                                             source_ty: ty::Ty<'tcx>,
                                             target_ty: ty::Ty<'tcx>)
                                             -> (ty::Ty<'tcx>, ty::Ty<'tcx>) {
+    let ptr_vtable = |inner_source: ty::Ty<'tcx>, inner_target: ty::Ty<'tcx>| {
+        if !scx.type_is_sized(inner_source) {
+            (inner_source, inner_target)
+        } else {
+            scx.tcx().struct_lockstep_tails(inner_source, inner_target)
+        }
+    };
     match (&source_ty.sty, &target_ty.sty) {
-        (&ty::TyBox(a), &ty::TyBox(b)) |
         (&ty::TyRef(_, ty::TypeAndMut { ty: a, .. }),
          &ty::TyRef(_, ty::TypeAndMut { ty: b, .. })) |
         (&ty::TyRef(_, ty::TypeAndMut { ty: a, .. }),
          &ty::TyRawPtr(ty::TypeAndMut { ty: b, .. })) |
         (&ty::TyRawPtr(ty::TypeAndMut { ty: a, .. }),
          &ty::TyRawPtr(ty::TypeAndMut { ty: b, .. })) => {
-            let (inner_source, inner_target) = (a, b);
-
-            if !type_is_sized(scx.tcx(), inner_source) {
-                (inner_source, inner_target)
-            } else {
-                scx.tcx().struct_lockstep_tails(inner_source, inner_target)
-            }
+            ptr_vtable(a, b)
+        }
+        (&ty::TyAdt(def_a, _), &ty::TyAdt(def_b, _)) if def_a.is_box() && def_b.is_box() => {
+            ptr_vtable(source_ty.boxed_ty(), target_ty.boxed_ty())
         }
 
         (&ty::TyAdt(source_adt_def, source_substs),
@@ -1044,14 +1104,25 @@ fn create_trans_items_for_vtable_methods<'a, 'tcx>(scx: &SharedCrateContext<'a, 
             // Walk all methods of the trait, including those of its supertraits
             let methods = traits::get_vtable_methods(scx.tcx(), poly_trait_ref);
             let methods = methods.filter_map(|method| method)
-                .filter_map(|(def_id, substs)| do_static_dispatch(scx, def_id, substs,
-                                                                  param_substs))
-                .filter(|&(def_id, _)| can_have_local_instance(scx.tcx(), def_id))
+                .filter_map(|(def_id, substs)| {
+                    if let StaticDispatchResult::Dispatched {
+                        def_id,
+                        substs,
+                        // We already add the drop-glue for the closure env
+                        // unconditionally below.
+                        fn_once_adjustment: _ ,
+                    } = do_static_dispatch(scx, def_id, substs, param_substs) {
+                        Some((def_id, substs))
+                    } else {
+                        None
+                    }
+                })
+                .filter(|&(def_id, _)| should_trans_locally(scx.tcx(), def_id))
                 .map(|(def_id, substs)| create_fn_trans_item(scx, def_id, substs, param_substs));
             output.extend(methods);
         }
         // Also add the destructor
-        let dg_type = glue::get_drop_glue_type(scx.tcx(), impl_ty);
+        let dg_type = glue::get_drop_glue_type(scx, impl_ty);
         output.push(TransItem::DropGlue(DropGlueKind::Ty(dg_type)));
     }
 }
@@ -1092,12 +1163,12 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
             hir::ItemUnion(_, ref generics) => {
                 if !generics.is_parameterized() {
                     if self.mode == TransItemCollectionMode::Eager {
-                        let def_id = self.scx.tcx().map.local_def_id(item.id);
+                        let def_id = self.scx.tcx().hir.local_def_id(item.id);
                         debug!("RootCollector: ADT drop-glue for {}",
                                def_id_to_string(self.scx.tcx(), def_id));
 
                         let ty = self.scx.tcx().item_type(def_id);
-                        let ty = glue::get_drop_glue_type(self.scx.tcx(), ty);
+                        let ty = glue::get_drop_glue_type(self.scx, ty);
                         self.output.push(TransItem::DropGlue(DropGlueKind::Ty(ty)));
                     }
                 }
@@ -1105,7 +1176,7 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
             hir::ItemStatic(..) => {
                 debug!("RootCollector: ItemStatic({})",
                        def_id_to_string(self.scx.tcx(),
-                                        self.scx.tcx().map.local_def_id(item.id)));
+                                        self.scx.tcx().hir.local_def_id(item.id)));
                 self.output.push(TransItem::Static(item.id));
             }
             hir::ItemConst(..) => {
@@ -1114,7 +1185,7 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
             }
             hir::ItemFn(.., ref generics, _) => {
                 if !generics.is_type_parameterized() {
-                    let def_id = self.scx.tcx().map.local_def_id(item.id);
+                    let def_id = self.scx.tcx().hir.local_def_id(item.id);
 
                     debug!("RootCollector: ItemFn({})",
                            def_id_to_string(self.scx.tcx(), def_id));
@@ -1126,13 +1197,18 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
         }
     }
 
+    fn visit_trait_item(&mut self, _: &'v hir::TraitItem) {
+        // Even if there's a default body with no explicit generics,
+        // it's still generic over some `Self: Trait`, so not a root.
+    }
+
     fn visit_impl_item(&mut self, ii: &'v hir::ImplItem) {
         match ii.node {
             hir::ImplItemKind::Method(hir::MethodSig {
                 ref generics,
                 ..
             }, _) => {
-                let hir_map = &self.scx.tcx().map;
+                let hir_map = &self.scx.tcx().hir;
                 let parent_node_id = hir_map.get_parent_node(ii.id);
                 let is_impl_generic = match hir_map.expect_item(parent_node_id) {
                     &hir::Item {
@@ -1147,7 +1223,7 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
                 };
 
                 if !generics.is_type_parameterized() && !is_impl_generic {
-                    let def_id = self.scx.tcx().map.local_def_id(ii.id);
+                    let def_id = self.scx.tcx().hir.local_def_id(ii.id);
 
                     debug!("RootCollector: MethodImplItem({})",
                            def_id_to_string(self.scx.tcx(), def_id));
@@ -1175,7 +1251,7 @@ fn create_trans_items_for_default_impls<'a, 'tcx>(scx: &SharedCrateContext<'a, '
                 return
             }
 
-            let impl_def_id = tcx.map.local_def_id(item.id);
+            let impl_def_id = tcx.hir.local_def_id(item.id);
 
             debug!("create_trans_items_for_default_impls(item={})",
                    def_id_to_string(tcx, impl_def_id));
@@ -1216,7 +1292,7 @@ fn create_trans_items_for_default_impls<'a, 'tcx>(scx: &SharedCrateContext<'a, '
                         continue;
                     }
 
-                    if can_have_local_instance(tcx, method.def_id) {
+                    if should_trans_locally(tcx, method.def_id) {
                         let item = create_fn_trans_item(scx,
                                                         method.def_id,
                                                         callee_substs,
@@ -1232,31 +1308,23 @@ fn create_trans_items_for_default_impls<'a, 'tcx>(scx: &SharedCrateContext<'a, '
     }
 }
 
-// There are no translation items for constants themselves but their
-// initializers might still contain something that produces translation items,
-// such as cast that introduce a new vtable.
-fn collect_const_item_neighbours<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
-                                           def_id: DefId,
-                                           substs: &'tcx Substs<'tcx>,
-                                           output: &mut Vec<TransItem<'tcx>>)
+/// Scan the MIR in order to find function calls, closures, and drop-glue
+fn collect_neighbours<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
+                                instance: Instance<'tcx>,
+                                output: &mut Vec<TransItem<'tcx>>)
 {
-    // Scan the MIR in order to find function calls, closures, and
-    // drop-glue
-    let mir = scx.tcx().item_mir(def_id);
+    let mir = scx.tcx().item_mir(instance.def);
 
-    let visitor = MirNeighborCollector {
+    let mut visitor = MirNeighborCollector {
         scx: scx,
         mir: &mir,
         output: output,
-        param_substs: substs
+        param_substs: instance.substs
     };
 
-    visit_mir_and_promoted(visitor, &mir);
-}
-
-fn visit_mir_and_promoted<'tcx, V: MirVisitor<'tcx>>(mut visitor: V, mir: &mir::Mir<'tcx>) {
     visitor.visit_mir(&mir);
     for promoted in &mir.promoted {
+        visitor.mir = promoted;
         visitor.visit_mir(promoted);
     }
 }

@@ -16,7 +16,7 @@ use rustc_const_eval::ConstEvalErr;
 use rustc::hir::def_id::DefId;
 use rustc::hir::map as hir_map;
 use {debuginfo, machine};
-use base::{self, push_ctxt};
+use base;
 use trans_item::TransItem;
 use common::{CrateContext, val_ty};
 use declare;
@@ -85,18 +85,16 @@ pub fn get_static(ccx: &CrateContext, def_id: DefId) -> ValueRef {
     }
 
     let ty = ccx.tcx().item_type(def_id);
-    let g = if let Some(id) = ccx.tcx().map.as_local_node_id(def_id) {
+    let g = if let Some(id) = ccx.tcx().hir.as_local_node_id(def_id) {
 
         let llty = type_of::type_of(ccx, ty);
-        let (g, attrs) = match ccx.tcx().map.get(id) {
+        let (g, attrs) = match ccx.tcx().hir.get(id) {
             hir_map::NodeItem(&hir::Item {
                 ref attrs, span, node: hir::ItemStatic(..), ..
             }) => {
                 let sym = ccx.symbol_map()
                              .get(TransItem::Static(id))
                              .expect("Local statics should always be in the SymbolMap");
-                // Make sure that this is never executed for something inlined.
-                assert!(!ccx.tcx().map.is_inlined_node_id(id));
 
                 let defined_in_current_codegen_unit = ccx.codegen_unit()
                                                          .items()
@@ -221,8 +219,7 @@ pub fn trans_static(ccx: &CrateContext,
                     attrs: &[ast::Attribute])
                     -> Result<ValueRef, ConstEvalErr> {
     unsafe {
-        let _icx = push_ctxt("trans_static");
-        let def_id = ccx.tcx().map.local_def_id(id);
+        let def_id = ccx.tcx().hir.local_def_id(id);
         let g = get_static(ccx, def_id);
 
         let v = ::mir::trans_static_initializer(ccx, def_id)?;

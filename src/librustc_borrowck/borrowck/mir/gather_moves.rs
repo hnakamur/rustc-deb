@@ -120,6 +120,10 @@ pub struct MoveData<'tcx> {
     pub rev_lookup: MovePathLookup<'tcx>,
 }
 
+pub trait HasMoveData<'tcx> {
+    fn move_data(&self) -> &MoveData<'tcx>;
+}
+
 #[derive(Debug)]
 pub struct LocationMap<T> {
     /// Location-indexed (BasicBlock for outer index, index within BB
@@ -285,7 +289,7 @@ impl<'a, 'tcx> MoveDataBuilder<'a, 'tcx> {
             // error: can't move out of borrowed content
             ty::TyRef(..) | ty::TyRawPtr(..) => return Err(MovePathError::IllegalMove),
             // error: can't move out of struct with destructor
-            ty::TyAdt(adt, _) if adt.has_dtor() =>
+            ty::TyAdt(adt, _) if adt.has_dtor() && !adt.is_box() =>
                 return Err(MovePathError::IllegalMove),
             // move out of union - always move the entire union
             ty::TyAdt(adt, _) if adt.is_union() =>

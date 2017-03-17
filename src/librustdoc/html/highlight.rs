@@ -27,7 +27,7 @@ use std::io;
 use std::io::prelude::*;
 
 use syntax::codemap::CodeMap;
-use syntax::parse::lexer::{self, Reader, TokenAndSpan};
+use syntax::parse::lexer::{self, TokenAndSpan};
 use syntax::parse::token;
 use syntax::parse;
 use syntax_pos::Span;
@@ -42,8 +42,7 @@ pub fn render_with_highlighting(src: &str, class: Option<&str>, id: Option<&str>
     let mut out = Vec::new();
     write_header(class, id, &mut out).unwrap();
 
-    let mut classifier = Classifier::new(lexer::StringReader::new(&sess.span_diagnostic, fm),
-                                         sess.codemap());
+    let mut classifier = Classifier::new(lexer::StringReader::new(&sess, fm), sess.codemap());
     if let Err(_) = classifier.write_source(&mut out) {
         return format!("<pre>{}</pre>", src);
     }
@@ -63,8 +62,7 @@ pub fn render_inner_with_highlighting(src: &str) -> io::Result<String> {
     let fm = sess.codemap().new_filemap("<stdin>".to_string(), None, src.to_string());
 
     let mut out = Vec::new();
-    let mut classifier = Classifier::new(lexer::StringReader::new(&sess.span_diagnostic, fm),
-                                         sess.codemap());
+    let mut classifier = Classifier::new(lexer::StringReader::new(&sess, fm), sess.codemap());
     classifier.write_source(&mut out)?;
 
     Ok(String::from_utf8_lossy(&out).into_owned())
@@ -185,10 +183,10 @@ impl<'a> Classifier<'a> {
                 Ok(tas) => tas,
                 Err(_) => {
                     self.lexer.emit_fatal_errors();
-                    self.lexer.span_diagnostic.struct_warn("Backing out of syntax highlighting")
-                                              .note("You probably did not intend to render this \
-                                                     as a rust code-block")
-                                              .emit();
+                    self.lexer.sess.span_diagnostic
+                        .struct_warn("Backing out of syntax highlighting")
+                        .note("You probably did not intend to render this as a rust code-block")
+                        .emit();
                     return Err(io::Error::new(io::ErrorKind::Other, ""));
                 }
             };
@@ -218,9 +216,11 @@ impl<'a> Classifier<'a> {
             token::Comment => Class::Comment,
             token::DocComment(..) => Class::DocComment,
 
-            // If this '&' token is directly adjacent to another token, assume
-            // that it's the address-of operator instead of the and-operator.
-            token::BinOp(token::And) if self.lexer.peek().sp.lo == tas.sp.hi => Class::RefKeyWord,
+            // If this '&' or '*' token is followed by a non-whitespace token, assume that it's the
+            // reference or dereference operator or a reference or pointer type, instead of the
+            // bit-and or multiplication operator.
+            token::BinOp(token::And) | token::BinOp(token::Star)
+                if self.lexer.peek().tok != token::Whitespace => Class::RefKeyWord,
 
             // Consider this as part of a macro invocation if there was a
             // leading identifier.

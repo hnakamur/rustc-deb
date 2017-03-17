@@ -29,13 +29,13 @@ mod bar {
 fn foo<T>() {}
 
 fn main() {
-    fpriv(); //~ ERROR: unresolved
-    epriv(); //~ ERROR: unresolved
-    B; //~ ERROR: unresolved
-    C; //~ ERROR: unresolved
-    import(); //~ ERROR: unresolved
+    fpriv(); //~ ERROR cannot find function `fpriv` in this scope
+    epriv(); //~ ERROR cannot find function `epriv` in this scope
+    B; //~ ERROR expected value, found enum `B`
+    C; //~ ERROR cannot find value `C` in this scope
+    import(); //~ ERROR: cannot find function `import` in this scope
 
-    foo::<A>(); //~ ERROR: not in scope
-    foo::<C>(); //~ ERROR: not in scope
-    foo::<D>(); //~ ERROR: not in scope
+    foo::<A>(); //~ ERROR: cannot find type `A` in this scope
+    foo::<C>(); //~ ERROR: cannot find type `C` in this scope
+    foo::<D>(); //~ ERROR: cannot find type `D` in this scope
 }

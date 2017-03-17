@@ -154,7 +154,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 ty::TyStr => Some(2),
                 ty::TyInt(..) | ty::TyUint(..) | ty::TyInfer(ty::IntVar(..)) => Some(3),
                 ty::TyFloat(..) | ty::TyInfer(ty::FloatVar(..)) => Some(4),
-                ty::TyBox(..) | ty::TyRef(..) | ty::TyRawPtr(..) => Some(5),
+                ty::TyRef(..) | ty::TyRawPtr(..) => Some(5),
                 ty::TyArray(..) | ty::TySlice(..) => Some(6),
                 ty::TyFnDef(..) | ty::TyFnPtr(..) => Some(7),
                 ty::TyDynamic(..) => Some(8),
@@ -366,15 +366,17 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             return;
         }
 
-        err.help(&format!("the following implementations were found:"));
-
         let end = cmp::min(4, impl_candidates.len());
-        for candidate in &impl_candidates[0..end] {
-            err.help(&format!("  {:?}", candidate));
-        }
-        if impl_candidates.len() > 4 {
-            err.help(&format!("and {} others", impl_candidates.len()-4));
-        }
+        err.help(&format!("the following implementations were found:{}{}",
+                          &impl_candidates[0..end].iter().map(|candidate| {
+                              format!("\n  {:?}", candidate)
+                          }).collect::<String>(),
+                          if impl_candidates.len() > 4 {
+                              format!("\nand {} others", impl_candidates.len() - 4)
+                          } else {
+                              "".to_owned()
+                          }
+                          ));
     }
 
     /// Reports that an overflow has occurred and halts compilation. We
@@ -439,7 +441,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                              E0276,
                              "impl has stricter requirements than trait");
 
-        if let Some(trait_item_span) = self.tcx.map.span_if_local(trait_item_def_id) {
+        if let Some(trait_item_span) = self.tcx.hir.span_if_local(trait_item_def_id) {
             err.span_label(trait_item_span,
                            &format!("definition of `{}` from trait", item_name));
         }
@@ -458,11 +460,28 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         err
     }
 
+
+    /// Get the parent trait chain start
+    fn get_parent_trait_ref(&self, code: &ObligationCauseCode<'tcx>) -> Option<String> {
+        match code {
+            &ObligationCauseCode::BuiltinDerivedObligation(ref data) => {
+                let parent_trait_ref = self.resolve_type_vars_if_possible(
+                    &data.parent_trait_ref);
+                match self.get_parent_trait_ref(&data.parent_code) {
+                    Some(t) => Some(t),
+                    None => Some(format!("{}", parent_trait_ref.0.self_ty())),
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub fn report_selection_error(&self,
                                   obligation: &PredicateObligation<'tcx>,
                                   error: &SelectionError<'tcx>)
     {
         let span = obligation.cause.span;
+
         let mut err = match *error {
             SelectionError::Unimplemented => {
                 if let ObligationCauseCode::CompareImplMethodObligation {
@@ -487,14 +506,27 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                 return;
                             } else {
                                 let trait_ref = trait_predicate.to_poly_trait_ref();
-
-                                let mut err = struct_span_err!(self.tcx.sess, span, E0277,
-                                    "the trait bound `{}` is not satisfied",
-                                    trait_ref.to_predicate());
-                                err.span_label(span, &format!("the trait `{}` is not implemented \
-                                                               for `{}`",
-                                                              trait_ref,
-                                                              trait_ref.self_ty()));
+                                let (post_message, pre_message) = match self.get_parent_trait_ref(
+                                    &obligation.cause.code)
+                                {
+                                    Some(t) => {
+                                        (format!(" in `{}`", t), format!("within `{}`, ", t))
+                                    }
+                                    None => (String::new(), String::new()),
+                                };
+                                let mut err = struct_span_err!(
+                                    self.tcx.sess,
+                                    span,
+                                    E0277,
+                                    "the trait bound `{}` is not satisfied{}",
+                                    trait_ref.to_predicate(),
+                                    post_message);
+                                err.span_label(span,
+                                               &format!("{}the trait `{}` is not \
+                                                         implemented for `{}`",
+                                                        pre_message,
+                                                        trait_ref,
+                                                        trait_ref.self_ty()));
 
                                 // Try to report a help message
 
@@ -562,7 +594,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
                         ty::Predicate::ClosureKind(closure_def_id, kind) => {
                             let found_kind = self.closure_kind(closure_def_id).unwrap();
-                            let closure_span = self.tcx.map.span_if_local(closure_def_id).unwrap();
+                            let closure_span = self.tcx.hir.span_if_local(closure_def_id).unwrap();
                             let mut err = struct_span_err!(
                                 self.tcx.sess, closure_span, E0525,
                                 "expected a closure that implements the `{}` trait, \
@@ -621,7 +653,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                                                    -> DiagnosticBuilder<'tcx>
     {
         assert!(type_def_id.is_local());
-        let span = self.map.span_if_local(type_def_id).unwrap();
+        let span = self.hir.span_if_local(type_def_id).unwrap();
         let mut err = struct_span_err!(self.sess, span, E0072,
                                        "recursive type `{}` has infinite size",
                                        self.item_path_str(type_def_id));

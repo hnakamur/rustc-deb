@@ -34,7 +34,7 @@ fn equate_intrinsic_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                    inputs: Vec<Ty<'tcx>>,
                                    output: Ty<'tcx>) {
     let tcx = ccx.tcx;
-    let def_id = tcx.map.local_def_id(it.id);
+    let def_id = tcx.hir.local_def_id(it.id);
 
     let substs = Substs::for_item(tcx, def_id,
                                   |_, _| tcx.mk_region(ty::ReErased),
@@ -48,7 +48,7 @@ fn equate_intrinsic_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     let i_n_tps = tcx.item_generics(def_id).types.len();
     if i_n_tps != n_tps {
         let span = match it.node {
-            hir::ForeignItemFn(_, ref generics) => generics.span,
+            hir::ForeignItemFn(_, _, ref generics) => generics.span,
             hir::ForeignItemStatic(..) => it.span
         };
 
@@ -324,7 +324,7 @@ pub fn check_platform_intrinsic_type(ccx: &CrateCtxt,
     };
 
     let tcx = ccx.tcx;
-    let def_id = tcx.map.local_def_id(it.id);
+    let def_id = tcx.hir.local_def_id(it.id);
     let i_n_tps = tcx.item_generics(def_id).types.len();
     let name = it.name.as_str();
 
@@ -432,7 +432,9 @@ fn match_intrinsic_type_to_type<'tcx, 'a>(
             (true,  32, &ty::TyInt(ast::IntTy::I32)) |
             (false, 32, &ty::TyUint(ast::UintTy::U32)) |
             (true,  64, &ty::TyInt(ast::IntTy::I64)) |
-            (false, 64, &ty::TyUint(ast::UintTy::U64)) => {},
+            (false, 64, &ty::TyUint(ast::UintTy::U64)) |
+            (true,  128, &ty::TyInt(ast::IntTy::I128)) |
+            (false, 128, &ty::TyUint(ast::UintTy::U128)) => {},
             _ => simple_error(&format!("`{}`", t),
                               &format!("`{}{n}`",
                                        if signed {"i"} else {"u"},

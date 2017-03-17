@@ -69,6 +69,7 @@ pub type LPWCH = *mut WCHAR;
 pub type LPWIN32_FIND_DATAW = *mut WIN32_FIND_DATAW;
 pub type LPWSADATA = *mut WSADATA;
 pub type LPWSAPROTOCOL_INFO = *mut WSAPROTOCOL_INFO;
+pub type LPSTR = *mut CHAR;
 pub type LPWSTR = *mut WCHAR;
 pub type LPFILETIME = *mut FILETIME;
 
@@ -265,6 +266,7 @@ pub const FILE_CURRENT: DWORD = 1;
 pub const FILE_END: DWORD = 2;
 
 pub const WAIT_OBJECT_0: DWORD = 0x00000000;
+pub const WAIT_TIMEOUT: DWORD = 258;
 
 #[cfg(target_env = "msvc")]
 pub const MAX_SYM_NAME: usize = 2000;
@@ -819,6 +821,16 @@ pub enum EXCEPTION_DISPOSITION {
     ExceptionCollidedUnwind
 }
 
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct CONSOLE_READCONSOLE_CONTROL {
+    pub nLength: ULONG,
+    pub nInitialChars: ULONG,
+    pub dwCtrlWakeupMask: ULONG,
+    pub dwControlKeyState: ULONG,
+}
+pub type PCONSOLE_READCONSOLE_CONTROL = *mut CONSOLE_READCONSOLE_CONTROL;
+
 #[link(name = "ws2_32")]
 #[link(name = "userenv")]
 #[link(name = "shell32")]
@@ -849,12 +861,11 @@ extern "system" {
     pub fn LeaveCriticalSection(CriticalSection: *mut CRITICAL_SECTION);
     pub fn DeleteCriticalSection(CriticalSection: *mut CRITICAL_SECTION);
 
-    // FIXME - pInputControl should be PCONSOLE_READCONSOLE_CONTROL
     pub fn ReadConsoleW(hConsoleInput: HANDLE,
                         lpBuffer: LPVOID,
                         nNumberOfCharsToRead: DWORD,
                         lpNumberOfCharsRead: LPDWORD,
-                        pInputControl: LPVOID) -> BOOL;
+                        pInputControl: PCONSOLE_READCONSOLE_CONTROL) -> BOOL;
 
     pub fn WriteConsoleW(hConsoleOutput: HANDLE,
                          lpBuffer: LPCVOID,
@@ -963,6 +974,14 @@ extern "system" {
     pub fn DeleteFileW(lpPathName: LPCWSTR) -> BOOL;
     pub fn GetCurrentDirectoryW(nBufferLength: DWORD, lpBuffer: LPWSTR) -> DWORD;
     pub fn SetCurrentDirectoryW(lpPathName: LPCWSTR) -> BOOL;
+    pub fn WideCharToMultiByte(CodePage: UINT,
+                               dwFlags: DWORD,
+                               lpWideCharStr: LPCWSTR,
+                               cchWideChar: c_int,
+                               lpMultiByteStr: LPSTR,
+                               cbMultiByte: c_int,
+                               lpDefaultChar: LPCSTR,
+                               lpUsedDefaultChar: LPBOOL) -> c_int;
 
     pub fn closesocket(socket: SOCKET) -> c_int;
     pub fn recv(socket: SOCKET, buf: *mut c_void, len: c_int,
@@ -1168,3 +1187,34 @@ compat_fn! {
         panic!("rwlocks not available")
     }
 }
+
+#[cfg(target_env = "gnu")]
+mod gnu {
+    use super::*;
+
+    pub const PROCESS_QUERY_INFORMATION: DWORD = 0x0400;
+
+    pub const CP_ACP: UINT = 0;
+
+    pub const WC_NO_BEST_FIT_CHARS: DWORD = 0x00000400;
+
+    extern "system" {
+        pub fn OpenProcess(dwDesiredAccess: DWORD,
+                           bInheritHandle: BOOL,
+                           dwProcessId: DWORD) -> HANDLE;
+    }
+
+    compat_fn! {
+        kernel32:
+
+        pub fn QueryFullProcessImageNameW(_hProcess: HANDLE,
+                                          _dwFlags: DWORD,
+                                          _lpExeName: LPWSTR,
+                                          _lpdwSize: LPDWORD) -> BOOL {
+            SetLastError(ERROR_CALL_NOT_IMPLEMENTED as DWORD); 0
+        }
+    }
+}
+
+#[cfg(target_env = "gnu")]
+pub use self::gnu::*;

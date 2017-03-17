@@ -28,6 +28,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str;
 
+use rustc_i128::u128;
+
 pub type PResult<'a, T> = Result<T, DiagnosticBuilder<'a>>;
 
 #[macro_use]
@@ -43,7 +45,7 @@ pub mod obsolete;
 
 /// Info about a parsing session.
 pub struct ParseSess {
-    pub span_diagnostic: Handler, // better be the same as the one in the reader!
+    pub span_diagnostic: Handler,
     pub unstable_features: UnstableFeatures,
     pub config: CrateConfig,
     /// Used to determine and report recursive mod inclusions
@@ -194,7 +196,7 @@ pub fn new_parser_from_tts<'a>(sess: &'a ParseSess, tts: Vec<tokenstream::TokenT
 }
 
 pub fn new_parser_from_ts<'a>(sess: &'a ParseSess, ts: tokenstream::TokenStream) -> Parser<'a> {
-    tts_to_parser(sess, ts.to_tts())
+    tts_to_parser(sess, ts.trees().cloned().collect())
 }
 
 
@@ -217,19 +219,15 @@ fn file_to_filemap(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
 }
 
 /// Given a filemap, produce a sequence of token-trees
-pub fn filemap_to_tts(sess: &ParseSess, filemap: Rc<FileMap>)
-    -> Vec<tokenstream::TokenTree> {
-    // it appears to me that the cfg doesn't matter here... indeed,
-    // parsing tt's probably shouldn't require a parser at all.
-    let srdr = lexer::StringReader::new(&sess.span_diagnostic, filemap);
-    let mut p1 = Parser::new(sess, Box::new(srdr), None, false);
-    panictry!(p1.parse_all_token_trees())
+pub fn filemap_to_tts(sess: &ParseSess, filemap: Rc<FileMap>) -> Vec<tokenstream::TokenTree> {
+    let mut srdr = lexer::StringReader::new(sess, filemap);
+    srdr.real_token();
+    panictry!(srdr.parse_all_token_trees())
 }
 
 /// Given tts and the ParseSess, produce a parser
 pub fn tts_to_parser<'a>(sess: &'a ParseSess, tts: Vec<tokenstream::TokenTree>) -> Parser<'a> {
-    let trdr = lexer::new_tt_reader(&sess.span_diagnostic, None, tts);
-    let mut p = Parser::new(sess, Box::new(trdr), None, false);
+    let mut p = Parser::new(sess, tts, None, false);
     p.check_unknown_macro_variable();
     p
 }
@@ -557,18 +555,20 @@ pub fn integer_lit(s: &str, suffix: Option<Symbol>, sd: &Handler, sp: Span) -> a
             "i16" => ast::LitIntType::Signed(ast::IntTy::I16),
             "i32" => ast::LitIntType::Signed(ast::IntTy::I32),
             "i64" => ast::LitIntType::Signed(ast::IntTy::I64),
+            "i128" => ast::LitIntType::Signed(ast::IntTy::I128),
             "usize" => ast::LitIntType::Unsigned(ast::UintTy::Us),
             "u8"  => ast::LitIntType::Unsigned(ast::UintTy::U8),
             "u16" => ast::LitIntType::Unsigned(ast::UintTy::U16),
             "u32" => ast::LitIntType::Unsigned(ast::UintTy::U32),
             "u64" => ast::LitIntType::Unsigned(ast::UintTy::U64),
+            "u128" => ast::LitIntType::Unsigned(ast::UintTy::U128),
             suf => {
                 // i<digits> and u<digits> look like widths, so lets
                 // give an error message along those lines
                 if looks_like_width_suffix(&['i', 'u'], suf) {
                     sd.struct_span_err(sp, &format!("invalid width `{}` for integer literal",
                                              &suf[1..]))
-                      .help("valid widths are 8, 16, 32 and 64")
+                      .help("valid widths are 8, 16, 32, 64 and 128")
                       .emit();
                 } else {
                     sd.struct_span_err(sp, &format!("invalid suffix `{}` for numeric literal", suf))
@@ -585,7 +585,7 @@ pub fn integer_lit(s: &str, suffix: Option<Symbol>, sd: &Handler, sp: Span) -> a
     debug!("integer_lit: the type is {:?}, base {:?}, the new string is {:?}, the original \
            string was {:?}, the original suffix was {:?}", ty, base, s, orig, suffix);
 
-    match u64::from_str_radix(s, base) {
+    match u128::from_str_radix(s, base) {
         Ok(r) => ast::LitKind::Int(r, ty),
         Err(_) => {
             // small bases are lexed as if they were base 10, e.g, the string
@@ -633,13 +633,7 @@ mod tests {
                     id: ast::DUMMY_NODE_ID,
                     node: ast::ExprKind::Path(None, ast::Path {
                         span: sp(0, 1),
-                        global: false,
-                        segments: vec![
-                            ast::PathSegment {
-                                identifier: Ident::from_str("a"),
-                                parameters: ast::PathParameters::none(),
-                            }
-                        ],
+                        segments: vec![Ident::from_str("a").into()],
                     }),
                     span: sp(0, 1),
                     attrs: ThinVec::new(),
@@ -651,19 +645,11 @@ mod tests {
                    P(ast::Expr {
                     id: ast::DUMMY_NODE_ID,
                     node: ast::ExprKind::Path(None, ast::Path {
-                            span: sp(0, 6),
-                            global: true,
-                            segments: vec![
-                                ast::PathSegment {
-                                    identifier: Ident::from_str("a"),
-                                    parameters: ast::PathParameters::none(),
-                                },
-                                ast::PathSegment {
-                                    identifier: Ident::from_str("b"),
-                                    parameters: ast::PathParameters::none(),
-                                }
-                            ]
-                        }),
+                        span: sp(0, 6),
+                        segments: vec![ast::PathSegment::crate_root(),
+                                       Ident::from_str("a").into(),
+                                       Ident::from_str("b").into()]
+                    }),
                     span: sp(0, 6),
                     attrs: ThinVec::new(),
                    }))
@@ -739,24 +725,20 @@ mod tests {
                 sp(5, 14),
                 Rc::new(tokenstream::Delimited {
                     delim: token::DelimToken::Paren,
-                    open_span: sp(5, 6),
                     tts: vec![
                         TokenTree::Token(sp(6, 7), token::Ident(Ident::from_str("b"))),
                         TokenTree::Token(sp(8, 9), token::Colon),
                         TokenTree::Token(sp(10, 13), token::Ident(Ident::from_str("i32"))),
                     ],
-                    close_span: sp(13, 14),
                 })),
             TokenTree::Delimited(
                 sp(15, 21),
                 Rc::new(tokenstream::Delimited {
                     delim: token::DelimToken::Brace,
-                    open_span: sp(15, 16),
                     tts: vec![
                         TokenTree::Token(sp(17, 18), token::Ident(Ident::from_str("b"))),
                         TokenTree::Token(sp(18, 19), token::Semi),
                     ],
-                    close_span: sp(20, 21),
                 }))
         ];
 
@@ -771,13 +753,7 @@ mod tests {
                         id: ast::DUMMY_NODE_ID,
                         node:ast::ExprKind::Path(None, ast::Path{
                             span: sp(7, 8),
-                            global: false,
-                            segments: vec![
-                                ast::PathSegment {
-                                    identifier: Ident::from_str("d"),
-                                    parameters: ast::PathParameters::none(),
-                                }
-                            ],
+                            segments: vec![Ident::from_str("d").into()],
                         }),
                         span:sp(7,8),
                         attrs: ThinVec::new(),
@@ -794,13 +770,7 @@ mod tests {
                            id: ast::DUMMY_NODE_ID,
                            node: ast::ExprKind::Path(None, ast::Path {
                                span:sp(0,1),
-                               global:false,
-                               segments: vec![
-                                ast::PathSegment {
-                                    identifier: Ident::from_str("b"),
-                                    parameters: ast::PathParameters::none(),
-                                }
-                               ],
+                               segments: vec![Ident::from_str("b").into()],
                             }),
                            span: sp(0,1),
                            attrs: ThinVec::new()})),
@@ -841,13 +811,7 @@ mod tests {
                                     ty: P(ast::Ty{id: ast::DUMMY_NODE_ID,
                                                   node: ast::TyKind::Path(None, ast::Path{
                                         span:sp(10,13),
-                                        global:false,
-                                        segments: vec![
-                                            ast::PathSegment {
-                                                identifier: Ident::from_str("i32"),
-                                                parameters: ast::PathParameters::none(),
-                                            }
-                                        ],
+                                        segments: vec![Ident::from_str("i32").into()],
                                         }),
                                         span:sp(10,13)
                                     }),
@@ -875,7 +839,7 @@ mod tests {
                                     Abi::Rust,
                                     ast::Generics{ // no idea on either of these:
                                         lifetimes: Vec::new(),
-                                        ty_params: P::new(),
+                                        ty_params: Vec::new(),
                                         where_clause: ast::WhereClause {
                                             id: ast::DUMMY_NODE_ID,
                                             predicates: Vec::new(),
@@ -889,14 +853,7 @@ mod tests {
                                                 node: ast::ExprKind::Path(None,
                                                       ast::Path{
                                                         span:sp(17,18),
-                                                        global:false,
-                                                        segments: vec![
-                                                            ast::PathSegment {
-                                                                identifier: Ident::from_str("b"),
-                                                                parameters:
-                                                                ast::PathParameters::none(),
-                                                            }
-                                                        ],
+                                                        segments: vec![Ident::from_str("b").into()],
                                                       }),
                                                 span: sp(17,18),
                                                 attrs: ThinVec::new()})),

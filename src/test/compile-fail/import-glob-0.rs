@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern: unresolved name
-
 use module_of_many_things::*;
 
 mod module_of_many_things {
@@ -23,6 +21,6 @@ mod module_of_many_things {
 fn main() {
     f1();
     f2();
-    f999(); // 'export' currently doesn't work?
+    f999(); //~ ERROR cannot find function `f999` in this scope
     f4();
 }

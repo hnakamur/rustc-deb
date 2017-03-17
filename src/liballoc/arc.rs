@@ -55,24 +55,24 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// [`RwLock`][rwlock], or one of the [`Atomic`][atomic] types.
 ///
 /// `Arc` uses atomic operations for reference counting, so `Arc`s can be
-/// sent between threads. In other words, `Arc<T>` implements [`Send`][send]
-/// as long as `T` implements `Send` and [`Sync`][sync]. The disadvantage is
+/// sent between threads. In other words, `Arc<T>` implements [`Send`]
+/// as long as `T` implements [`Send`] and [`Sync`][sync]. The disadvantage is
 /// that atomic operations are more expensive than ordinary memory accesses.
 /// If you are not sharing reference-counted values between threads, consider
-/// using [`rc::Rc`][rc] for lower overhead. `Rc` is a safe default, because
-/// the compiler will catch any attempt to send an `Rc` between threads.
+/// using [`rc::Rc`][`Rc`] for lower overhead. [`Rc`] is a safe default, because
+/// the compiler will catch any attempt to send an [`Rc`] between threads.
 /// However, a library might choose `Arc` in order to give library consumers
 /// more flexibility.
 ///
 /// The [`downgrade`][downgrade] method can be used to create a non-owning
-/// [`Weak`][weak] pointer. A `Weak` pointer can be [`upgrade`][upgrade]d
-/// to an `Arc`, but this will return [`None`][option] if the value has
-/// already been dropped.
+/// [`Weak`][weak] pointer. A [`Weak`][weak] pointer can be [`upgrade`][upgrade]d
+/// to an `Arc`, but this will return [`None`] if the value has already been
+/// dropped.
 ///
 /// A cycle between `Arc` pointers will never be deallocated. For this reason,
-/// `Weak` is used to break cycles. For example, a tree could have strong
-/// `Arc` pointers from parent nodes to children, and `Weak` pointers from
-/// children back to their parents.
+/// [`Weak`][weak] is used to break cycles. For example, a tree could have
+/// strong `Arc` pointers from parent nodes to children, and [`Weak`][weak]
+/// pointers from children back to their parents.
 ///
 /// `Arc<T>` automatically dereferences to `T` (via the [`Deref`][deref] trait),
 /// so you can call `T`'s methods on a value of type `Arc<T>`. To avoid name
@@ -86,22 +86,22 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// Arc::downgrade(&my_arc);
 /// ```
 ///
-/// `Weak<T>` does not auto-dereference to `T`, because the value may have
+/// [`Weak<T>`][weak] does not auto-dereference to `T`, because the value may have
 /// already been destroyed.
 ///
 /// [arc]: struct.Arc.html
 /// [weak]: struct.Weak.html
-/// [rc]: ../../std/rc/struct.Rc.html
+/// [`Rc`]: ../../std/rc/struct.Rc.html
 /// [clone]: ../../std/clone/trait.Clone.html#tymethod.clone
 /// [mutex]: ../../std/sync/struct.Mutex.html
 /// [rwlock]: ../../std/sync/struct.RwLock.html
 /// [atomic]: ../../std/sync/atomic/index.html
-/// [send]: ../../std/marker/trait.Send.html
+/// [`Send`]: ../../std/marker/trait.Send.html
 /// [sync]: ../../std/marker/trait.Sync.html
 /// [deref]: ../../std/ops/trait.Deref.html
 /// [downgrade]: struct.Arc.html#method.downgrade
 /// [upgrade]: struct.Weak.html#method.upgrade
-/// [option]: ../../std/option/enum.Option.html
+/// [`None`]: ../../std/option/enum.Option.html#variant.None
 /// [assoc]: ../../book/method-syntax.html#associated-functions
 ///
 /// # Examples
@@ -127,7 +127,9 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// }
 /// ```
 ///
-/// Sharing a mutable `AtomicUsize`:
+/// Sharing a mutable [`AtomicUsize`]:
+///
+/// [`AtomicUsize`]: ../../std/sync/atomic/struct.AtomicUsize.html
 ///
 /// ```no_run
 /// use std::sync::Arc;
@@ -706,7 +708,7 @@ impl<T: ?Sized> Arc<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized> Drop for Arc<T> {
+unsafe impl<#[may_dangle] T: ?Sized> Drop for Arc<T> {
     /// Drops the `Arc`.
     ///
     /// This will decrement the strong reference count. If the strong reference
@@ -734,7 +736,6 @@ impl<T: ?Sized> Drop for Arc<T> {
     /// drop(foo);    // Doesn't print anything
     /// drop(foo2);   // Prints "dropped!"
     /// ```
-    #[unsafe_destructor_blind_to_params]
     #[inline]
     fn drop(&mut self) {
         // Because `fetch_sub` is already atomic, we do not need to synchronize

@@ -541,6 +541,18 @@ case $CFG_CPUTYPE in
         CFG_CPUTYPE=x86_64
         ;;
 
+    mips | mips64)
+        if [ "$CFG_CPUTYPE" = "mips64" ]; then
+            CFG_OSTYPE="${CFG_OSTYPE}abi64"
+        fi
+        ENDIAN=$(printf '\1' | od -dAn)
+        if [ "$ENDIAN" -eq 1 ]; then
+            CFG_CPUTYPE="${CFG_CPUTYPE}el"
+        elif [ "$ENDIAN" -ne 256 ]; then
+            err "unknown endianness: $ENDIAN (expecting 1 for little or 256 for big)"
+        fi
+        ;;
+
     BePC)
         CFG_CPUTYPE=i686
         ;;
@@ -694,6 +706,8 @@ opt_nosave manage-submodules 1 "let the build manage the git submodules"
 opt_nosave clang 0 "prefer clang to gcc for building the runtime"
 opt_nosave jemalloc 1 "build liballoc with jemalloc"
 opt elf-tls 1 "elf thread local storage on platforms where supported"
+opt full-bootstrap 0 "build three compilers instead of two"
+opt extended 0 "build an extended rust tool set"
 
 valopt_nosave prefix "/usr/local" "set installation prefix"
 valopt_nosave local-rust-root "/usr/local" "set prefix for local rust binary"
@@ -732,7 +746,7 @@ fi
 case "$CFG_RELEASE_CHANNEL" in
     nightly )
 	msg "overriding settings for $CFG_RELEASE_CHANNEL"
-	CFG_ENABLE_LLVM_ASSERTIONS=1
+        enable_if_not_disabled llvm-assertions
         # FIXME(stage0) re-enable this on the next stage0 now that #35566 is
         # fixed
         case "$CFG_BUILD" in
@@ -921,6 +935,18 @@ case $CFG_BUILD in
         ;;
 esac
 putvar CFG_LLDB_PYTHON
+
+# Do some sanity checks if running on buildbot
+# (these env vars are set by rust-buildbot)
+if [ -n "$RUST_DIST_SERVER" -a -n "$ALLOW_NONZERO_RLIMIT_CORE" ]; then
+   # Frequently the llvm submodule directory is broken by the build
+   # being killed
+   llvm_lock="${CFG_SRC_DIR}/.git/modules/src/llvm/index.lock"
+   if [ -e "$llvm_lock" ]; then
+       step_msg "removing $llvm_lock"
+       rm -f "$llvm_lock"
+   fi
+fi
 
 step_msg "looking for target specific programs"
 
@@ -1560,7 +1586,7 @@ do
     then
         LLVM_BUILD_DIR=${CFG_BUILD_DIR}$t/llvm
         LLVM_INST_DIR=$LLVM_BUILD_DIR
-        # For some crazy reason the MSVC output dir is different than Unix
+        # For some weird reason the MSVC output dir is different than Unix
         if [ ${is_msvc} -ne 0 ]; then
             if [ -n "$CFG_DISABLE_OPTIMIZE_LLVM" ]
             then
@@ -1814,7 +1840,7 @@ do
         CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_ASSERTIONS=ON"
     fi
 
-    CMAKE_ARGS="$CMAKE_ARGS -DLLVM_TARGETS_TO_BUILD='X86;ARM;AArch64;Mips;PowerPC;SystemZ;JSBackend;MSP430'"
+    CMAKE_ARGS="$CMAKE_ARGS -DLLVM_TARGETS_TO_BUILD='X86;ARM;AArch64;Mips;PowerPC;SystemZ;JSBackend;MSP430;Sparc'"
     CMAKE_ARGS="$CMAKE_ARGS -G '$CFG_CMAKE_GENERATOR'"
     CMAKE_ARGS="$CMAKE_ARGS $CFG_LLVM_SRC_DIR"
 

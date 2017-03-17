@@ -36,29 +36,37 @@ pub fn visit_all_item_likes_in_krate<'a, 'tcx, V, F>(tcx: TyCtxt<'a, 'tcx, 'tcx>
         where F: FnMut(DefId) -> DepNode<DefId>, V: ItemLikeVisitor<'tcx>
     {
         fn visit_item(&mut self, i: &'tcx hir::Item) {
-            let item_def_id = self.tcx.map.local_def_id(i.id);
+            let item_def_id = self.tcx.hir.local_def_id(i.id);
             let task_id = (self.dep_node_fn)(item_def_id);
             let _task = self.tcx.dep_graph.in_task(task_id.clone());
             debug!("Started task {:?}", task_id);
-            assert!(!self.tcx.map.is_inlined_def_id(item_def_id));
             self.tcx.dep_graph.read(DepNode::Hir(item_def_id));
             self.visitor.visit_item(i);
             debug!("Ended task {:?}", task_id);
         }
 
+        fn visit_trait_item(&mut self, i: &'tcx hir::TraitItem) {
+            let trait_item_def_id = self.tcx.hir.local_def_id(i.id);
+            let task_id = (self.dep_node_fn)(trait_item_def_id);
+            let _task = self.tcx.dep_graph.in_task(task_id.clone());
+            debug!("Started task {:?}", task_id);
+            self.tcx.dep_graph.read(DepNode::Hir(trait_item_def_id));
+            self.visitor.visit_trait_item(i);
+            debug!("Ended task {:?}", task_id);
+        }
+
         fn visit_impl_item(&mut self, i: &'tcx hir::ImplItem) {
-            let impl_item_def_id = self.tcx.map.local_def_id(i.id);
+            let impl_item_def_id = self.tcx.hir.local_def_id(i.id);
             let task_id = (self.dep_node_fn)(impl_item_def_id);
             let _task = self.tcx.dep_graph.in_task(task_id.clone());
             debug!("Started task {:?}", task_id);
-            assert!(!self.tcx.map.is_inlined_def_id(impl_item_def_id));
             self.tcx.dep_graph.read(DepNode::Hir(impl_item_def_id));
             self.visitor.visit_impl_item(i);
             debug!("Ended task {:?}", task_id);
         }
     }
 
-    let krate = tcx.dep_graph.with_ignore(|| tcx.map.krate());
+    let krate = tcx.dep_graph.with_ignore(|| tcx.hir.krate());
     let mut tracking_visitor = TrackingVisitor {
         tcx: tcx,
         dep_node_fn: &mut dep_node_fn,

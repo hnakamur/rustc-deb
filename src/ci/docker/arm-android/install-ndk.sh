@@ -29,17 +29,5 @@ bash android-ndk-r11c/build/tools/make-standalone-toolchain.sh \
         --ndk-dir=/android/android-ndk-r11c \
         --arch=arm
 cpgdb ndk-arm-9 arm-linux-androideabi
-bash android-ndk-r11c/build/tools/make-standalone-toolchain.sh \
-        --platform=android-21 \
-        --toolchain=aarch64-linux-android-4.9 \
-        --install-dir=/android/ndk-aarch64 \
-        --ndk-dir=/android/android-ndk-r11c \
-        --arch=arm64
-bash android-ndk-r11c/build/tools/make-standalone-toolchain.sh \
-        --platform=android-9 \
-        --toolchain=x86-4.9 \
-        --install-dir=/android/ndk-x86-9 \
-        --ndk-dir=/android/android-ndk-r11c \
-        --arch=x86
 
 rm -rf ./android-ndk-r11c-linux-x86_64.zip ./android-ndk-r11c

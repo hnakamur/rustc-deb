@@ -8,8 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern: unresolved name `m1::arguments`
-
 mod m1 {}
 
-fn main(arguments: Vec<String>) { log(debug, m1::arguments); }
+fn main(arguments: Vec<String>) { //~ ERROR main function has wrong type
+    log(debug, m1::arguments);
+    //~^ ERROR cannot find function `log` in this scope
+    //~| ERROR cannot find value `debug` in this scope
+    //~| ERROR cannot find value `arguments` in module `m1`
+}

@@ -650,16 +650,16 @@ Rust syntax is restricted in two ways:
 
 [RFC 550]: https://github.com/rust-lang/rfcs/blob/master/text/0550-macro-future-proofing.md
 
-## Procedrual Macros
+## Procedural Macros
 
-"Procedrual macros" are the second way to implement a macro. For now, the only
+"Procedural macros" are the second way to implement a macro. For now, the only
 thing they can be used for is to implement derive on your own types. See
 [the book][procedural macros] for a tutorial.
 
 Procedural macros involve a few different parts of the language and its
 standard libraries. First is the `proc_macro` crate, included with Rust,
-that defines an interface for building a procedrual macro. The 
-`#[proc_macro_derive(Foo)]` attribute is used to mark the the deriving
+that defines an interface for building a procedural macro. The
+`#[proc_macro_derive(Foo)]` attribute is used to mark the deriving
 function. This function must have the type signature:
 
 ```rust,ignore
@@ -1677,6 +1677,15 @@ Functions within external blocks may be called by Rust code, just like
 functions defined in Rust. The Rust compiler automatically translates between
 the Rust ABI and the foreign ABI.
 
+Functions within external blocks may be variadic by specifying `...` after one
+or more named arguments in the argument list:
+
+```ignore
+extern {
+    fn foo(x: i32, ...);
+}
+```
+
 A number of [attributes](#ffi-attributes) control the behavior of external blocks.
 
 By default external blocks assume that the library they are calling uses the
@@ -1751,7 +1760,8 @@ of an item to see whether it should be allowed or not. This is where privacy
 warnings are generated, or otherwise "you used a private item of another module
 and weren't allowed to."
 
-By default, everything in Rust is *private*, with one exception. Enum variants
+By default, everything in Rust is *private*, with two exceptions: Associated
+items in a `pub` Trait are public by default; Enum variants
 in a `pub` enum are also public by default. When an item is declared as `pub`,
 it can be thought of as being accessible to the outside world. For example:
 
@@ -3795,7 +3805,7 @@ impl From<i32> for String {
 }
 ```
 
-The notation `Self` in the impl refers to the implementing type: `String`. In another 
+The notation `Self` in the impl refers to the implementing type: `String`. In another
 example:
 
 ```

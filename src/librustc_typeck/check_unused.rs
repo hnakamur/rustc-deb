@@ -50,6 +50,9 @@ impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for UnusedTraitImportVisitor<'a, 'tcx> {
         }
     }
 
+    fn visit_trait_item(&mut self, _trait_item: &hir::TraitItem) {
+    }
+
     fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem) {
     }
 }
@@ -57,5 +60,5 @@ impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for UnusedTraitImportVisitor<'a, 'tcx> {
 pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     let _task = tcx.dep_graph.in_task(DepNode::UnusedTraitCheck);
     let mut visitor = UnusedTraitImportVisitor { tcx: tcx };
-    tcx.map.krate().visit_all_item_likes(&mut visitor);
+    tcx.hir.krate().visit_all_item_likes(&mut visitor);
 }

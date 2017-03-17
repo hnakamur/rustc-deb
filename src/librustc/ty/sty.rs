@@ -22,7 +22,7 @@ use std::fmt;
 use std::iter;
 use std::cmp::Ordering;
 use syntax::abi;
-use syntax::ast::{self, Name, NodeId};
+use syntax::ast::{self, Name};
 use syntax::symbol::{keywords, InternedString};
 use util::nodemap::FxHashSet;
 
@@ -115,12 +115,6 @@ pub enum TypeVariants<'tcx> {
     /// definition and not a concrete use of it.
     TyAdt(&'tcx AdtDef, &'tcx Substs<'tcx>),
 
-    /// `Box<T>`; this is nominally a struct in the documentation, but is
-    /// special-cased internally. For example, it is possible to implicitly
-    /// move the contents of a box out of that box, and methods of any type
-    /// can have type `Box<Self>`.
-    TyBox(Ty<'tcx>),
-
     /// The pointee of a string slice. Written as `str`.
     TyStr,
 
@@ -134,7 +128,7 @@ pub enum TypeVariants<'tcx> {
     TyRawPtr(TypeAndMut<'tcx>),
 
     /// A reference; a pointer with an associated lifetime. Written as
-    /// `&a mut T` or `&'a T`.
+    /// `&'a mut T` or `&'a T`.
     TyRef(&'tcx Region, TypeAndMut<'tcx>),
 
     /// The anonymous type of a function declaration/definition. Each
@@ -543,6 +537,7 @@ pub struct ProjectionTy<'tcx> {
 pub struct BareFnTy<'tcx> {
     pub unsafety: hir::Unsafety,
     pub abi: abi::Abi,
+    /// Signature (inputs and output) of this function type.
     pub sig: PolyFnSig<'tcx>,
 }
 
@@ -978,29 +973,52 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
         }
     }
 
-    /// Checks whether a type is uninhabited.
-    /// If `block` is `Some(id)` it also checks that the uninhabited-ness is visible from `id`.
-    pub fn is_uninhabited(&self, block: Option<NodeId>, cx: TyCtxt<'a, 'gcx, 'tcx>) -> bool {
+    /// Checks whether a type is visibly uninhabited from a particular module.
+    /// # Example
+    /// ```rust
+    /// enum Void {}
+    /// mod a {
+    ///     pub mod b {
+    ///         pub struct SecretlyUninhabited {
+    ///             _priv: !,
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// mod c {
+    ///     pub struct AlsoSecretlyUninhabited {
+    ///         _priv: Void,
+    ///     }
+    ///     mod d {
+    ///     }
+    /// }
+    ///
+    /// struct Foo {
+    ///     x: a::b::SecretlyUninhabited,
+    ///     y: c::AlsoSecretlyUninhabited,
+    /// }
+    /// ```
+    /// In this code, the type `Foo` will only be visibly uninhabited inside the
+    /// modules b, c and d. This effects pattern-matching on `Foo` or types that
+    /// contain `Foo`.
+    ///
+    /// # Example
+    /// ```rust
+    /// let foo_result: Result<T, Foo> = ... ;
+    /// let Ok(t) = foo_result;
+    /// ```
+    /// This code should only compile in modules where the uninhabitedness of Foo is
+    /// visible.
+    pub fn is_uninhabited_from(&self, module: DefId, tcx: TyCtxt<'a, 'gcx, 'tcx>) -> bool {
         let mut visited = FxHashSet::default();
-        self.is_uninhabited_recurse(&mut visited, block, cx)
-    }
+        let forest = self.uninhabited_from(&mut visited, tcx);
 
-    pub fn is_uninhabited_recurse(&self,
-                                  visited: &mut FxHashSet<(DefId, &'tcx Substs<'tcx>)>,
-                                  block: Option<NodeId>,
-                                  cx: TyCtxt<'a, 'gcx, 'tcx>) -> bool {
-        match self.sty {
-            TyAdt(def, substs) => {
-                def.is_uninhabited_recurse(visited, block, cx, substs)
-            },
-
-            TyNever => true,
-            TyTuple(ref tys) => tys.iter().any(|ty| ty.is_uninhabited_recurse(visited, block, cx)),
-            TyArray(ty, len) => len > 0 && ty.is_uninhabited_recurse(visited, block, cx),
-            TyRef(_, ref tm) => tm.ty.is_uninhabited_recurse(visited, block, cx),
-
-            _ => false,
-        }
+        // To check whether this type is uninhabited at all (not just from the
+        // given node) you could check whether the forest is empty.
+        // ```
+        // forest.is_empty()
+        // ```
+        forest.contains(tcx, module)
     }
 
     pub fn is_primitive(&self) -> bool {
@@ -1097,6 +1115,17 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
         }
     }
 
+    pub fn is_mutable_pointer(&self) -> bool {
+        match self.sty {
+            TyRawPtr(tnm) | TyRef(_, tnm) => if let hir::Mutability::MutMutable = tnm.mutbl {
+                true
+            } else {
+                false
+            },
+            _ => false
+        }
+    }
+
     pub fn is_unsafe_ptr(&self) -> bool {
         match self.sty {
             TyRawPtr(_) => return true,
@@ -1104,10 +1133,17 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
         }
     }
 
-    pub fn is_unique(&self) -> bool {
+    pub fn is_box(&self) -> bool {
         match self.sty {
-            TyBox(_) => true,
-            _ => false
+            TyAdt(def, _) => def.is_box(),
+            _ => false,
+        }
+    }
+
+    pub fn boxed_ty(&self) -> Ty<'tcx> {
+        match self.sty {
+            TyAdt(def, substs) if def.is_box() => substs.type_at(0),
+            _ => bug!("`boxed_ty` is called on non-box type {:?}", self),
         }
     }
 
@@ -1212,9 +1248,9 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
         -> Option<TypeAndMut<'tcx>>
     {
         match self.sty {
-            TyBox(ty) => {
+            TyAdt(def, _) if def.is_box() => {
                 Some(TypeAndMut {
-                    ty: ty,
+                    ty: self.boxed_ty(),
                     mutbl: if pref == ty::PreferMutLvalue {
                         hir::MutMutable
                     } else {
@@ -1314,7 +1350,6 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
             TyInt(_) |
             TyUint(_) |
             TyFloat(_) |
-            TyBox(_) |
             TyStr |
             TyArray(..) |
             TySlice(_) |

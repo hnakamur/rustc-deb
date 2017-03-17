@@ -33,6 +33,7 @@ use core::cmp;
 use alloc::raw_vec::RawVec;
 
 use super::range::RangeArgument;
+use Bound::{Excluded, Included, Unbounded};
 use super::vec::Vec;
 
 const INITIAL_CAPACITY: usize = 7; // 2^3 - 1
@@ -69,8 +70,7 @@ impl<T: Clone> Clone for VecDeque<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T> Drop for VecDeque<T> {
-    #[unsafe_destructor_blind_to_params]
+unsafe impl<#[may_dangle] T> Drop for VecDeque<T> {
     fn drop(&mut self) {
         let (front, back) = self.as_mut_slices();
         unsafe {
@@ -206,11 +206,7 @@ impl<T> VecDeque<T> {
     unsafe fn wrap_copy(&self, dst: usize, src: usize, len: usize) {
         #[allow(dead_code)]
         fn diff(a: usize, b: usize) -> usize {
-            if a <= b {
-                b - a
-            } else {
-                a - b
-            }
+            if a <= b { b - a } else { a - b }
         }
         debug_assert!(cmp::min(diff(dst, src), self.cap() - diff(dst, src)) + len <= self.cap(),
                       "wrc dst={} src={} len={} cap={}",
@@ -552,8 +548,8 @@ impl<T> VecDeque<T> {
         let old_cap = self.cap();
         let used_cap = self.len() + 1;
         let new_cap = used_cap.checked_add(additional)
-                              .and_then(|needed_cap| needed_cap.checked_next_power_of_two())
-                              .expect("capacity overflow");
+            .and_then(|needed_cap| needed_cap.checked_next_power_of_two())
+            .expect("capacity overflow");
 
         if new_cap > self.capacity() {
             self.buf.reserve_exact(used_cap, new_cap - used_cap);
@@ -647,8 +643,6 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(deque_extras)]
-    ///
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -659,9 +653,7 @@ impl<T> VecDeque<T> {
     /// assert_eq!(buf.len(), 1);
     /// assert_eq!(Some(&5), buf.get(0));
     /// ```
-    #[unstable(feature = "deque_extras",
-               reason = "matches collection reform specification; waiting on panic semantics",
-               issue = "27788")]
+    #[stable(feature = "deque_extras", since = "1.16.0")]
     pub fn truncate(&mut self, len: usize) {
         for _ in len..self.len() {
             self.pop_back();
@@ -857,8 +849,16 @@ impl<T> VecDeque<T> {
         // and the head/tail values will be restored correctly.
         //
         let len = self.len();
-        let start = *range.start().unwrap_or(&0);
-        let end = *range.end().unwrap_or(&len);
+        let start = match range.start() {
+            Included(&n) => n,
+            Excluded(&n) => n + 1,
+            Unbounded    => 0,
+        };
+        let end = match range.end() {
+            Included(&n) => n + 1,
+            Excluded(&n) => n,
+            Unbounded    => len,
+        };
         assert!(start <= end, "drain lower bound was too large");
         assert!(end <= len, "drain upper bound was too large");
 
@@ -1232,9 +1232,8 @@ impl<T> VecDeque<T> {
         self.pop_front()
     }
 
-    /// Inserts an element at `index` within the `VecDeque`. Whichever
-    /// end is closer to the insertion point will be moved to make room,
-    /// and all the affected elements will be moved to new positions.
+    /// Inserts an element at `index` within the `VecDeque`, shifting all elements with indices
+    /// greater than or equal to `index` towards the back.
     ///
     /// Element at index 0 is the front of the queue.
     ///
@@ -1243,14 +1242,19 @@ impl<T> VecDeque<T> {
     /// Panics if `index` is greater than `VecDeque`'s length
     ///
     /// # Examples
+    ///
     /// ```
     /// use std::collections::VecDeque;
     ///
-    /// let mut buf = VecDeque::new();
-    /// buf.push_back(10);
-    /// buf.push_back(12);
-    /// buf.insert(1, 11);
-    /// assert_eq!(Some(&11), buf.get(1));
+    /// let mut vec_deque = VecDeque::new();
+    /// vec_deque.push_back('a');
+    /// vec_deque.push_back('b');
+    /// vec_deque.push_back('c');
+    ///
+    /// vec_deque.insert(1, 'd');
+    ///
+    /// let vec = vec_deque.into_iter().collect::<Vec<_>>();
+    /// assert_eq!(vec, ['a', 'd', 'b', 'c']);
     /// ```
     #[stable(feature = "deque_extras_15", since = "1.5.0")]
     pub fn insert(&mut self, index: usize, value: T) {
@@ -1293,9 +1297,7 @@ impl<T> VecDeque<T> {
 
         let contiguous = self.is_contiguous();
 
-        match (contiguous,
-               distance_to_tail <= distance_to_head,
-               idx >= self.tail) {
+        match (contiguous, distance_to_tail <= distance_to_head, idx >= self.tail) {
             (true, true, _) if index == 0 => {
                 // push_front
                 //
@@ -1513,9 +1515,7 @@ impl<T> VecDeque<T> {
 
         let contiguous = self.is_contiguous();
 
-        match (contiguous,
-               distance_to_tail <= distance_to_head,
-               idx >= self.tail) {
+        match (contiguous, distance_to_tail <= distance_to_head, idx >= self.tail) {
             (true, true, _) => {
                 unsafe {
                     // contiguous, remove closer to tail:
@@ -1775,8 +1775,6 @@ impl<T: Clone> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(deque_extras)]
-    ///
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -1789,9 +1787,7 @@ impl<T: Clone> VecDeque<T> {
     ///     assert_eq!(a, b);
     /// }
     /// ```
-    #[unstable(feature = "deque_extras",
-               reason = "matches collection reform specification; waiting on panic semantics",
-               issue = "27788")]
+    #[stable(feature = "deque_extras", since = "1.16.0")]
     pub fn resize(&mut self, new_len: usize, value: T) {
         let len = self.len();
 
@@ -1812,7 +1808,7 @@ fn wrap_index(index: usize, size: usize) -> usize {
 }
 
 /// Returns the two slices that cover the VecDeque's valid range
-trait RingSlices : Sized {
+trait RingSlices: Sized {
     fn slice(self, from: usize, to: usize) -> Self;
     fn split_at(self, i: usize) -> (Self, Self);
 
@@ -1895,7 +1891,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
     }
 
     fn fold<Acc, F>(self, mut accum: Acc, mut f: F) -> Acc
-        where F: FnMut(Acc, Self::Item) -> Acc,
+        where F: FnMut(Acc, Self::Item) -> Acc
     {
         let (front, back) = RingSlices::ring_slices(self.ring, self.head, self.tail);
         accum = front.iter().fold(accum, &mut f);
@@ -1959,7 +1955,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
     }
 
     fn fold<Acc, F>(self, mut accum: Acc, mut f: F) -> Acc
-        where F: FnMut(Acc, Self::Item) -> Acc,
+        where F: FnMut(Acc, Self::Item) -> Acc
     {
         let (front, back) = RingSlices::ring_slices(self.ring, self.head, self.tail);
         accum = front.iter_mut().fold(accum, &mut f);
@@ -2082,17 +2078,15 @@ impl<'a, T: 'a> Drop for Drain<'a, T> {
             (_, 0) => {
                 source_deque.head = drain_tail;
             }
-            _ => {
-                unsafe {
-                    if tail_len <= head_len {
-                        source_deque.tail = source_deque.wrap_sub(drain_head, tail_len);
-                        source_deque.wrap_copy(source_deque.tail, orig_tail, tail_len);
-                    } else {
-                        source_deque.head = source_deque.wrap_add(drain_tail, head_len);
-                        source_deque.wrap_copy(drain_tail, drain_head, head_len);
-                    }
+            _ => unsafe {
+                if tail_len <= head_len {
+                    source_deque.tail = source_deque.wrap_sub(drain_head, tail_len);
+                    source_deque.wrap_copy(source_deque.tail, orig_tail, tail_len);
+                } else {
+                    source_deque.head = source_deque.wrap_add(drain_tail, head_len);
+                    source_deque.wrap_copy(drain_tail, drain_head, head_len);
                 }
-            }
+            },
         }
     }
 }
@@ -2288,10 +2282,8 @@ impl<T> From<Vec<T>> for VecDeque<T> {
 
             // We need to extend the buf if it's not a power of two, too small
             // or doesn't have at least one free space
-            if !buf.cap().is_power_of_two()
-                || (buf.cap() < (MINIMUM_CAPACITY + 1))
-                || (buf.cap() == len)
-            {
+            if !buf.cap().is_power_of_two() || (buf.cap() < (MINIMUM_CAPACITY + 1)) ||
+               (buf.cap() == len) {
                 let cap = cmp::max(buf.cap() + 1, MINIMUM_CAPACITY + 1).next_power_of_two();
                 buf.reserve_exact(len, cap - len);
             }
@@ -2299,7 +2291,7 @@ impl<T> From<Vec<T>> for VecDeque<T> {
             VecDeque {
                 tail: 0,
                 head: len,
-                buf: buf
+                buf: buf,
             }
         }
     }
@@ -2324,18 +2316,17 @@ impl<T> From<VecDeque<T>> for Vec<T> {
                     // do this in at most three copy moves.
                     if (cap - tail) > head {
                         // right hand block is the long one; move that enough for the left
-                        ptr::copy(
-                            buf.offset(tail as isize),
-                            buf.offset((tail - head) as isize),
-                            cap - tail);
+                        ptr::copy(buf.offset(tail as isize),
+                                  buf.offset((tail - head) as isize),
+                                  cap - tail);
                         // copy left in the end
                         ptr::copy(buf, buf.offset((cap - head) as isize), head);
                         // shift the new thing to the start
-                        ptr::copy(buf.offset((tail-head) as isize), buf, len);
+                        ptr::copy(buf.offset((tail - head) as isize), buf, len);
                     } else {
                         // left hand block is the long one, we can do it in two!
-                        ptr::copy(buf, buf.offset((cap-tail) as isize), head);
-                        ptr::copy(buf.offset(tail as isize), buf, cap-tail);
+                        ptr::copy(buf, buf.offset((cap - tail) as isize), head);
+                        ptr::copy(buf.offset(tail as isize), buf, cap - tail);
                     }
                 } else {
                     // Need to use N swaps to move the ring
@@ -2576,8 +2567,8 @@ mod tests {
 
                         // We should see the correct values in the VecDeque
                         let expected: VecDeque<_> = (0..drain_start)
-                                                        .chain(drain_end..len)
-                                                        .collect();
+                            .chain(drain_end..len)
+                            .collect();
                         assert_eq!(expected, tester);
                     }
                 }
@@ -2693,19 +2684,19 @@ mod tests {
             let cap = (2i32.pow(cap_pwr) - 1) as usize;
 
             // In these cases there is enough free space to solve it with copies
-            for len in 0..((cap+1)/2) {
+            for len in 0..((cap + 1) / 2) {
                 // Test contiguous cases
-                for offset in 0..(cap-len) {
+                for offset in 0..(cap - len) {
                     create_vec_and_test_convert(cap, offset, len)
                 }
 
                 // Test cases where block at end of buffer is bigger than block at start
-                for offset in (cap-len)..(cap-(len/2)) {
+                for offset in (cap - len)..(cap - (len / 2)) {
                     create_vec_and_test_convert(cap, offset, len)
                 }
 
                 // Test cases where block at start of buffer is bigger than block at end
-                for offset in (cap-(len/2))..cap {
+                for offset in (cap - (len / 2))..cap {
                     create_vec_and_test_convert(cap, offset, len)
                 }
             }
@@ -2714,19 +2705,19 @@ mod tests {
             // the ring will use swapping when:
             // (cap + 1 - offset) > (cap + 1 - len) && (len - (cap + 1 - offset)) > (cap + 1 - len))
             //  right block size  >   free space    &&      left block size       >    free space
-            for len in ((cap+1)/2)..cap {
+            for len in ((cap + 1) / 2)..cap {
                 // Test contiguous cases
-                for offset in 0..(cap-len) {
+                for offset in 0..(cap - len) {
                     create_vec_and_test_convert(cap, offset, len)
                 }
 
                 // Test cases where block at end of buffer is bigger than block at start
-                for offset in (cap-len)..(cap-(len/2)) {
+                for offset in (cap - len)..(cap - (len / 2)) {
                     create_vec_and_test_convert(cap, offset, len)
                 }
 
                 // Test cases where block at start of buffer is bigger than block at end
-                for offset in (cap-(len/2))..cap {
+                for offset in (cap - (len / 2))..cap {
                     create_vec_and_test_convert(cap, offset, len)
                 }
             }

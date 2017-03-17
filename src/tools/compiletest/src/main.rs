@@ -21,6 +21,10 @@
 extern crate libc;
 extern crate test;
 extern crate getopts;
+
+#[cfg(cargobuild)]
+extern crate rustc_serialize;
+#[cfg(not(cargobuild))]
 extern crate serialize as rustc_serialize;
 
 #[macro_use]
@@ -261,7 +265,23 @@ pub fn run_tests(config: &Config) {
         // android debug-info test uses remote debugger
         // so, we test 1 thread at once.
         // also trying to isolate problems with adb_run_wrapper.sh ilooping
-        env::set_var("RUST_TEST_THREADS","1");
+        match config.mode {
+            // These tests don't actually run code or don't run for android, so
+            // we don't need to limit ourselves there
+            Mode::Ui |
+            Mode::CompileFail |
+            Mode::ParseFail |
+            Mode::RunMake |
+            Mode::Codegen |
+            Mode::CodegenUnits |
+            Mode::Pretty |
+            Mode::Rustdoc => {}
+
+            _ => {
+                env::set_var("RUST_TEST_THREADS", "1");
+            }
+
+        }
     }
 
     match config.mode {
@@ -299,6 +319,10 @@ pub fn run_tests(config: &Config) {
     // Prevent issue #21352 UAC blocking .exe containing 'patch' etc. on Windows
     // If #11207 is resolved (adding manifest to .exe) this becomes unnecessary
     env::set_var("__COMPAT_LAYER", "RunAsInvoker");
+
+    // Let tests know which target they're running as
+    env::set_var("TARGET", &config.target);
+
     let res = test::run_tests_console(&opts, tests.into_iter().collect());
     match res {
         Ok(true) => {}
@@ -567,7 +591,6 @@ fn extract_gdb_version(full_version_line: &str) -> Option<u32> {
         return Some(((major * 1000) + minor) * 1000 + patch);
     }
 
-    println!("Could not extract GDB version from line '{}'", full_version_line);
     None
 }
 
@@ -604,8 +627,6 @@ fn extract_lldb_version(full_version_line: Option<String>) -> Option<String> {
                 }).collect::<String>();
                 if !vers.is_empty() { return Some(vers) }
             }
-            println!("Could not extract LLDB version from line '{}'",
-                     full_version_line);
         }
     }
     None

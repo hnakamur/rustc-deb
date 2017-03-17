@@ -268,3 +268,19 @@ LARGE_INTEGER increment_all_parts(LARGE_INTEGER li) {
     li.QuadPart += 1;
     return li;
 }
+
+#if __SIZEOF_INT128__ == 16
+
+unsigned __int128 identity(unsigned __int128 a) {
+    return a;
+}
+
+__int128 square(__int128 a) {
+    return a * a;
+}
+
+__int128 sub(__int128 a, __int128 b) {
+    return a - b;
+}
+
+#endif

@@ -64,7 +64,7 @@ impl UnusedMut {
         for (_, v) in &mutables {
             if !v.iter().any(|e| used_mutables.contains(e)) {
                 cx.span_lint(UNUSED_MUT,
-                             cx.tcx.map.span(v[0]),
+                             cx.tcx.hir.span(v[0]),
                              "variable does not need to be mutable");
             }
         }
@@ -97,11 +97,11 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnusedMut {
     fn check_fn(&mut self,
                 cx: &LateContext,
                 _: FnKind,
-                decl: &hir::FnDecl,
-                _: &hir::Expr,
+                _: &hir::FnDecl,
+                body: &hir::Body,
                 _: Span,
                 _: ast::NodeId) {
-        for a in &decl.inputs {
+        for a in &body.arguments {
             self.check_unused_mut_pat(cx, slice::ref_slice(&a.pat));
         }
     }
@@ -139,7 +139,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnusedResults {
             return;
         }
 
-        let t = cx.tcx.tables().expr_ty(&expr);
+        let t = cx.tables.expr_ty(&expr);
         let warned = match t.sty {
             ty::TyTuple(ref tys) if tys.is_empty() => return,
             ty::TyNever => return,
@@ -440,7 +440,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnusedAllocation {
             _ => return,
         }
 
-        if let Some(adjustment) = cx.tcx.tables().adjustments.get(&e.id) {
+        if let Some(adjustment) = cx.tables.adjustments.get(&e.id) {
             if let adjustment::Adjust::DerefRef { autoref, .. } = adjustment.kind {
                 match autoref {
                     Some(adjustment::AutoBorrow::Ref(_, hir::MutImmutable)) => {

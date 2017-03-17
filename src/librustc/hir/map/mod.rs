@@ -13,11 +13,10 @@ use self::MapEntry::*;
 use self::collector::NodeCollector;
 pub use self::def_collector::{DefCollector, MacroInvocationData};
 pub use self::definitions::{Definitions, DefKey, DefPath, DefPathData,
-                            DisambiguatedDefPathData, InlinedRootPath};
+                            DisambiguatedDefPathData};
 
 use dep_graph::{DepGraph, DepNode};
 
-use middle::cstore::InlinedItem;
 use hir::def_id::{CRATE_DEF_INDEX, DefId, DefIndex};
 
 use syntax::abi::Abi;
@@ -26,12 +25,12 @@ use syntax::codemap::Spanned;
 use syntax_pos::Span;
 
 use hir::*;
-use hir::print as pprust;
+use hir::print::Nested;
+use util::nodemap::DefIdMap;
 
 use arena::TypedArena;
 use std::cell::RefCell;
 use std::io;
-use std::mem;
 
 pub mod blocks;
 mod collector;
@@ -39,70 +38,67 @@ mod def_collector;
 pub mod definitions;
 
 #[derive(Copy, Clone, Debug)]
-pub enum Node<'ast> {
-    NodeItem(&'ast Item),
-    NodeForeignItem(&'ast ForeignItem),
-    NodeTraitItem(&'ast TraitItem),
-    NodeImplItem(&'ast ImplItem),
-    NodeVariant(&'ast Variant),
-    NodeField(&'ast StructField),
-    NodeExpr(&'ast Expr),
-    NodeStmt(&'ast Stmt),
-    NodeTy(&'ast Ty),
-    NodeTraitRef(&'ast TraitRef),
-    NodeLocal(&'ast Pat),
-    NodePat(&'ast Pat),
-    NodeBlock(&'ast Block),
+pub enum Node<'hir> {
+    NodeItem(&'hir Item),
+    NodeForeignItem(&'hir ForeignItem),
+    NodeTraitItem(&'hir TraitItem),
+    NodeImplItem(&'hir ImplItem),
+    NodeVariant(&'hir Variant),
+    NodeField(&'hir StructField),
+    NodeExpr(&'hir Expr),
+    NodeStmt(&'hir Stmt),
+    NodeTy(&'hir Ty),
+    NodeTraitRef(&'hir TraitRef),
+    NodeLocal(&'hir Pat),
+    NodePat(&'hir Pat),
+    NodeBlock(&'hir Block),
 
     /// NodeStructCtor represents a tuple struct.
-    NodeStructCtor(&'ast VariantData),
+    NodeStructCtor(&'hir VariantData),
 
-    NodeLifetime(&'ast Lifetime),
-    NodeTyParam(&'ast TyParam),
-    NodeVisibility(&'ast Visibility),
-
-    NodeInlinedItem(&'ast InlinedItem),
+    NodeLifetime(&'hir Lifetime),
+    NodeTyParam(&'hir TyParam),
+    NodeVisibility(&'hir Visibility),
 }
 
 /// Represents an entry and its parent NodeID.
 /// The odd layout is to bring down the total size.
 #[derive(Copy, Debug)]
-pub enum MapEntry<'ast> {
+enum MapEntry<'hir> {
     /// Placeholder for holes in the map.
     NotPresent,
 
     /// All the node types, with a parent ID.
-    EntryItem(NodeId, &'ast Item),
-    EntryForeignItem(NodeId, &'ast ForeignItem),
-    EntryTraitItem(NodeId, &'ast TraitItem),
-    EntryImplItem(NodeId, &'ast ImplItem),
-    EntryVariant(NodeId, &'ast Variant),
-    EntryField(NodeId, &'ast StructField),
-    EntryExpr(NodeId, &'ast Expr),
-    EntryStmt(NodeId, &'ast Stmt),
-    EntryTy(NodeId, &'ast Ty),
-    EntryTraitRef(NodeId, &'ast TraitRef),
-    EntryLocal(NodeId, &'ast Pat),
-    EntryPat(NodeId, &'ast Pat),
-    EntryBlock(NodeId, &'ast Block),
-    EntryStructCtor(NodeId, &'ast VariantData),
-    EntryLifetime(NodeId, &'ast Lifetime),
-    EntryTyParam(NodeId, &'ast TyParam),
-    EntryVisibility(NodeId, &'ast Visibility),
+    EntryItem(NodeId, &'hir Item),
+    EntryForeignItem(NodeId, &'hir ForeignItem),
+    EntryTraitItem(NodeId, &'hir TraitItem),
+    EntryImplItem(NodeId, &'hir ImplItem),
+    EntryVariant(NodeId, &'hir Variant),
+    EntryField(NodeId, &'hir StructField),
+    EntryExpr(NodeId, &'hir Expr),
+    EntryStmt(NodeId, &'hir Stmt),
+    EntryTy(NodeId, &'hir Ty),
+    EntryTraitRef(NodeId, &'hir TraitRef),
+    EntryLocal(NodeId, &'hir Pat),
+    EntryPat(NodeId, &'hir Pat),
+    EntryBlock(NodeId, &'hir Block),
+    EntryStructCtor(NodeId, &'hir VariantData),
+    EntryLifetime(NodeId, &'hir Lifetime),
+    EntryTyParam(NodeId, &'hir TyParam),
+    EntryVisibility(NodeId, &'hir Visibility),
 
     /// Roots for node trees.
     RootCrate,
-    RootInlinedParent(&'ast InlinedItem)
 }
 
-impl<'ast> Clone for MapEntry<'ast> {
-    fn clone(&self) -> MapEntry<'ast> {
+impl<'hir> Clone for MapEntry<'hir> {
+    fn clone(&self) -> MapEntry<'hir> {
         *self
     }
 }
 
-impl<'ast> MapEntry<'ast> {
-    fn from_node(p: NodeId, node: Node<'ast>) -> MapEntry<'ast> {
+impl<'hir> MapEntry<'hir> {
+    fn from_node(p: NodeId, node: Node<'hir>) -> MapEntry<'hir> {
         match node {
             NodeItem(n) => EntryItem(p, n),
             NodeForeignItem(n) => EntryForeignItem(p, n),
@@ -121,8 +117,6 @@ impl<'ast> MapEntry<'ast> {
             NodeLifetime(n) => EntryLifetime(p, n),
             NodeTyParam(n) => EntryTyParam(p, n),
             NodeVisibility(n) => EntryVisibility(p, n),
-
-            NodeInlinedItem(n) => RootInlinedParent(n),
         }
     }
 
@@ -147,12 +141,11 @@ impl<'ast> MapEntry<'ast> {
             EntryVisibility(id, _) => id,
 
             NotPresent |
-            RootCrate |
-            RootInlinedParent(_) => return None,
+            RootCrate => return None,
         })
     }
 
-    fn to_node(self) -> Option<Node<'ast>> {
+    fn to_node(self) -> Option<Node<'hir>> {
         Some(match self {
             EntryItem(_, n) => NodeItem(n),
             EntryForeignItem(_, n) => NodeForeignItem(n),
@@ -171,9 +164,48 @@ impl<'ast> MapEntry<'ast> {
             EntryLifetime(_, n) => NodeLifetime(n),
             EntryTyParam(_, n) => NodeTyParam(n),
             EntryVisibility(_, n) => NodeVisibility(n),
-            RootInlinedParent(n) => NodeInlinedItem(n),
             _ => return None
         })
+    }
+
+    fn is_body_owner(self, node_id: NodeId) -> bool {
+        match self {
+            EntryItem(_, item) => {
+                match item.node {
+                    ItemConst(_, body) |
+                    ItemStatic(.., body) |
+                    ItemFn(_, _, _, _, _, body) => body.node_id == node_id,
+                    _ => false
+                }
+            }
+
+            EntryTraitItem(_, item) => {
+                match item.node {
+                    TraitItemKind::Const(_, Some(body)) |
+                    TraitItemKind::Method(_, TraitMethod::Provided(body)) => {
+                        body.node_id == node_id
+                    }
+                    _ => false
+                }
+            }
+
+            EntryImplItem(_, item) => {
+                match item.node {
+                    ImplItemKind::Const(_, body) |
+                    ImplItemKind::Method(_, body) => body.node_id == node_id,
+                    _ => false
+                }
+            }
+
+            EntryExpr(_, expr) => {
+                match expr.node {
+                    ExprClosure(.., body, _) => body.node_id == node_id,
+                    _ => false
+                }
+            }
+
+            _ => false
+        }
     }
 }
 
@@ -181,7 +213,7 @@ impl<'ast> MapEntry<'ast> {
 pub struct Forest {
     krate: Crate,
     pub dep_graph: DepGraph,
-    inlined_items: TypedArena<InlinedItem>
+    inlined_bodies: TypedArena<Body>
 }
 
 impl Forest {
@@ -189,11 +221,11 @@ impl Forest {
         Forest {
             krate: krate,
             dep_graph: dep_graph.clone(),
-            inlined_items: TypedArena::new()
+            inlined_bodies: TypedArena::new()
         }
     }
 
-    pub fn krate<'ast>(&'ast self) -> &'ast Crate {
+    pub fn krate<'hir>(&'hir self) -> &'hir Crate {
         self.dep_graph.read(DepNode::Krate);
         &self.krate
     }
@@ -202,9 +234,9 @@ impl Forest {
 /// Represents a mapping from Node IDs to AST elements and their parent
 /// Node IDs
 #[derive(Clone)]
-pub struct Map<'ast> {
+pub struct Map<'hir> {
     /// The backing storage for all the AST nodes.
-    pub forest: &'ast Forest,
+    pub forest: &'hir Forest,
 
     /// Same as the dep_graph in forest, just available with one fewer
     /// deref. This is a gratuitious micro-optimization.
@@ -219,28 +251,15 @@ pub struct Map<'ast> {
     ///
     /// Also, indexing is pretty quick when you've got a vector and
     /// plain old integers.
-    map: RefCell<Vec<MapEntry<'ast>>>,
+    map: Vec<MapEntry<'hir>>,
 
-    definitions: RefCell<Definitions>,
+    definitions: Definitions,
 
-    /// All NodeIds that are numerically greater or equal to this value come
-    /// from inlined items.
-    local_node_id_watermark: NodeId,
-
-    /// All def-indices that are numerically greater or equal to this value come
-    /// from inlined items.
-    local_def_id_watermark: usize,
+    /// Bodies inlined from other crates are cached here.
+    inlined_bodies: RefCell<DefIdMap<&'hir Body>>,
 }
 
-impl<'ast> Map<'ast> {
-    pub fn is_inlined_def_id(&self, id: DefId) -> bool {
-        id.is_local() && id.index.as_usize() >= self.local_def_id_watermark
-    }
-
-    pub fn is_inlined_node_id(&self, id: NodeId) -> bool {
-        id >= self.local_node_id_watermark
-    }
-
+impl<'hir> Map<'hir> {
     /// Registers a read in the dependency graph of the AST node with
     /// the given `id`. This needs to be called each time a public
     /// function returns the HIR for a node -- in other words, when it
@@ -253,151 +272,86 @@ impl<'ast> Map<'ast> {
     }
 
     fn dep_node(&self, id0: NodeId) -> DepNode<DefId> {
-        let map = self.map.borrow();
         let mut id = id0;
-        if !self.is_inlined_node_id(id) {
-            let mut last_expr = None;
-            loop {
-                match map[id.as_usize()] {
-                    EntryItem(_, item) => {
-                        assert_eq!(id, item.id);
-                        let def_id = self.local_def_id(id);
-                        assert!(!self.is_inlined_def_id(def_id));
-
-                        if let Some(last_id) = last_expr {
-                            // The body of the item may have a separate dep node
-                            // (Note that trait items don't currently have
-                            // their own dep node, so there's also just one
-                            // HirBody node for all the items)
-                            if self.is_body(last_id, item) {
-                                return DepNode::HirBody(def_id);
-                            }
+        let mut last_expr = None;
+        loop {
+            let entry = self.map[id.as_usize()];
+            match entry {
+                EntryItem(..) |
+                EntryTraitItem(..) |
+                EntryImplItem(..) => {
+                    if let Some(last_id) = last_expr {
+                        // The body may have a separate dep node
+                        if entry.is_body_owner(last_id) {
+                            let def_id = self.local_def_id(id);
+                            return DepNode::HirBody(def_id);
                         }
-                        return DepNode::Hir(def_id);
                     }
+                    return DepNode::Hir(self.local_def_id(id));
+                }
 
-                    EntryImplItem(_, item) => {
-                        let def_id = self.local_def_id(id);
-                        assert!(!self.is_inlined_def_id(def_id));
+                EntryVariant(p, v) => {
+                    id = p;
 
-                        if let Some(last_id) = last_expr {
-                            // The body of the item may have a separate dep node
-                            if self.is_impl_item_body(last_id, item) {
-                                return DepNode::HirBody(def_id);
-                            }
+                    if last_expr.is_some() {
+                        if v.node.disr_expr.map(|e| e.node_id) == last_expr {
+                            // The enum parent holds both Hir and HirBody nodes.
+                            let def_id = self.local_def_id(id);
+                            return DepNode::HirBody(def_id);
                         }
-                        return DepNode::Hir(def_id);
                     }
-
-                    EntryForeignItem(p, _) |
-                    EntryTraitItem(p, _) |
-                    EntryVariant(p, _) |
-                    EntryField(p, _) |
-                    EntryStmt(p, _) |
-                    EntryTy(p, _) |
-                    EntryTraitRef(p, _) |
-                    EntryLocal(p, _) |
-                    EntryPat(p, _) |
-                    EntryBlock(p, _) |
-                    EntryStructCtor(p, _) |
-                    EntryLifetime(p, _) |
-                    EntryTyParam(p, _) |
-                    EntryVisibility(p, _) =>
-                        id = p,
-
-                    EntryExpr(p, _) => {
-                        last_expr = Some(id);
-                        id = p;
-                    }
-
-                    RootCrate => {
-                        return DepNode::Hir(DefId::local(CRATE_DEF_INDEX));
-                    }
-
-                    RootInlinedParent(_) =>
-                        bug!("node {} has inlined ancestor but is not inlined", id0),
-
-                    NotPresent =>
-                        // Some nodes, notably struct fields, are not
-                        // present in the map for whatever reason, but
-                        // they *do* have def-ids. So if we encounter an
-                        // empty hole, check for that case.
-                        return self.opt_local_def_id(id)
-                                   .map(|def_id| DepNode::Hir(def_id))
-                                   .unwrap_or_else(|| {
-                                       bug!("Walking parents from `{}` \
-                                             led to `NotPresent` at `{}`",
-                                            id0, id)
-                                   }),
                 }
-            }
-        } else {
-            // reading from an inlined def-id is really a read out of
-            // the metadata from which we loaded the item.
-            loop {
-                match map[id.as_usize()] {
-                    EntryItem(p, _) |
-                    EntryForeignItem(p, _) |
-                    EntryTraitItem(p, _) |
-                    EntryImplItem(p, _) |
-                    EntryVariant(p, _) |
-                    EntryField(p, _) |
-                    EntryExpr(p, _) |
-                    EntryStmt(p, _) |
-                    EntryTy(p, _) |
-                    EntryTraitRef(p, _) |
-                    EntryLocal(p, _) |
-                    EntryPat(p, _) |
-                    EntryBlock(p, _) |
-                    EntryStructCtor(p, _) |
-                    EntryLifetime(p, _) |
-                    EntryTyParam(p, _) |
-                    EntryVisibility(p, _) =>
-                        id = p,
 
-                    RootInlinedParent(parent) =>
-                        return DepNode::MetaData(parent.def_id),
+                EntryForeignItem(p, _) |
+                EntryField(p, _) |
+                EntryStmt(p, _) |
+                EntryTy(p, _) |
+                EntryTraitRef(p, _) |
+                EntryLocal(p, _) |
+                EntryPat(p, _) |
+                EntryBlock(p, _) |
+                EntryStructCtor(p, _) |
+                EntryLifetime(p, _) |
+                EntryTyParam(p, _) |
+                EntryVisibility(p, _) =>
+                    id = p,
 
-                    RootCrate =>
-                        bug!("node {} has crate ancestor but is inlined", id0),
-
-                    NotPresent =>
-                        bug!("node {} is inlined but not present in map", id0),
+                EntryExpr(p, _) => {
+                    last_expr = Some(id);
+                    id = p;
                 }
-            }
-        }
-    }
 
-    fn is_body(&self, node_id: NodeId, item: &Item) -> bool {
-        match item.node {
-            ItemFn(_, _, _, _, _, body) => body.node_id() == node_id,
-            // Since trait items currently don't get their own dep nodes,
-            // we check here whether node_id is the body of any of the items.
-            // If they get their own dep nodes, this can go away
-            ItemTrait(_, _, _, ref trait_items) => {
-                trait_items.iter().any(|trait_item| { match trait_item.node {
-                    MethodTraitItem(_, Some(body)) => body.node_id() == node_id,
-                    _ => false
-                }})
-            }
-            _ => false
-        }
-    }
+                RootCrate => {
+                    return DepNode::Hir(DefId::local(CRATE_DEF_INDEX));
+                }
 
-    fn is_impl_item_body(&self, node_id: NodeId, item: &ImplItem) -> bool {
-        match item.node {
-            ImplItemKind::Method(_, body) => body.node_id() == node_id,
-            _ => false
+                NotPresent =>
+                    // Some nodes, notably macro definitions, are not
+                    // present in the map for whatever reason, but
+                    // they *do* have def-ids. So if we encounter an
+                    // empty hole, check for that case.
+                    return self.opt_local_def_id(id)
+                               .map(|def_id| DepNode::Hir(def_id))
+                               .unwrap_or_else(|| {
+                                   bug!("Walking parents from `{}` \
+                                         led to `NotPresent` at `{}`",
+                                        id0, id)
+                               }),
+            }
         }
     }
 
     pub fn num_local_def_ids(&self) -> usize {
-        self.definitions.borrow().len()
+        self.definitions.len()
+    }
+
+    pub fn definitions(&self) -> &Definitions {
+        &self.definitions
     }
 
     pub fn def_key(&self, def_id: DefId) -> DefKey {
         assert!(def_id.is_local());
-        self.definitions.borrow().def_key(def_id.index)
+        self.definitions.def_key(def_id.index)
     }
 
     pub fn def_path_from_id(&self, id: NodeId) -> Option<DefPath> {
@@ -408,11 +362,11 @@ impl<'ast> Map<'ast> {
 
     pub fn def_path(&self, def_id: DefId) -> DefPath {
         assert!(def_id.is_local());
-        self.definitions.borrow().def_path(def_id.index)
+        self.definitions.def_path(def_id.index)
     }
 
     pub fn def_index_for_def_key(&self, def_key: DefKey) -> Option<DefIndex> {
-        self.definitions.borrow().def_index_for_def_key(def_key)
+        self.definitions.def_index_for_def_key(def_key)
     }
 
     pub fn local_def_id(&self, node: NodeId) -> DefId {
@@ -423,26 +377,34 @@ impl<'ast> Map<'ast> {
     }
 
     pub fn opt_local_def_id(&self, node: NodeId) -> Option<DefId> {
-        self.definitions.borrow().opt_local_def_id(node)
+        self.definitions.opt_local_def_id(node)
     }
 
     pub fn as_local_node_id(&self, def_id: DefId) -> Option<NodeId> {
-        self.definitions.borrow().as_local_node_id(def_id)
+        self.definitions.as_local_node_id(def_id)
     }
 
     fn entry_count(&self) -> usize {
-        self.map.borrow().len()
+        self.map.len()
     }
 
-    fn find_entry(&self, id: NodeId) -> Option<MapEntry<'ast>> {
-        self.map.borrow().get(id.as_usize()).cloned()
+    fn find_entry(&self, id: NodeId) -> Option<MapEntry<'hir>> {
+        self.map.get(id.as_usize()).cloned()
     }
 
-    pub fn krate(&self) -> &'ast Crate {
+    pub fn krate(&self) -> &'hir Crate {
         self.forest.krate()
     }
 
-    pub fn impl_item(&self, id: ImplItemId) -> &'ast ImplItem {
+    pub fn trait_item(&self, id: TraitItemId) -> &'hir TraitItem {
+        self.read(id.node_id);
+
+        // NB: intentionally bypass `self.forest.krate()` so that we
+        // do not trigger a read of the whole krate here
+        self.forest.krate.trait_item(id)
+    }
+
+    pub fn impl_item(&self, id: ImplItemId) -> &'hir ImplItem {
         self.read(id.node_id);
 
         // NB: intentionally bypass `self.forest.krate()` so that we
@@ -450,10 +412,35 @@ impl<'ast> Map<'ast> {
         self.forest.krate.impl_item(id)
     }
 
+    pub fn body(&self, id: BodyId) -> &'hir Body {
+        self.read(id.node_id);
+
+        // NB: intentionally bypass `self.forest.krate()` so that we
+        // do not trigger a read of the whole krate here
+        self.forest.krate.body(id)
+    }
+
+    /// Returns the `NodeId` that corresponds to the definition of
+    /// which this is the body of, i.e. a `fn`, `const` or `static`
+    /// item (possibly associated), or a closure, or the body itself
+    /// for embedded constant expressions (e.g. `N` in `[T; N]`).
+    pub fn body_owner(&self, BodyId { node_id }: BodyId) -> NodeId {
+        let parent = self.get_parent_node(node_id);
+        if self.map[parent.as_usize()].is_body_owner(node_id) {
+            parent
+        } else {
+            node_id
+        }
+    }
+
+    pub fn body_owner_def_id(&self, id: BodyId) -> DefId {
+        self.local_def_id(self.body_owner(id))
+    }
+
     /// Get the attributes on the krate. This is preferable to
     /// invoking `krate.attrs` because it registers a tighter
     /// dep-graph access.
-    pub fn krate_attrs(&self) -> &'ast [ast::Attribute] {
+    pub fn krate_attrs(&self) -> &'hir [ast::Attribute] {
         let crate_root_def_id = DefId::local(CRATE_DEF_INDEX);
         self.dep_graph.read(DepNode::Hir(crate_root_def_id));
         &self.forest.krate.attrs
@@ -461,20 +448,20 @@ impl<'ast> Map<'ast> {
 
     /// Retrieve the Node corresponding to `id`, panicking if it cannot
     /// be found.
-    pub fn get(&self, id: NodeId) -> Node<'ast> {
+    pub fn get(&self, id: NodeId) -> Node<'hir> {
         match self.find(id) {
             Some(node) => node, // read recorded by `find`
             None => bug!("couldn't find node id {} in the AST map", id)
         }
     }
 
-    pub fn get_if_local(&self, id: DefId) -> Option<Node<'ast>> {
+    pub fn get_if_local(&self, id: DefId) -> Option<Node<'hir>> {
         self.as_local_node_id(id).map(|id| self.get(id)) // read recorded by `get`
     }
 
     /// Retrieve the Node corresponding to `id`, returning None if
     /// cannot be found.
-    pub fn find(&self, id: NodeId) -> Option<Node<'ast>> {
+    pub fn find(&self, id: NodeId) -> Option<Node<'hir>> {
         let result = self.find_entry(id).and_then(|x| x.to_node());
         if result.is_some() {
             self.read(id);
@@ -521,7 +508,7 @@ impl<'ast> Map<'ast> {
     /// is not an error, since items in the crate module have the crate root as
     /// parent.
     fn walk_parent_nodes<F>(&self, start_id: NodeId, found: F) -> Result<NodeId, NodeId>
-        where F: Fn(&Node<'ast>) -> bool
+        where F: Fn(&Node<'hir>) -> bool
     {
         let mut id = start_id;
         loop {
@@ -600,11 +587,7 @@ impl<'ast> Map<'ast> {
     }
 
     pub fn get_parent_did(&self, id: NodeId) -> DefId {
-        let parent = self.get_parent(id);
-        match self.find_entry(parent) {
-            Some(RootInlinedParent(ii)) => ii.def_id,
-            _ => self.local_def_id(parent)
-        }
+        self.local_def_id(self.get_parent(id))
     }
 
     pub fn get_foreign_abi(&self, id: NodeId) -> Abi {
@@ -616,8 +599,6 @@ impl<'ast> Map<'ast> {
                     _ => None
                 }
             }
-            /// Wrong but OK, because the only inlined foreign items are intrinsics.
-            Some(RootInlinedParent(_)) => Some(Abi::RustIntrinsic),
             _ => None
         };
         match abi {
@@ -630,28 +611,28 @@ impl<'ast> Map<'ast> {
         }
     }
 
-    pub fn expect_item(&self, id: NodeId) -> &'ast Item {
+    pub fn expect_item(&self, id: NodeId) -> &'hir Item {
         match self.find(id) { // read recorded by `find`
             Some(NodeItem(item)) => item,
             _ => bug!("expected item, found {}", self.node_to_string(id))
         }
     }
 
-    pub fn expect_impl_item(&self, id: NodeId) -> &'ast ImplItem {
+    pub fn expect_impl_item(&self, id: NodeId) -> &'hir ImplItem {
         match self.find(id) {
             Some(NodeImplItem(item)) => item,
             _ => bug!("expected impl item, found {}", self.node_to_string(id))
         }
     }
 
-    pub fn expect_trait_item(&self, id: NodeId) -> &'ast TraitItem {
+    pub fn expect_trait_item(&self, id: NodeId) -> &'hir TraitItem {
         match self.find(id) {
             Some(NodeTraitItem(item)) => item,
             _ => bug!("expected trait item, found {}", self.node_to_string(id))
         }
     }
 
-    pub fn expect_variant_data(&self, id: NodeId) -> &'ast VariantData {
+    pub fn expect_variant_data(&self, id: NodeId) -> &'hir VariantData {
         match self.find(id) {
             Some(NodeItem(i)) => {
                 match i.node {
@@ -672,36 +653,38 @@ impl<'ast> Map<'ast> {
         }
     }
 
-    pub fn expect_variant(&self, id: NodeId) -> &'ast Variant {
+    pub fn expect_variant(&self, id: NodeId) -> &'hir Variant {
         match self.find(id) {
             Some(NodeVariant(variant)) => variant,
             _ => bug!("expected variant, found {}", self.node_to_string(id)),
         }
     }
 
-    pub fn expect_foreign_item(&self, id: NodeId) -> &'ast ForeignItem {
+    pub fn expect_foreign_item(&self, id: NodeId) -> &'hir ForeignItem {
         match self.find(id) {
             Some(NodeForeignItem(item)) => item,
             _ => bug!("expected foreign item, found {}", self.node_to_string(id))
         }
     }
 
-    pub fn expect_expr(&self, id: NodeId) -> &'ast Expr {
+    pub fn expect_expr(&self, id: NodeId) -> &'hir Expr {
         match self.find(id) { // read recorded by find
             Some(NodeExpr(expr)) => expr,
             _ => bug!("expected expr, found {}", self.node_to_string(id))
         }
     }
 
-    pub fn expect_inlined_item(&self, id: NodeId) -> &'ast InlinedItem {
-        match self.find_entry(id) {
-            Some(RootInlinedParent(inlined_item)) => inlined_item,
-            _ => bug!("expected inlined item, found {}", self.node_to_string(id)),
-        }
+    pub fn get_inlined_body(&self, def_id: DefId) -> Option<&'hir Body> {
+        self.inlined_bodies.borrow().get(&def_id).map(|&body| {
+            self.dep_graph.read(DepNode::MetaData(def_id));
+            body
+        })
     }
 
-    pub fn expr(&self, id: ExprId) -> &'ast Expr {
-        self.expect_expr(id.node_id())
+    pub fn intern_inlined_body(&self, def_id: DefId, body: Body) -> &'hir Body {
+        let body = self.forest.inlined_bodies.alloc(body);
+        self.inlined_bodies.borrow_mut().insert(def_id, body);
+        body
     }
 
     /// Returns the name associated with the given NodeId's AST.
@@ -723,7 +706,7 @@ impl<'ast> Map<'ast> {
 
     /// Given a node ID, get a list of attributes associated with the AST
     /// corresponding to the Node ID
-    pub fn attrs(&self, id: NodeId) -> &'ast [ast::Attribute] {
+    pub fn attrs(&self, id: NodeId) -> &'hir [ast::Attribute] {
         self.read(id); // reveals attributes on the node
         let attrs = match self.find(id) {
             Some(NodeItem(i)) => Some(&i.attrs[..]),
@@ -752,7 +735,7 @@ impl<'ast> Map<'ast> {
     /// such as `foo::bar::quux`, `bar::quux`, `other::bar::quux`, and
     /// any other such items it can find in the map.
     pub fn nodes_matching_suffix<'a>(&'a self, parts: &'a [String])
-                                 -> NodesMatchingSuffix<'a, 'ast> {
+                                 -> NodesMatchingSuffix<'a, 'hir> {
         NodesMatchingSuffix {
             map: self,
             item_name: parts.last().unwrap(),
@@ -784,7 +767,6 @@ impl<'ast> Map<'ast> {
             Some(EntryVisibility(_, v)) => bug!("unexpected Visibility {:?}", v),
 
             Some(RootCrate) => self.forest.krate.span,
-            Some(RootInlinedParent(parent)) => parent.body.span,
             Some(NotPresent) | None => {
                 bug!("hir::map::Map::span: id not in map: {:?}", id)
             }
@@ -802,16 +784,20 @@ impl<'ast> Map<'ast> {
     pub fn node_to_user_string(&self, id: NodeId) -> String {
         node_id_to_string(self, id, false)
     }
+
+    pub fn node_to_pretty_string(&self, id: NodeId) -> String {
+        print::to_string(self, |s| s.print_node(self.get(id)))
+    }
 }
 
-pub struct NodesMatchingSuffix<'a, 'ast:'a> {
-    map: &'a Map<'ast>,
+pub struct NodesMatchingSuffix<'a, 'hir:'a> {
+    map: &'a Map<'hir>,
     item_name: &'a String,
     in_which: &'a [String],
     idx: NodeId,
 }
 
-impl<'a, 'ast> NodesMatchingSuffix<'a, 'ast> {
+impl<'a, 'hir> NodesMatchingSuffix<'a, 'hir> {
     /// Returns true only if some suffix of the module path for parent
     /// matches `self.in_which`.
     ///
@@ -867,7 +853,7 @@ impl<'a, 'ast> NodesMatchingSuffix<'a, 'ast> {
     }
 }
 
-impl<'a, 'ast> Iterator for NodesMatchingSuffix<'a, 'ast> {
+impl<'a, 'hir> Iterator for NodesMatchingSuffix<'a, 'hir> {
     type Item = NodeId;
 
     fn next(&mut self) -> Option<NodeId> {
@@ -906,9 +892,9 @@ impl Named for StructField { fn name(&self) -> Name { self.name } }
 impl Named for TraitItem { fn name(&self) -> Name { self.name } }
 impl Named for ImplItem { fn name(&self) -> Name { self.name } }
 
-pub fn map_crate<'ast>(forest: &'ast mut Forest,
+pub fn map_crate<'hir>(forest: &'hir mut Forest,
                        definitions: Definitions)
-                       -> Map<'ast> {
+                       -> Map<'hir> {
     let mut collector = NodeCollector::root(&forest.krate);
     intravisit::walk_crate(&mut collector, &forest.krate);
     let map = collector.map;
@@ -929,57 +915,32 @@ pub fn map_crate<'ast>(forest: &'ast mut Forest,
               entries, vector_length, (entries as f64 / vector_length as f64) * 100.);
     }
 
-    let local_node_id_watermark = NodeId::new(map.len());
-    let local_def_id_watermark = definitions.len();
-
     Map {
         forest: forest,
         dep_graph: forest.dep_graph.clone(),
-        map: RefCell::new(map),
-        definitions: RefCell::new(definitions),
-        local_node_id_watermark: local_node_id_watermark,
-        local_def_id_watermark: local_def_id_watermark,
+        map: map,
+        definitions: definitions,
+        inlined_bodies: RefCell::new(DefIdMap()),
     }
 }
 
-/// Used for items loaded from external crate that are being inlined into this
-/// crate.
-pub fn map_decoded_item<'ast>(map: &Map<'ast>,
-                              parent_def_path: DefPath,
-                              parent_def_id: DefId,
-                              ii: InlinedItem,
-                              ii_parent_id: NodeId)
-                              -> &'ast InlinedItem {
-    let _ignore = map.forest.dep_graph.in_ignore();
-
-    let ii = map.forest.inlined_items.alloc(ii);
-
-    let defs = &mut *map.definitions.borrow_mut();
-    let mut def_collector = DefCollector::extend(ii_parent_id,
-                                                 parent_def_path.clone(),
-                                                 parent_def_id,
-                                                 defs);
-    def_collector.walk_item(ii, map.krate());
-
-    let mut collector = NodeCollector::extend(map.krate(),
-                                              ii,
-                                              ii_parent_id,
-                                              parent_def_path,
-                                              parent_def_id,
-                                              mem::replace(&mut *map.map.borrow_mut(), vec![]));
-    ii.visit(&mut collector);
-    *map.map.borrow_mut() = collector.map;
-
-    ii
+/// Identical to the `PpAnn` implementation for `hir::Crate`,
+/// except it avoids creating a dependency on the whole crate.
+impl<'hir> print::PpAnn for Map<'hir> {
+    fn nested(&self, state: &mut print::State, nested: print::Nested) -> io::Result<()> {
+        match nested {
+            Nested::Item(id) => state.print_item(self.expect_item(id.id)),
+            Nested::TraitItem(id) => state.print_trait_item(self.trait_item(id)),
+            Nested::ImplItem(id) => state.print_impl_item(self.impl_item(id)),
+            Nested::Body(id) => state.print_expr(&self.body(id).value),
+            Nested::BodyArgPat(id, i) => state.print_pat(&self.body(id).arguments[i].pat)
+        }
+    }
 }
 
-pub trait NodePrinter {
-    fn print_node(&mut self, node: &Node) -> io::Result<()>;
-}
-
-impl<'a> NodePrinter for pprust::State<'a> {
-    fn print_node(&mut self, node: &Node) -> io::Result<()> {
-        match *node {
+impl<'a> print::State<'a> {
+    pub fn print_node(&mut self, node: Node) -> io::Result<()> {
+        match node {
             NodeItem(a)        => self.print_item(&a),
             NodeForeignItem(a) => self.print_foreign_item(&a),
             NodeTraitItem(a)   => self.print_trait_item(a),
@@ -989,19 +950,25 @@ impl<'a> NodePrinter for pprust::State<'a> {
             NodeStmt(a)        => self.print_stmt(&a),
             NodeTy(a)          => self.print_type(&a),
             NodeTraitRef(a)    => self.print_trait_ref(&a),
+            NodeLocal(a)       |
             NodePat(a)         => self.print_pat(&a),
-            NodeBlock(a)       => self.print_block(&a),
+            NodeBlock(a)       => {
+                use syntax::print::pprust::PrintState;
+
+                // containing cbox, will be closed by print-block at }
+                self.cbox(print::indent_unit)?;
+                // head-ibox, will be closed by print-block after {
+                self.ibox(0)?;
+                self.print_block(&a)
+            }
             NodeLifetime(a)    => self.print_lifetime(&a),
             NodeVisibility(a)  => self.print_visibility(&a),
             NodeTyParam(_)     => bug!("cannot print TyParam"),
             NodeField(_)       => bug!("cannot print StructField"),
             // these cases do not carry enough information in the
-            // ast_map to reconstruct their full structure for pretty
+            // hir_map to reconstruct their full structure for pretty
             // printing.
-            NodeLocal(_)       => bug!("cannot print isolated Local"),
             NodeStructCtor(_)  => bug!("cannot print isolated StructCtor"),
-
-            NodeInlinedItem(_) => bug!("cannot print inlined item"),
         }
     }
 }
@@ -1064,9 +1031,9 @@ fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
         }
         Some(NodeTraitItem(ti)) => {
             let kind = match ti.node {
-                ConstTraitItem(..) => "assoc constant",
-                MethodTraitItem(..) => "trait method",
-                TypeTraitItem(..) => "assoc type",
+                TraitItemKind::Const(..) => "assoc constant",
+                TraitItemKind::Method(..) => "trait method",
+                TraitItemKind::Type(..) => "assoc type",
             };
 
             format!("{} {} in {}{}", kind, ti.name, path_str(), id_str)
@@ -1081,42 +1048,38 @@ fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
                     field.name,
                     path_str(), id_str)
         }
-        Some(NodeExpr(ref expr)) => {
-            format!("expr {}{}", pprust::expr_to_string(&expr), id_str)
+        Some(NodeExpr(_)) => {
+            format!("expr {}{}", map.node_to_pretty_string(id), id_str)
         }
-        Some(NodeStmt(ref stmt)) => {
-            format!("stmt {}{}", pprust::stmt_to_string(&stmt), id_str)
+        Some(NodeStmt(_)) => {
+            format!("stmt {}{}", map.node_to_pretty_string(id), id_str)
         }
-        Some(NodeTy(ref ty)) => {
-            format!("type {}{}", pprust::ty_to_string(&ty), id_str)
+        Some(NodeTy(_)) => {
+            format!("type {}{}", map.node_to_pretty_string(id), id_str)
         }
-        Some(NodeTraitRef(ref tr)) => {
-            format!("trait_ref {}{}", pprust::path_to_string(&tr.path), id_str)
+        Some(NodeTraitRef(_)) => {
+            format!("trait_ref {}{}", map.node_to_pretty_string(id), id_str)
         }
-        Some(NodeLocal(ref pat)) => {
-            format!("local {}{}", pprust::pat_to_string(&pat), id_str)
+        Some(NodeLocal(_)) => {
+            format!("local {}{}", map.node_to_pretty_string(id), id_str)
         }
-        Some(NodePat(ref pat)) => {
-            format!("pat {}{}", pprust::pat_to_string(&pat), id_str)
+        Some(NodePat(_)) => {
+            format!("pat {}{}", map.node_to_pretty_string(id), id_str)
         }
-        Some(NodeBlock(ref block)) => {
-            format!("block {}{}", pprust::block_to_string(&block), id_str)
+        Some(NodeBlock(_)) => {
+            format!("block {}{}", map.node_to_pretty_string(id), id_str)
         }
         Some(NodeStructCtor(_)) => {
             format!("struct_ctor {}{}", path_str(), id_str)
         }
-        Some(NodeLifetime(ref l)) => {
-            format!("lifetime {}{}",
-                    pprust::lifetime_to_string(&l), id_str)
+        Some(NodeLifetime(_)) => {
+            format!("lifetime {}{}", map.node_to_pretty_string(id), id_str)
         }
         Some(NodeTyParam(ref ty_param)) => {
             format!("typaram {:?}{}", ty_param, id_str)
         }
         Some(NodeVisibility(ref vis)) => {
             format!("visibility {:?}{}", vis, id_str)
-        }
-        Some(NodeInlinedItem(_)) => {
-            format!("inlined item {}", id_str)
         }
         None => {
             format!("unknown node{}", id_str)

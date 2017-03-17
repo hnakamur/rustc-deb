@@ -13,7 +13,6 @@ use super::{DeferredCallResolution, Expectation, FnCtxt, TupleArgumentsFlag};
 use CrateCtxt;
 use hir::def::Def;
 use hir::def_id::{DefId, LOCAL_CRATE};
-use hir::print;
 use rustc::{infer, traits};
 use rustc::ty::{self, LvaluePreference, Ty};
 use syntax::symbol::Symbol;
@@ -195,7 +194,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
         let (fn_sig, def_span) = match callee_ty.sty {
             ty::TyFnDef(def_id, .., &ty::BareFnTy {ref sig, ..}) => {
-                (sig, self.tcx.map.span_if_local(def_id))
+                (sig, self.tcx.hir.span_if_local(def_id))
             }
             ty::TyFnPtr(&ty::BareFnTy {ref sig, ..}) => (sig, None),
             ref t => {
@@ -203,7 +202,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 if let &ty::TyAdt(adt_def, ..) = t {
                     if adt_def.is_enum() {
                         if let hir::ExprCall(ref expr, _) = call_expr.node {
-                            unit_variant = Some(print::expr_to_string(expr))
+                            unit_variant = Some(self.tcx.hir.node_to_pretty_string(expr.id))
                         }
                     }
                 }
@@ -226,7 +225,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         Def::Err
                     };
                     if def != Def::Err {
-                        if let Some(span) = self.tcx.map.span_if_local(def.def_id()) {
+                        if let Some(span) = self.tcx.hir.span_if_local(def.def_id()) {
                             err.span_note(span, "defined here");
                         }
                     }
@@ -259,7 +258,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
         // Call the generic checker.
         let expected_arg_tys =
-            self.expected_types_for_fn_args(call_expr.span,
+            self.expected_inputs_for_expected_output(call_expr.span,
                                             expected,
                                             fn_sig.output(),
                                             fn_sig.inputs());
@@ -285,7 +284,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // do know the types expected for each argument and the return
         // type.
 
-        let expected_arg_tys = self.expected_types_for_fn_args(call_expr.span,
+        let expected_arg_tys = self.expected_inputs_for_expected_output(call_expr.span,
                                                                expected,
                                                                fn_sig.output().clone(),
                                                                fn_sig.inputs());

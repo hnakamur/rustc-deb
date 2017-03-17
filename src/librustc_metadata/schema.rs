@@ -16,6 +16,7 @@ use rustc::hir::def::{self, CtorKind};
 use rustc::hir::def_id::{DefIndex, DefId};
 use rustc::middle::cstore::{DepKind, LinkagePreference, NativeLibrary};
 use rustc::middle::lang_items;
+use rustc::middle::resolve_lifetime::ObjectLifetimeDefault;
 use rustc::mir;
 use rustc::ty::{self, Ty};
 use rustc_back::PanicStrategy;
@@ -26,6 +27,8 @@ use syntax::symbol::Symbol;
 use syntax_pos::{self, Span};
 
 use std::marker::PhantomData;
+
+use rustc_i128::u128;
 
 pub fn rustc_version() -> String {
     format!("rustc {}",
@@ -179,6 +182,7 @@ pub struct CrateRoot {
     pub lang_items_missing: LazySeq<lang_items::LangItem>,
     pub native_libraries: LazySeq<NativeLibrary>,
     pub codemap: LazySeq<syntax_pos::FileMap>,
+    pub def_path_table: Lazy<hir::map::definitions::DefPathTable>,
     pub impls: LazySeq<TraitImpls>,
     pub exported_symbols: LazySeq<DefIndex>,
     pub index: LazySeq<index::Index>,
@@ -200,9 +204,8 @@ pub struct TraitImpls {
 #[derive(RustcEncodable, RustcDecodable)]
 pub struct Entry<'tcx> {
     pub kind: EntryKind<'tcx>,
-    pub visibility: ty::Visibility,
+    pub visibility: Lazy<ty::Visibility>,
     pub span: Lazy<Span>,
-    pub def_key: Lazy<hir::map::DefKey>,
     pub attributes: LazySeq<ast::Attribute>,
     pub children: LazySeq<DefIndex>,
     pub stability: Option<Lazy<attr::Stability>>,
@@ -211,7 +214,7 @@ pub struct Entry<'tcx> {
     pub ty: Option<Lazy<Ty<'tcx>>>,
     pub inherent_impls: LazySeq<DefIndex>,
     pub variances: LazySeq<ty::Variance>,
-    pub generics: Option<Lazy<ty::Generics<'tcx>>>,
+    pub generics: Option<Lazy<Generics<'tcx>>>,
     pub predicates: Option<Lazy<ty::GenericPredicates<'tcx>>>,
 
     pub ast: Option<Lazy<astencode::Ast<'tcx>>>,
@@ -245,6 +248,20 @@ pub enum EntryKind<'tcx> {
     AssociatedConst(AssociatedContainer),
 }
 
+/// A copy of `ty::Generics` which allows lazy decoding of
+/// `regions` and `types` (e.g. knowing the number of type
+/// and lifetime parameters before `TyCtxt` is created).
+#[derive(RustcEncodable, RustcDecodable)]
+pub struct Generics<'tcx> {
+    pub parent: Option<DefId>,
+    pub parent_regions: u32,
+    pub parent_types: u32,
+    pub regions: LazySeq<ty::RegionParameterDef>,
+    pub types: LazySeq<ty::TypeParameterDef<'tcx>>,
+    pub has_self: bool,
+    pub object_lifetime_defaults: LazySeq<ObjectLifetimeDefault>,
+}
+
 #[derive(RustcEncodable, RustcDecodable)]
 pub struct ModData {
     pub reexports: LazySeq<def::Export>,
@@ -264,7 +281,7 @@ pub struct FnData {
 #[derive(RustcEncodable, RustcDecodable)]
 pub struct VariantData {
     pub ctor_kind: CtorKind,
-    pub disr: u64,
+    pub disr: u128,
 
     /// If this is a struct's only variant, this
     /// is the index of the "struct ctor" item.

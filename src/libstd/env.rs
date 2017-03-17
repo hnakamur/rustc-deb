@@ -10,7 +10,7 @@
 
 //! Inspection and manipulation of the process's environment.
 //!
-//! This module contains methods to inspect various aspects such as
+//! This module contains functions to inspect various aspects such as
 //! environment variables, process arguments, the current directory, and various
 //! other important directories.
 
@@ -68,15 +68,17 @@ pub fn set_current_dir<P: AsRef<Path>>(p: P) -> io::Result<()> {
 
 /// An iterator over a snapshot of the environment variables of this process.
 ///
-/// This iterator is created through `std::env::vars()` and yields `(String,
-/// String)` pairs.
+/// This structure is created through the [`std::env::vars`] function.
+///
+/// [`std::env::vars`]: fn.vars.html
 #[stable(feature = "env", since = "1.0.0")]
 pub struct Vars { inner: VarsOs }
 
 /// An iterator over a snapshot of the environment variables of this process.
 ///
-/// This iterator is created through `std::env::vars_os()` and yields
-/// `(OsString, OsString)` pairs.
+/// This structure is created through the [`std::env::vars_os`] function.
+///
+/// [`std::env::vars_os`]: fn.vars_os.html
 #[stable(feature = "env", since = "1.0.0")]
 pub struct VarsOs { inner: os_imp::Env }
 
@@ -143,11 +145,25 @@ impl Iterator for Vars {
     fn size_hint(&self) -> (usize, Option<usize>) { self.inner.size_hint() }
 }
 
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl fmt::Debug for Vars {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("Vars { .. }")
+    }
+}
+
 #[stable(feature = "env", since = "1.0.0")]
 impl Iterator for VarsOs {
     type Item = (OsString, OsString);
     fn next(&mut self) -> Option<(OsString, OsString)> { self.inner.next() }
     fn size_hint(&self) -> (usize, Option<usize>) { self.inner.size_hint() }
+}
+
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl fmt::Debug for VarsOs {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("VarsOs { .. }")
+    }
 }
 
 /// Fetches the environment variable `key` from the current process.
@@ -204,7 +220,9 @@ fn _var_os(key: &OsStr) -> Option<OsString> {
     })
 }
 
-/// Possible errors from the `env::var` method.
+/// Possible errors from the [`env::var`] function.
+///
+/// [`env::var`]: fn.var.html
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[stable(feature = "env", since = "1.0.0")]
 pub enum VarError {
@@ -364,6 +382,13 @@ impl<'a> Iterator for SplitPaths<'a> {
     fn size_hint(&self) -> (usize, Option<usize>) { self.inner.size_hint() }
 }
 
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl<'a> fmt::Debug for SplitPaths<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("SplitPaths { .. }")
+    }
+}
+
 /// Error type returned from `std::env::join_paths` when paths fail to be
 /// joined.
 #[derive(Debug)]
@@ -472,7 +497,7 @@ pub fn home_dir() -> Option<PathBuf> {
 /// let mut dir = env::temp_dir();
 /// dir.push("foo.txt");
 ///
-/// let f = try!(File::create(dir));
+/// let f = File::create(dir)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -549,7 +574,7 @@ pub fn current_exe() -> io::Result<PathBuf> {
 /// An iterator over the arguments of a process, yielding a [`String`] value
 /// for each argument.
 ///
-/// This structure is created through the [`std::env::args`] method.
+/// This structure is created through the [`std::env::args`] function.
 ///
 /// [`String`]: ../string/struct.String.html
 /// [`std::env::args`]: ./fn.args.html
@@ -559,7 +584,7 @@ pub struct Args { inner: ArgsOs }
 /// An iterator over the arguments of a process, yielding an [`OsString`] value
 /// for each argument.
 ///
-/// This structure is created through the [`std::env::args_os`] method.
+/// This structure is created through the [`std::env::args_os`] function.
 ///
 /// [`OsString`]: ../ffi/struct.OsString.html
 /// [`std::env::args_os`]: ./fn.args_os.html
@@ -640,6 +665,13 @@ impl DoubleEndedIterator for Args {
     }
 }
 
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl fmt::Debug for Args {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("Args { .. }")
+    }
+}
+
 #[stable(feature = "env", since = "1.0.0")]
 impl Iterator for ArgsOs {
     type Item = OsString;
@@ -657,6 +689,14 @@ impl ExactSizeIterator for ArgsOs {
 impl DoubleEndedIterator for ArgsOs {
     fn next_back(&mut self) -> Option<OsString> { self.inner.next_back() }
 }
+
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl fmt::Debug for ArgsOs {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("ArgsOs { .. }")
+    }
+}
+
 /// Constants associated with the current target
 #[stable(feature = "env", since = "1.0.0")]
 pub mod consts {
@@ -676,6 +716,7 @@ pub mod consts {
     /// - powerpc
     /// - powerpc64
     /// - s390x
+    /// - sparc64
     #[stable(feature = "env", since = "1.0.0")]
     pub const ARCH: &'static str = super::arch::ARCH;
 
@@ -805,6 +846,11 @@ mod arch {
 #[cfg(target_arch = "s390x")]
 mod arch {
     pub const ARCH: &'static str = "s390x";
+}
+
+#[cfg(target_arch = "sparc64")]
+mod arch {
+    pub const ARCH: &'static str = "sparc64";
 }
 
 #[cfg(target_arch = "le32")]

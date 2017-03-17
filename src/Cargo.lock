@@ -51,6 +51,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "build-manifest"
+version = "0.1.0"
+dependencies = [
+ "rustc-serialize 0.3.19 (registry+https://github.com/rust-lang/crates.io-index)",
+ "toml 0.1.30 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "build_helper"
 version = "0.1.0"
 
@@ -89,7 +97,7 @@ version = "0.0.0"
 dependencies = [
  "env_logger 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "serialize 0.0.0",
+ "rustc-serialize 0.3.19 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -208,18 +216,7 @@ dependencies = [
 name = "proc_macro_plugin"
 version = "0.0.0"
 dependencies = [
- "log 0.0.0",
- "proc_macro_tokens 0.0.0",
  "rustc_plugin 0.0.0",
- "syntax 0.0.0",
- "syntax_pos 0.0.0",
-]
-
-[[package]]
-name = "proc_macro_tokens"
-version = "0.0.0"
-dependencies = [
- "log 0.0.0",
  "syntax 0.0.0",
  "syntax_pos 0.0.0",
 ]
@@ -240,7 +237,6 @@ name = "rustc"
 version = "0.0.0"
 dependencies = [
  "arena 0.0.0",
- "flate 0.0.0",
  "fmt_macros 0.0.0",
  "graphviz 0.0.0",
  "log 0.0.0",
@@ -249,6 +245,7 @@ dependencies = [
  "rustc_const_math 0.0.0",
  "rustc_data_structures 0.0.0",
  "rustc_errors 0.0.0",
+ "rustc_i128 0.0.0",
  "rustc_llvm 0.0.0",
  "serialize 0.0.0",
  "syntax 0.0.0",
@@ -308,7 +305,7 @@ dependencies = [
  "rustc_const_math 0.0.0",
  "rustc_data_structures 0.0.0",
  "rustc_errors 0.0.0",
- "serialize 0.0.0",
+ "rustc_i128 0.0.0",
  "syntax 0.0.0",
  "syntax_pos 0.0.0",
 ]
@@ -317,7 +314,7 @@ dependencies = [
 name = "rustc_const_math"
 version = "0.0.0"
 dependencies = [
- "log 0.0.0",
+ "rustc_i128 0.0.0",
  "serialize 0.0.0",
  "syntax 0.0.0",
 ]
@@ -327,6 +324,7 @@ name = "rustc_data_structures"
 version = "0.0.0"
 dependencies = [
  "log 0.0.0",
+ "rustc_i128 0.0.0",
  "serialize 0.0.0",
 ]
 
@@ -335,7 +333,6 @@ name = "rustc_driver"
 version = "0.0.0"
 dependencies = [
  "arena 0.0.0",
- "flate 0.0.0",
  "graphviz 0.0.0",
  "log 0.0.0",
  "proc_macro_plugin 0.0.0",
@@ -367,10 +364,12 @@ dependencies = [
 name = "rustc_errors"
 version = "0.0.0"
 dependencies = [
- "log 0.0.0",
- "serialize 0.0.0",
  "syntax_pos 0.0.0",
 ]
+
+[[package]]
+name = "rustc_i128"
+version = "0.0.0"
 
 [[package]]
 name = "rustc_incremental"
@@ -393,6 +392,7 @@ dependencies = [
  "rustc 0.0.0",
  "rustc_back 0.0.0",
  "rustc_const_eval 0.0.0",
+ "rustc_i128 0.0.0",
  "syntax 0.0.0",
  "syntax_pos 0.0.0",
 ]
@@ -418,6 +418,7 @@ dependencies = [
  "rustc_const_math 0.0.0",
  "rustc_data_structures 0.0.0",
  "rustc_errors 0.0.0",
+ "rustc_i128 0.0.0",
  "rustc_llvm 0.0.0",
  "serialize 0.0.0",
  "syntax 0.0.0",
@@ -432,11 +433,11 @@ dependencies = [
  "graphviz 0.0.0",
  "log 0.0.0",
  "rustc 0.0.0",
- "rustc_back 0.0.0",
  "rustc_bitflags 0.0.0",
  "rustc_const_eval 0.0.0",
  "rustc_const_math 0.0.0",
  "rustc_data_structures 0.0.0",
+ "rustc_i128 0.0.0",
  "syntax 0.0.0",
  "syntax_pos 0.0.0",
 ]
@@ -462,10 +463,8 @@ version = "0.0.0"
 name = "rustc_plugin"
 version = "0.0.0"
 dependencies = [
- "log 0.0.0",
  "rustc 0.0.0",
  "rustc_back 0.0.0",
- "rustc_bitflags 0.0.0",
  "rustc_errors 0.0.0",
  "rustc_metadata 0.0.0",
  "syntax 0.0.0",
@@ -508,9 +507,7 @@ dependencies = [
 name = "rustc_trans"
 version = "0.0.0"
 dependencies = [
- "arena 0.0.0",
  "flate 0.0.0",
- "graphviz 0.0.0",
  "log 0.0.0",
  "rustc 0.0.0",
  "rustc_back 0.0.0",
@@ -519,10 +516,10 @@ dependencies = [
  "rustc_const_math 0.0.0",
  "rustc_data_structures 0.0.0",
  "rustc_errors 0.0.0",
+ "rustc_i128 0.0.0",
  "rustc_incremental 0.0.0",
  "rustc_llvm 0.0.0",
  "rustc_platform_intrinsics 0.0.0",
- "serialize 0.0.0",
  "syntax 0.0.0",
  "syntax_pos 0.0.0",
 ]
@@ -556,7 +553,6 @@ dependencies = [
  "rustc 0.0.0",
  "rustc_back 0.0.0",
  "rustc_const_eval 0.0.0",
- "rustc_const_math 0.0.0",
  "rustc_data_structures 0.0.0",
  "rustc_driver 0.0.0",
  "rustc_errors 0.0.0",
@@ -573,7 +569,7 @@ dependencies = [
 name = "serialize"
 version = "0.0.0"
 dependencies = [
- "log 0.0.0",
+ "rustc_i128 0.0.0",
 ]
 
 [[package]]
@@ -619,6 +615,7 @@ dependencies = [
  "rustc_bitflags 0.0.0",
  "rustc_data_structures 0.0.0",
  "rustc_errors 0.0.0",
+ "rustc_i128 0.0.0",
  "serialize 0.0.0",
  "syntax_pos 0.0.0",
 ]

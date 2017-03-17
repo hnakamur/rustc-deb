@@ -310,8 +310,7 @@ impl<T: ?Sized> RwLock<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized> Drop for RwLock<T> {
-    #[unsafe_destructor_blind_to_params]
+unsafe impl<#[may_dangle] T: ?Sized> Drop for RwLock<T> {
     fn drop(&mut self) {
         // IMPORTANT: This code needs to be kept in sync with `RwLock::into_inner`.
         unsafe { self.inner.destroy() }
@@ -359,6 +358,24 @@ impl<'rwlock, T: ?Sized> RwLockWriteGuard<'rwlock, T> {
                 __poison: guard,
             }
         })
+    }
+}
+
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl<'a, T: fmt::Debug> fmt::Debug for RwLockReadGuard<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("RwLockReadGuard")
+            .field("lock", &self.__lock)
+            .finish()
+    }
+}
+
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl<'a, T: fmt::Debug> fmt::Debug for RwLockWriteGuard<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("RwLockWriteGuard")
+            .field("lock", &self.__lock)
+            .finish()
     }
 }
 

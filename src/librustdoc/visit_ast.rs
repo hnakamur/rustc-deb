@@ -65,12 +65,12 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
     }
 
     fn stability(&self, id: ast::NodeId) -> Option<attr::Stability> {
-        self.cx.tcx.map.opt_local_def_id(id)
+        self.cx.tcx.hir.opt_local_def_id(id)
             .and_then(|def_id| self.cx.tcx.lookup_stability(def_id)).cloned()
     }
 
     fn deprecation(&self, id: ast::NodeId) -> Option<attr::Deprecation> {
-        self.cx.tcx.map.opt_local_def_id(id)
+        self.cx.tcx.hir.opt_local_def_id(id)
             .and_then(|def_id| self.cx.tcx.lookup_deprecation(def_id))
     }
 
@@ -85,7 +85,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                                               None);
         // attach the crate's exported macros to the top-level module:
         let macro_exports: Vec<_> =
-            krate.exported_macros.iter().map(|def| self.visit_macro(def)).collect();
+            krate.exported_macros.iter().map(|def| self.visit_local_macro(def)).collect();
         self.module.macros.extend(macro_exports);
         self.module.is_crate = true;
     }
@@ -157,7 +157,8 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     unsafety: &hir::Unsafety,
                     constness: hir::Constness,
                     abi: &abi::Abi,
-                    gen: &hir::Generics) -> Function {
+                    gen: &hir::Generics,
+                    body: hir::BodyId) -> Function {
         debug!("Visiting fn");
         Function {
             id: item.id,
@@ -172,6 +173,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
             unsafety: *unsafety,
             constness: constness,
             abi: *abi,
+            body: body,
         }
     }
 
@@ -191,7 +193,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
         let orig_inside_public_path = self.inside_public_path;
         self.inside_public_path &= vis == hir::Public;
         for i in &m.item_ids {
-            let item = self.cx.tcx.map.expect_item(i.id);
+            let item = self.cx.tcx.hir.expect_item(i.id);
             self.visit_item(item, None, &mut om);
         }
         self.inside_public_path = orig_inside_public_path;
@@ -201,6 +203,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     if def_id.krate == LOCAL_CRATE {
                         continue // These are `krate.exported_macros`, handled in `self.visit()`.
                     }
+                    let imported_from = self.cx.sess().cstore.original_crate_name(def_id.krate);
                     let def = match self.cx.sess().cstore.load_macro(def_id, self.cx.sess()) {
                         LoadedMacro::MacroRules(macro_rules) => macro_rules,
                         // FIXME(jseyfried): document proc macro reexports
@@ -210,14 +213,14 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     // FIXME(jseyfried) merge with `self.visit_macro()`
                     let matchers = def.body.chunks(4).map(|arm| arm[0].get_span()).collect();
                     om.macros.push(Macro {
-                        id: def.id,
+                        def_id: def_id,
                         attrs: def.attrs.clone().into(),
                         name: def.ident.name,
                         whence: def.span,
                         matchers: matchers,
                         stab: self.stability(def.id),
                         depr: self.deprecation(def.id),
-                        imported_from: def.imported_from.map(|ident| ident.name),
+                        imported_from: Some(imported_from),
                     })
                 }
             }
@@ -243,9 +246,9 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                           please_inline: bool) -> bool {
 
         fn inherits_doc_hidden(cx: &core::DocContext, mut node: ast::NodeId) -> bool {
-            while let Some(id) = cx.tcx.map.get_enclosing_scope(node) {
+            while let Some(id) = cx.tcx.hir.get_enclosing_scope(node) {
                 node = id;
-                if cx.tcx.map.attrs(node).lists("doc").has_word("hidden") {
+                if cx.tcx.hir.attrs(node).lists("doc").has_word("hidden") {
                     return true;
                 }
                 if node == ast::CRATE_NODE_ID {
@@ -261,7 +264,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
         }
         let def_did = def.def_id();
 
-        let use_attrs = tcx.map.attrs(id);
+        let use_attrs = tcx.hir.attrs(id);
         // Don't inline doc(hidden) imports so they can be stripped at a later stage.
         let is_no_inline = use_attrs.lists("doc").has_word("no_inline") ||
                            use_attrs.lists("doc").has_word("hidden");
@@ -289,7 +292,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
             return false
         }
 
-        let def_node_id = match tcx.map.as_local_node_id(def_did) {
+        let def_node_id = match tcx.hir.as_local_node_id(def_did) {
             Some(n) => n, None => return false
         };
 
@@ -303,14 +306,14 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
 
         if !self.view_item_stack.insert(def_node_id) { return false }
 
-        let ret = match tcx.map.get(def_node_id) {
+        let ret = match tcx.hir.get(def_node_id) {
             hir_map::NodeItem(it) => {
                 let prev = mem::replace(&mut self.inlining, true);
                 if glob {
                     match it.node {
                         hir::ItemMod(ref m) => {
                             for i in &m.item_ids {
-                                let i = self.cx.tcx.map.expect_item(i.id);
+                                let i = self.cx.tcx.hir.expect_item(i.id);
                                 self.visit_item(i, None, om);
                             }
                         }
@@ -409,9 +412,9 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                 om.structs.push(self.visit_variant_data(item, name, sd, gen)),
             hir::ItemUnion(ref sd, ref gen) =>
                 om.unions.push(self.visit_union_data(item, name, sd, gen)),
-            hir::ItemFn(ref fd, ref unsafety, constness, ref abi, ref gen, _) =>
+            hir::ItemFn(ref fd, ref unsafety, constness, ref abi, ref gen, body) =>
                 om.fns.push(self.visit_fn(item, name, &**fd, unsafety,
-                                          constness, abi, gen)),
+                                          constness, abi, gen, body)),
             hir::ItemTy(ref ty, ref gen) => {
                 let t = Typedef {
                     ty: ty.clone(),
@@ -455,11 +458,14 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                 };
                 om.constants.push(s);
             },
-            hir::ItemTrait(unsafety, ref gen, ref b, ref items) => {
+            hir::ItemTrait(unsafety, ref gen, ref b, ref item_ids) => {
+                let items = item_ids.iter()
+                                    .map(|ti| self.cx.tcx.hir.trait_item(ti.id).clone())
+                                    .collect();
                 let t = Trait {
                     unsafety: unsafety,
                     name: name,
-                    items: items.clone(),
+                    items: items,
                     generics: gen.clone(),
                     bounds: b.iter().cloned().collect(),
                     id: item.id,
@@ -477,7 +483,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                 // regardless of where they're located.
                 if !self.inlining {
                     let items = item_ids.iter()
-                                        .map(|ii| self.cx.tcx.map.impl_item(ii.id).clone())
+                                        .map(|ii| self.cx.tcx.hir.impl_item(ii.id).clone())
                                         .collect();
                     let i = Impl {
                         unsafety: unsafety,
@@ -513,19 +519,19 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
     }
 
     // convert each exported_macro into a doc item
-    fn visit_macro(&self, def: &hir::MacroDef) -> Macro {
+    fn visit_local_macro(&self, def: &hir::MacroDef) -> Macro {
         // Extract the spans of all matchers. They represent the "interface" of the macro.
         let matchers = def.body.chunks(4).map(|arm| arm[0].get_span()).collect();
 
         Macro {
-            id: def.id,
+            def_id: self.cx.tcx.hir.local_def_id(def.id),
             attrs: def.attrs.clone(),
             name: def.name,
             whence: def.span,
             matchers: matchers,
             stab: self.stability(def.id),
             depr: self.deprecation(def.id),
-            imported_from: def.imported_from,
+            imported_from: None,
         }
     }
 }

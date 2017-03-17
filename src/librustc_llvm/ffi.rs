@@ -33,7 +33,7 @@ pub enum LLVMRustResult {
 // Consts for the LLVM CallConv type, pre-cast to usize.
 
 /// LLVM CallingConv::ID. Should we wrap this?
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 #[repr(C)]
 pub enum CallConv {
     CCallConv = 0,
@@ -42,6 +42,8 @@ pub enum CallConv {
     X86StdcallCallConv = 64,
     X86FastcallCallConv = 65,
     ArmAapcsCallConv = 67,
+    Msp430Intr = 69,
+    PtxKernel = 71,
     X86_64_SysV = 78,
     X86_64_Win64 = 79,
     X86_VectorCall = 80,
@@ -117,6 +119,7 @@ pub enum Attribute {
     StructRet       = 16,
     UWTable         = 17,
     ZExt            = 18,
+    InReg           = 19,
 }
 
 /// LLVMIntPredicate
@@ -471,9 +474,7 @@ pub mod debuginfo {
 // generates an llvmdeps.rs file next to this one which will be
 // automatically updated whenever LLVM is updated to include an up-to-date
 // set of the libraries we need to link to LLVM for.
-#[cfg_attr(not(all(stage0,cargobuild)),
-           link(name = "rustllvm", kind = "static"))] // not quite true but good enough
-#[cfg_attr(stage0, linked_from = "rustllvm")]
+#[link(name = "rustllvm", kind = "static")] // not quite true but good enough
 extern "C" {
     // Create and destroy contexts.
     pub fn LLVMContextCreate() -> ContextRef;
@@ -578,9 +579,12 @@ extern "C" {
 
     // Operations on scalar constants
     pub fn LLVMConstInt(IntTy: TypeRef, N: c_ulonglong, SignExtend: Bool) -> ValueRef;
+    pub fn LLVMConstIntOfArbitraryPrecision(IntTy: TypeRef, Wn: c_uint, Ws: *const u64) -> ValueRef;
     pub fn LLVMConstReal(RealTy: TypeRef, N: f64) -> ValueRef;
     pub fn LLVMConstIntGetZExtValue(ConstantVal: ValueRef) -> c_ulonglong;
     pub fn LLVMConstIntGetSExtValue(ConstantVal: ValueRef) -> c_longlong;
+    pub fn LLVMRustConstInt128Get(ConstantVal: ValueRef, SExt: bool,
+                                  high: *mut u64, low: *mut u64) -> bool;
 
 
     // Operations on composite constants
@@ -710,6 +714,7 @@ extern "C" {
 
     // Operations on instructions
     pub fn LLVMGetInstructionParent(Inst: ValueRef) -> BasicBlockRef;
+    pub fn LLVMGetFirstBasicBlock(Fn: ValueRef) -> BasicBlockRef;
     pub fn LLVMGetFirstInstruction(BB: BasicBlockRef) -> ValueRef;
     pub fn LLVMInstructionEraseFromParent(Inst: ValueRef);
 

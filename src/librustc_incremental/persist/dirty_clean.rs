@@ -14,11 +14,11 @@
 //! we will check that a suitable node for that item either appears
 //! or does not appear in the dep-graph, as appropriate:
 //!
-//! - `#[rustc_dirty(label="TypeckItemBody", cfg="rev2")]` if we are
+//! - `#[rustc_dirty(label="TypeckTables", cfg="rev2")]` if we are
 //!   in `#[cfg(rev2)]`, then there MUST NOT be a node
-//!   `DepNode::TypeckItemBody(X)` where `X` is the def-id of the
+//!   `DepNode::TypeckTables(X)` where `X` is the def-id of the
 //!   current node.
-//! - `#[rustc_clean(label="TypeckItemBody", cfg="rev2")]` same as above,
+//! - `#[rustc_clean(label="TypeckTables", cfg="rev2")]` same as above,
 //!   except that the node MUST exist.
 //!
 //! Errors are reported if we are in the suitable configuration but
@@ -72,7 +72,7 @@ pub fn check_dirty_clean_annotations<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                    .collect();
     let query = tcx.dep_graph.query();
     debug!("query-nodes: {:?}", query.nodes());
-    let krate = tcx.map.krate();
+    let krate = tcx.hir.krate();
     krate.visit_all_item_likes(&mut DirtyCleanVisitor {
         tcx: tcx,
         query: &query,
@@ -171,7 +171,7 @@ impl<'a, 'tcx> DirtyCleanVisitor<'a, 'tcx> {
 
 impl<'a, 'tcx> ItemLikeVisitor<'tcx> for DirtyCleanVisitor<'a, 'tcx> {
     fn visit_item(&mut self, item: &'tcx hir::Item) {
-        let def_id = self.tcx.map.local_def_id(item.id);
+        let def_id = self.tcx.hir.local_def_id(item.id);
         for attr in self.tcx.get_attrs(def_id).iter() {
             if attr.check_name(ATTR_DIRTY) {
                 if check_config(self.tcx, attr) {
@@ -183,6 +183,9 @@ impl<'a, 'tcx> ItemLikeVisitor<'tcx> for DirtyCleanVisitor<'a, 'tcx> {
                 }
             }
         }
+    }
+
+    fn visit_trait_item(&mut self, _trait_item: &hir::TraitItem) {
     }
 
     fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem) {
@@ -197,7 +200,7 @@ pub fn check_dirty_clean_metadata<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 
     tcx.dep_graph.with_ignore(||{
-        let krate = tcx.map.krate();
+        let krate = tcx.hir.krate();
         krate.visit_all_item_likes(&mut DirtyCleanMetadataVisitor {
             tcx: tcx,
             prev_metadata_hashes: prev_metadata_hashes,
@@ -214,7 +217,7 @@ pub struct DirtyCleanMetadataVisitor<'a, 'tcx:'a, 'm> {
 
 impl<'a, 'tcx, 'm> ItemLikeVisitor<'tcx> for DirtyCleanMetadataVisitor<'a, 'tcx, 'm> {
     fn visit_item(&mut self, item: &'tcx hir::Item) {
-        let def_id = self.tcx.map.local_def_id(item.id);
+        let def_id = self.tcx.hir.local_def_id(item.id);
 
         for attr in self.tcx.get_attrs(def_id).iter() {
             if attr.check_name(ATTR_DIRTY_METADATA) {
@@ -227,6 +230,9 @@ impl<'a, 'tcx, 'm> ItemLikeVisitor<'tcx> for DirtyCleanMetadataVisitor<'a, 'tcx,
                 }
             }
         }
+    }
+
+    fn visit_trait_item(&mut self, _trait_item: &hir::TraitItem) {
     }
 
     fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem) {

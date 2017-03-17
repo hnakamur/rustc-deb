@@ -27,7 +27,7 @@ use step;
 
 /// Deserialized version of all flags for this compile.
 pub struct Flags {
-    pub verbose: bool,
+    pub verbose: usize, // verbosity level: 0 == not verbose, 1 == verbose, 2 == very verbose
     pub stage: Option<u32>,
     pub keep_stage: Option<u32>,
     pub build: String,
@@ -37,6 +37,17 @@ pub struct Flags {
     pub src: Option<PathBuf>,
     pub jobs: Option<u32>,
     pub cmd: Subcommand,
+    pub incremental: bool,
+}
+
+impl Flags {
+    pub fn verbose(&self) -> bool {
+        self.verbose > 0
+    }
+
+    pub fn very_verbose(&self) -> bool {
+        self.verbose > 1
+    }
 }
 
 pub enum Subcommand {
@@ -56,6 +67,7 @@ pub enum Subcommand {
     },
     Clean,
     Dist {
+        paths: Vec<PathBuf>,
         install: bool,
     },
 }
@@ -63,7 +75,8 @@ pub enum Subcommand {
 impl Flags {
     pub fn parse(args: &[String]) -> Flags {
         let mut opts = Options::new();
-        opts.optflag("v", "verbose", "use verbose output");
+        opts.optflagmulti("v", "verbose", "use verbose output (-vv for very verbose)");
+        opts.optflag("i", "incremental", "use incremental compilation");
         opts.optopt("", "config", "TOML configuration file for build", "FILE");
         opts.optopt("", "build", "build target of the stage0 compiler", "BUILD");
         opts.optmulti("", "host", "host targets to build", "HOST");
@@ -237,6 +250,7 @@ To learn more about a subcommand, run `./x.py <command> -h`
                 opts.optflag("", "install", "run installer as well");
                 m = parse(&opts);
                 Subcommand::Dist {
+                    paths: remaining_as_path(&m),
                     install: m.opt_present("install"),
                 }
             }
@@ -256,19 +270,30 @@ To learn more about a subcommand, run `./x.py <command> -h`
             }
         });
 
+        let mut stage = m.opt_str("stage").map(|j| j.parse().unwrap());
+
+        let incremental = m.opt_present("i");
+
+        if incremental {
+            if stage.is_none() {
+                stage = Some(1);
+            }
+        }
+
         Flags {
-            verbose: m.opt_present("v"),
-            stage: m.opt_str("stage").map(|j| j.parse().unwrap()),
+            verbose: m.opt_count("v"),
+            stage: stage,
             keep_stage: m.opt_str("keep-stage").map(|j| j.parse().unwrap()),
             build: m.opt_str("build").unwrap_or_else(|| {
                 env::var("BUILD").unwrap()
             }),
-            host: m.opt_strs("host"),
-            target: m.opt_strs("target"),
+            host: split(m.opt_strs("host")),
+            target: split(m.opt_strs("target")),
             config: cfg_file,
             src: m.opt_str("src").map(PathBuf::from),
             jobs: m.opt_str("jobs").map(|j| j.parse().unwrap()),
             cmd: cmd,
+            incremental: incremental,
         }
     }
 }
@@ -283,4 +308,8 @@ impl Subcommand {
             _ => Vec::new(),
         }
     }
+}
+
+fn split(s: Vec<String>) -> Vec<String> {
+    s.iter().flat_map(|s| s.split(',')).map(|s| s.to_string()).collect()
 }

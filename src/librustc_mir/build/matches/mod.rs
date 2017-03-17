@@ -19,6 +19,7 @@ use rustc_data_structures::bitvec::BitVector;
 use rustc::middle::const_val::ConstVal;
 use rustc::ty::{AdtDef, Ty};
 use rustc::mir::*;
+use rustc::hir;
 use hair::*;
 use syntax::ast::{Name, NodeId};
 use syntax_pos::Span;
@@ -318,11 +319,12 @@ enum TestKind<'tcx> {
         ty: Ty<'tcx>,
     },
 
-    // test whether the value falls within an inclusive range
+    // test whether the value falls within an inclusive or exclusive range
     Range {
         lo: Literal<'tcx>,
         hi: Literal<'tcx>,
         ty: Ty<'tcx>,
+        end: hir::RangeEnd,
     },
 
     // test length of the slice is equal to len
@@ -729,7 +731,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             name: Some(name),
             source_info: Some(source_info),
         });
-        let extent = self.extent_of_innermost_scope();
+        let extent = self.hir.tcx().region_maps.var_scope(var_id);
         self.schedule_drop(source_info.span, extent, &Lvalue::Local(var), var_ty);
         self.var_indices.insert(var_id, var);
 

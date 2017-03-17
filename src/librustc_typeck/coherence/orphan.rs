@@ -67,20 +67,22 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
             }
         }
     }
+}
 
+impl<'cx, 'tcx, 'v> ItemLikeVisitor<'v> for OrphanChecker<'cx, 'tcx> {
     /// Checks exactly one impl for orphan rules and other such
     /// restrictions.  In this fn, it can happen that multiple errors
     /// apply to a specific impl, so just return after reporting one
     /// to prevent inundating the user with a bunch of similar error
     /// reports.
-    fn check_item(&self, item: &hir::Item) {
-        let def_id = self.tcx.map.local_def_id(item.id);
+    fn visit_item(&mut self, item: &hir::Item) {
+        let def_id = self.tcx.hir.local_def_id(item.id);
         match item.node {
             hir::ItemImpl(.., None, ref ty, _) => {
                 // For inherent impls, self type must be a nominal type
                 // defined in this crate.
                 debug!("coherence2::orphan check: inherent impl {}",
-                       self.tcx.map.node_to_string(item.id));
+                       self.tcx.hir.node_to_string(item.id));
                 let self_ty = self.tcx.item_type(def_id);
                 match self_ty.sty {
                     ty::TyAdt(def, _) => {
@@ -88,12 +90,6 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
                     }
                     ty::TyDynamic(ref data, ..) if data.principal().is_some() => {
                         self.check_def_id(item, data.principal().unwrap().def_id());
-                    }
-                    ty::TyBox(..) => {
-                        match self.tcx.lang_items.require_owned_box() {
-                            Ok(trait_id) => self.check_def_id(item, trait_id),
-                            Err(msg) => self.tcx.sess.span_fatal(item.span, &msg),
-                        }
                     }
                     ty::TyChar => {
                         self.check_primitive_impl(def_id,
@@ -158,6 +154,13 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
                                                   "i64",
                                                   item.span);
                     }
+                    ty::TyInt(ast::IntTy::I128) => {
+                        self.check_primitive_impl(def_id,
+                                                  self.tcx.lang_items.i128_impl(),
+                                                  "i128",
+                                                  "i128",
+                                                  item.span);
+                    }
                     ty::TyInt(ast::IntTy::Is) => {
                         self.check_primitive_impl(def_id,
                                                   self.tcx.lang_items.isize_impl(),
@@ -191,6 +194,13 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
                                                   self.tcx.lang_items.u64_impl(),
                                                   "u64",
                                                   "u64",
+                                                  item.span);
+                    }
+                    ty::TyUint(ast::UintTy::U128) => {
+                        self.check_primitive_impl(def_id,
+                                                  self.tcx.lang_items.u128_impl(),
+                                                  "u128",
+                                                  "u128",
                                                   item.span);
                     }
                     ty::TyUint(ast::UintTy::Us) => {
@@ -233,7 +243,7 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
             hir::ItemImpl(.., Some(_), _, _) => {
                 // "Trait" impl
                 debug!("coherence2::orphan check: trait impl {}",
-                       self.tcx.map.node_to_string(item.id));
+                       self.tcx.hir.node_to_string(item.id));
                 let trait_ref = self.tcx.impl_trait_ref(def_id).unwrap();
                 let trait_def_id = trait_ref.def_id;
                 match traits::orphan_check(self.tcx, def_id) {
@@ -247,6 +257,7 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
                             .span_label(item.span, &format!("impl doesn't use types inside crate"))
                             .note(&format!("the impl does not reference any types defined in \
                                             this crate"))
+                            .note("define and implement a trait or new type instead")
                             .emit();
                         return;
                     }
@@ -304,7 +315,6 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
                     let self_ty = trait_ref.self_ty();
                     let opt_self_def_id = match self_ty.sty {
                         ty::TyAdt(self_def, _) => Some(self_def.did),
-                        ty::TyBox(..) => self.tcx.lang_items.owned_box(),
                         _ => None,
                     };
 
@@ -358,7 +368,7 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
             hir::ItemDefaultImpl(_, ref item_trait_ref) => {
                 // "Trait" impl
                 debug!("coherence2::orphan check: default trait impl {}",
-                       self.tcx.map.node_to_string(item.id));
+                       self.tcx.hir.node_to_string(item.id));
                 let trait_ref = self.tcx.impl_trait_ref(def_id).unwrap();
                 if trait_ref.def_id.krate != LOCAL_CRATE {
                     struct_span_err!(self.tcx.sess,
@@ -368,7 +378,7 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
                                       the crate they're defined in; define a new trait instead")
                         .span_label(item_trait_ref.path.span,
                                     &format!("`{}` trait not defined in this crate",
-                                             item_trait_ref.path))
+                            self.tcx.hir.node_to_pretty_string(item_trait_ref.ref_id)))
                         .emit();
                     return;
                 }
@@ -378,11 +388,8 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
             }
         }
     }
-}
 
-impl<'cx, 'tcx, 'v> ItemLikeVisitor<'v> for OrphanChecker<'cx, 'tcx> {
-    fn visit_item(&mut self, item: &hir::Item) {
-        self.check_item(item);
+    fn visit_trait_item(&mut self, _trait_item: &hir::TraitItem) {
     }
 
     fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem) {

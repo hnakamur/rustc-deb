@@ -100,13 +100,26 @@ pub trait Sized {
 ///
 /// All implementations of `Unsize` are provided automatically by the compiler.
 ///
+/// `Unsize` is implemented for:
+///
+/// - `[T; N]` is `Unsize<[T]>`
+/// - `T` is `Unsize<Trait>` when `T: Trait`
+/// - `Foo<..., T, ...>` is `Unsize<Foo<..., U, ...>>` if:
+///   - `T: Unsize<U>`
+///   - Foo is a struct
+///   - Only the last field of `Foo` has a type involving `T`
+///   - `T` is not part of the type of any other fields
+///   - `Bar<T>: Unsize<Bar<U>>`, if the last field of `Foo` has type `Bar<T>`
+///
 /// `Unsize` is used along with [`ops::CoerceUnsized`][coerceunsized] to allow
 /// "user-defined" containers such as [`rc::Rc`][rc] to contain dynamically-sized
-/// types. See the [DST coercion RFC][RFC982] for more details.
+/// types. See the [DST coercion RFC][RFC982] and [the nomicon entry on coercion][nomicon-coerce]
+/// for more details.
 ///
 /// [coerceunsized]: ../ops/trait.CoerceUnsized.html
 /// [rc]: ../../std/rc/struct.Rc.html
 /// [RFC982]: https://github.com/rust-lang/rfcs/blob/master/text/0982-dst-coercion.md
+
 #[unstable(feature = "unsize", issue = "27732")]
 #[lang="unsize"]
 pub trait Unsize<T: ?Sized> {
@@ -234,12 +247,10 @@ pub trait Unsize<T: ?Sized> {
 /// Generalizing the latter case, any type implementing [`Drop`] can't be `Copy`, because it's
 /// managing some resource besides its own [`size_of::<T>()`] bytes.
 ///
-/// If you try to implement `Copy` on a struct or enum containing non-`Copy` data, you will get a
-/// compile-time error. Specifically, with structs you'll get [E0204] and with enums you'll get
-/// [E0205].
+/// If you try to implement `Copy` on a struct or enum containing non-`Copy` data, you will get
+/// the error [E0204].
 ///
 /// [E0204]: ../../error-index.html#E0204
-/// [E0205]: ../../error-index.html#E0205
 ///
 /// ## When *should* my type be `Copy`?
 ///
@@ -542,59 +553,3 @@ mod impls {
     #[stable(feature = "rust1", since = "1.0.0")]
     unsafe impl<'a, T: Send + ?Sized> Send for &'a mut T {}
 }
-
-/// Types that can be reflected over.
-///
-/// By "reflection" we mean use of the [`Any`][any] trait, or related
-/// machinery such as [`TypeId`][typeid].
-///
-/// `Reflect` is implemented for all types. Its purpose is to ensure
-/// that when you write a generic function that will employ reflection,
-/// that must be reflected (no pun intended) in the generic bounds of
-/// that function.
-///
-/// ```
-/// #![feature(reflect_marker)]
-/// use std::marker::Reflect;
-/// use std::any::Any;
-///
-/// # #[allow(dead_code)]
-/// fn foo<T: Reflect + 'static>(x: &T) {
-///     let any: &Any = x;
-///     if any.is::<u32>() { println!("u32"); }
-/// }
-/// ```
-///
-/// Without the bound `T: Reflect`, `foo` would not typecheck. (As
-/// a matter of style, it would be preferable to write `T: Any`,
-/// because `T: Any` implies `T: Reflect` and `T: 'static`, but we
-/// use `Reflect` here for illustrative purposes.)
-///
-/// The `Reflect` bound serves to alert `foo`'s caller to the
-/// fact that `foo` may behave differently depending on whether
-/// `T` is `u32` or not. The ability for a caller to reason about what
-/// a function may do based solely on what generic bounds are declared
-/// is often called the "[parametricity property][param]". Despite the
-/// use of `Reflect`, Rust lacks true parametricity because a generic
-/// function can, at the very least, call [`mem::size_of`][size_of]
-/// without employing any trait bounds whatsoever.
-///
-/// [any]: ../any/trait.Any.html
-/// [typeid]: ../any/struct.TypeId.html
-/// [param]: http://en.wikipedia.org/wiki/Parametricity
-/// [size_of]: ../mem/fn.size_of.html
-#[rustc_reflect_like]
-#[unstable(feature = "reflect_marker",
-           reason = "requires RFC and more experience",
-           issue = "27749")]
-#[rustc_deprecated(since = "1.14.0", reason = "Specialization makes parametricity impossible")]
-#[rustc_on_unimplemented = "`{Self}` does not implement `Any`; \
-                            ensure all type parameters are bounded by `Any`"]
-pub trait Reflect {}
-
-#[unstable(feature = "reflect_marker",
-           reason = "requires RFC and more experience",
-           issue = "27749")]
-#[rustc_deprecated(since = "1.14.0", reason = "Specialization makes parametricity impossible")]
-#[allow(deprecated)]
-impl Reflect for .. { }

@@ -64,6 +64,8 @@
 //! More documentation can be found in each respective module below, and you can
 //! also check out the `src/bootstrap/README.md` file for more information.
 
+#![deny(warnings)]
+
 extern crate build_helper;
 extern crate cmake;
 extern crate filetime;
@@ -74,6 +76,7 @@ extern crate rustc_serialize;
 extern crate toml;
 
 use std::collections::HashMap;
+use std::cmp;
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -167,6 +170,8 @@ pub struct Build {
     version: String,
     package_vers: String,
     local_rebuild: bool,
+    release_num: String,
+    prerelease_version: String,
 
     // Probed tools at runtime
     lldb_version: Option<String>,
@@ -268,6 +273,8 @@ impl Build {
             lldb_version: None,
             lldb_python_dir: None,
             is_sudo: is_sudo,
+            release_num: String::new(),
+            prerelease_version: String::new(),
         }
     }
 
@@ -497,6 +504,17 @@ impl Build {
         cargo.env("RUSTC_BOOTSTRAP", "1");
         self.add_rust_test_threads(&mut cargo);
 
+        // Ignore incremental modes except for stage0, since we're
+        // not guaranteeing correctness acros builds if the compiler
+        // is changing under your feet.`
+        if self.flags.incremental && compiler.stage == 0 {
+            let incr_dir = self.incremental_dir(compiler);
+            cargo.env("RUSTC_INCREMENTAL", incr_dir);
+        }
+
+        let verbose = cmp::max(self.config.verbose, self.flags.verbose);
+        cargo.env("RUSTC_VERBOSE", format!("{}", verbose));
+
         // Specify some various options for build scripts used throughout
         // the build.
         //
@@ -507,7 +525,7 @@ impl Build {
                  .env(format!("CFLAGS_{}", target), self.cflags(target).join(" "));
         }
 
-        if self.config.channel == "nightly" && compiler.stage == 2 {
+        if self.config.channel == "nightly" && compiler.is_final_stage(self) {
             cargo.env("RUSTC_SAVE_ANALYSIS", "api".to_string());
         }
 
@@ -516,7 +534,7 @@ impl Build {
         // FIXME: should update code to not require this env var
         cargo.env("CFG_COMPILER_HOST_TRIPLE", target);
 
-        if self.config.verbose || self.flags.verbose {
+        if self.config.verbose() || self.flags.verbose() {
             cargo.arg("-v");
         }
         // FIXME: cargo bench does not accept `--release`
@@ -556,11 +574,18 @@ impl Build {
     /// `host`.
     fn tool_cmd(&self, compiler: &Compiler, tool: &str) -> Command {
         let mut cmd = Command::new(self.tool(&compiler, tool));
+        self.prepare_tool_cmd(compiler, &mut cmd);
+        return cmd
+    }
+
+    /// Prepares the `cmd` provided to be able to run the `compiler` provided.
+    ///
+    /// Notably this munges the dynamic library lookup path to point to the
+    /// right location to run `compiler`.
+    fn prepare_tool_cmd(&self, compiler: &Compiler, cmd: &mut Command) {
         let host = compiler.host;
         let mut paths = vec![
-            self.cargo_out(compiler, Mode::Libstd, host).join("deps"),
-            self.cargo_out(compiler, Mode::Libtest, host).join("deps"),
-            self.cargo_out(compiler, Mode::Librustc, host).join("deps"),
+            self.sysroot_libdir(compiler, compiler.host),
             self.cargo_out(compiler, Mode::Tool, host).join("deps"),
         ];
 
@@ -581,8 +606,7 @@ impl Build {
                 }
             }
         }
-        add_lib_path(paths, &mut cmd);
-        return cmd
+        add_lib_path(paths, cmd);
     }
 
     /// Get the space-separated set of activated features for the standard
@@ -628,6 +652,12 @@ impl Build {
         } else {
             self.out.join(compiler.host).join(format!("stage{}", compiler.stage))
         }
+    }
+
+    /// Get the directory for incremental by-products when using the
+    /// given compiler.
+    fn incremental_dir(&self, compiler: &Compiler) -> PathBuf {
+        self.out.join(compiler.host).join(format!("stage{}-incremental", compiler.stage))
     }
 
     /// Returns the libdir where the standard library and other artifacts are
@@ -703,7 +733,8 @@ impl Build {
     fn llvm_filecheck(&self, target: &str) -> PathBuf {
         let target_config = self.config.target_config.get(target);
         if let Some(s) = target_config.and_then(|c| c.llvm_config.as_ref()) {
-            s.parent().unwrap().join(exe("FileCheck", target))
+            let llvm_bindir = output(Command::new(s).arg("--bindir"));
+            Path::new(llvm_bindir.trim()).join(exe("FileCheck", target))
         } else {
             let base = self.llvm_out(&self.config.build).join("build");
             let exe = exe("FileCheck", target);
@@ -768,7 +799,7 @@ impl Build {
 
     /// Prints a message if this build is configured in verbose mode.
     fn verbose(&self, msg: &str) {
-        if self.flags.verbose || self.config.verbose {
+        if self.flags.verbose() || self.config.verbose() {
             println!("{}", msg);
         }
     }
@@ -864,6 +895,30 @@ impl Build {
     fn python(&self) -> &Path {
         self.config.python.as_ref().unwrap()
     }
+
+    /// Tests whether the `compiler` compiling for `target` should be forced to
+    /// use a stage1 compiler instead.
+    ///
+    /// Currently, by default, the build system does not perform a "full
+    /// bootstrap" by default where we compile the compiler three times.
+    /// Instead, we compile the compiler two times. The final stage (stage2)
+    /// just copies the libraries from the previous stage, which is what this
+    /// method detects.
+    ///
+    /// Here we return `true` if:
+    ///
+    /// * The build isn't performing a full bootstrap
+    /// * The `compiler` is in the final stage, 2
+    /// * We're not cross-compiling, so the artifacts are already available in
+    ///   stage1
+    ///
+    /// When all of these conditions are met the build will lift artifacts from
+    /// the previous stage forward.
+    fn force_use_stage1(&self, compiler: &Compiler, target: &str) -> bool {
+        !self.config.full_bootstrap &&
+            compiler.stage >= 2 &&
+            self.config.host.iter().any(|h| h == target)
+    }
 }
 
 impl<'a> Compiler<'a> {
@@ -875,5 +930,14 @@ impl<'a> Compiler<'a> {
     /// Returns whether this is a snapshot compiler for `build`'s configuration
     fn is_snapshot(&self, build: &Build) -> bool {
         self.stage == 0 && self.host == build.config.build
+    }
+
+    /// Returns if this compiler should be treated as a final stage one in the
+    /// current build session.
+    /// This takes into account whether we're performing a full bootstrap or
+    /// not; don't directly compare the stage with `2`!
+    fn is_final_stage(&self, build: &Build) -> bool {
+        let final_stage = if build.config.full_bootstrap { 2 } else { 1 };
+        self.stage >= final_stage
     }
 }

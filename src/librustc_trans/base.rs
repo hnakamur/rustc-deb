@@ -23,8 +23,6 @@
 //!     but one TypeRef corresponds to many `Ty`s; for instance, tup(int, int,
 //!     int) and rec(x=int, y=int, z=int) will have the same TypeRef.
 
-#![allow(non_camel_case_types)]
-
 use super::CrateTranslation;
 use super::ModuleLlvm;
 use super::ModuleSource;
@@ -37,10 +35,11 @@ use back::symbol_export::{self, ExportedSymbols};
 use llvm::{Linkage, ValueRef, Vector, get_param};
 use llvm;
 use rustc::hir::def_id::{DefId, LOCAL_CRATE};
-use middle::lang_items::{LangItem, ExchangeMallocFnLangItem, StartFnLangItem};
+use middle::lang_items::StartFnLangItem;
 use rustc::ty::subst::Substs;
+use rustc::mir::tcx::LvalueTy;
 use rustc::traits;
-use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
+use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::adjustment::CustomCoerceUnsized;
 use rustc::dep_graph::{DepNode, WorkProduct};
 use rustc::hir::map as hir_map;
@@ -49,22 +48,21 @@ use session::config::{self, NoDebugInfo};
 use rustc_incremental::IncrementalHashesMap;
 use session::{self, DataTypeKind, Session};
 use abi::{self, Abi, FnType};
+use mir::lvalue::LvalueRef;
 use adt;
 use attributes;
-use build::*;
-use builder::{Builder, noname};
+use builder::Builder;
 use callee::{Callee};
-use common::{Block, C_bool, C_bytes_in_context, C_i32, C_uint};
+use common::{C_bool, C_bytes_in_context, C_i32, C_uint};
 use collector::{self, TransItemCollectionMode};
-use common::{C_null, C_struct_in_context, C_u64, C_u8, C_undef};
-use common::{CrateContext, FunctionContext};
-use common::{Result};
+use common::{C_struct_in_context, C_u64, C_undef};
+use common::CrateContext;
 use common::{fulfill_obligation};
 use common::{type_is_zero_size, val_ty};
 use common;
 use consts;
 use context::{SharedCrateContext, CrateContextList};
-use debuginfo::{self, DebugLoc};
+use debuginfo;
 use declare;
 use machine;
 use machine::{llalign_of_min, llsize_of};
@@ -81,11 +79,8 @@ use value::Value;
 use Disr;
 use util::nodemap::{NodeSet, FxHashMap, FxHashSet};
 
-use arena::TypedArena;
 use libc::c_uint;
 use std::ffi::{CStr, CString};
-use std::cell::{Cell, RefCell};
-use std::ptr;
 use std::rc::Rc;
 use std::str;
 use std::i32;
@@ -95,51 +90,7 @@ use rustc::hir;
 use rustc::ty::layout::{self, Layout};
 use syntax::ast;
 
-thread_local! {
-    static TASK_LOCAL_INSN_KEY: RefCell<Option<Vec<&'static str>>> = {
-        RefCell::new(None)
-    }
-}
-
-pub fn with_insn_ctxt<F>(blk: F)
-    where F: FnOnce(&[&'static str])
-{
-    TASK_LOCAL_INSN_KEY.with(move |slot| {
-        slot.borrow().as_ref().map(move |s| blk(s));
-    })
-}
-
-pub fn init_insn_ctxt() {
-    TASK_LOCAL_INSN_KEY.with(|slot| {
-        *slot.borrow_mut() = Some(Vec::new());
-    });
-}
-
-pub struct _InsnCtxt {
-    _cannot_construct_outside_of_this_module: (),
-}
-
-impl Drop for _InsnCtxt {
-    fn drop(&mut self) {
-        TASK_LOCAL_INSN_KEY.with(|slot| {
-            if let Some(ctx) = slot.borrow_mut().as_mut() {
-                ctx.pop();
-            }
-        })
-    }
-}
-
-pub fn push_ctxt(s: &'static str) -> _InsnCtxt {
-    debug!("new InsnCtxt: {}", s);
-    TASK_LOCAL_INSN_KEY.with(|slot| {
-        if let Some(ctx) = slot.borrow_mut().as_mut() {
-            ctx.push(s)
-        }
-    });
-    _InsnCtxt {
-        _cannot_construct_outside_of_this_module: (),
-    }
-}
+use mir::lvalue::Alignment;
 
 pub struct StatRecorder<'a, 'tcx: 'a> {
     ccx: &'a CrateContext<'a, 'tcx>,
@@ -162,10 +113,7 @@ impl<'a, 'tcx> Drop for StatRecorder<'a, 'tcx> {
     fn drop(&mut self) {
         if self.ccx.sess().trans_stats() {
             let iend = self.ccx.stats().n_llvm_insns.get();
-            self.ccx
-                .stats()
-                .fn_stats
-                .borrow_mut()
+            self.ccx.stats().fn_stats.borrow_mut()
                 .push((self.name.take().unwrap(), iend - self.istart));
             self.ccx.stats().n_fns.set(self.ccx.stats().n_fns.get() + 1);
             // Reset LLVM insn count to avoid compound costs.
@@ -174,51 +122,13 @@ impl<'a, 'tcx> Drop for StatRecorder<'a, 'tcx> {
     }
 }
 
-pub fn get_meta(bcx: Block, fat_ptr: ValueRef) -> ValueRef {
-    StructGEP(bcx, fat_ptr, abi::FAT_PTR_EXTRA)
+pub fn get_meta(bcx: &Builder, fat_ptr: ValueRef) -> ValueRef {
+    bcx.struct_gep(fat_ptr, abi::FAT_PTR_EXTRA)
 }
 
-pub fn get_dataptr(bcx: Block, fat_ptr: ValueRef) -> ValueRef {
-    StructGEP(bcx, fat_ptr, abi::FAT_PTR_ADDR)
+pub fn get_dataptr(bcx: &Builder, fat_ptr: ValueRef) -> ValueRef {
+    bcx.struct_gep(fat_ptr, abi::FAT_PTR_ADDR)
 }
-
-pub fn get_meta_builder(b: &Builder, fat_ptr: ValueRef) -> ValueRef {
-    b.struct_gep(fat_ptr, abi::FAT_PTR_EXTRA)
-}
-
-pub fn get_dataptr_builder(b: &Builder, fat_ptr: ValueRef) -> ValueRef {
-    b.struct_gep(fat_ptr, abi::FAT_PTR_ADDR)
-}
-
-fn require_alloc_fn<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, info_ty: Ty<'tcx>, it: LangItem) -> DefId {
-    match bcx.tcx().lang_items.require(it) {
-        Ok(id) => id,
-        Err(s) => {
-            bcx.sess().fatal(&format!("allocation of `{}` {}", info_ty, s));
-        }
-    }
-}
-
-// The following malloc_raw_dyn* functions allocate a box to contain
-// a given type, but with a potentially dynamic size.
-
-pub fn malloc_raw_dyn<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                                  llty_ptr: Type,
-                                  info_ty: Ty<'tcx>,
-                                  size: ValueRef,
-                                  align: ValueRef,
-                                  debug_loc: DebugLoc)
-                                  -> Result<'blk, 'tcx> {
-    let _icx = push_ctxt("malloc_raw_exchange");
-
-    // Allocate space:
-    let def_id = require_alloc_fn(bcx, info_ty, ExchangeMallocFnLangItem);
-    let r = Callee::def(bcx.ccx(), def_id, bcx.tcx().intern_substs(&[]))
-        .call(bcx, debug_loc, &[size, align], None);
-
-    Result::new(r.bcx, PointerCast(r.bcx, r.val, llty_ptr))
-}
-
 
 pub fn bin_op_to_icmp_predicate(op: hir::BinOp_,
                                 signed: bool)
@@ -254,18 +164,18 @@ pub fn bin_op_to_fcmp_predicate(op: hir::BinOp_) -> llvm::RealPredicate {
     }
 }
 
-pub fn compare_simd_types<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                                      lhs: ValueRef,
-                                      rhs: ValueRef,
-                                      t: Ty<'tcx>,
-                                      ret_ty: Type,
-                                      op: hir::BinOp_,
-                                      debug_loc: DebugLoc)
-                                      -> ValueRef {
+pub fn compare_simd_types<'a, 'tcx>(
+    bcx: &Builder<'a, 'tcx>,
+    lhs: ValueRef,
+    rhs: ValueRef,
+    t: Ty<'tcx>,
+    ret_ty: Type,
+    op: hir::BinOp_
+) -> ValueRef {
     let signed = match t.sty {
         ty::TyFloat(_) => {
             let cmp = bin_op_to_fcmp_predicate(op);
-            return SExt(bcx, FCmp(bcx, cmp, lhs, rhs, debug_loc), ret_ty);
+            return bcx.sext(bcx.fcmp(cmp, lhs, rhs), ret_ty);
         },
         ty::TyUint(_) => false,
         ty::TyInt(_) => true,
@@ -277,7 +187,7 @@ pub fn compare_simd_types<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     // to get the correctly sized type. This will compile to a single instruction
     // once the IR is converted to assembly if the SIMD instruction is supported
     // by the target architecture.
-    SExt(bcx, ICmp(bcx, cmp, lhs, rhs, debug_loc), ret_ty)
+    bcx.sext(bcx.icmp(cmp, lhs, rhs), ret_ty)
 }
 
 /// Retrieve the information we are losing (making dynamic) in an unsizing
@@ -311,24 +221,29 @@ pub fn unsized_info<'ccx, 'tcx>(ccx: &CrateContext<'ccx, 'tcx>,
 }
 
 /// Coerce `src` to `dst_ty`. `src_ty` must be a thin pointer.
-pub fn unsize_thin_ptr<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                                   src: ValueRef,
-                                   src_ty: Ty<'tcx>,
-                                   dst_ty: Ty<'tcx>)
-                                   -> (ValueRef, ValueRef) {
+pub fn unsize_thin_ptr<'a, 'tcx>(
+    bcx: &Builder<'a, 'tcx>,
+    src: ValueRef,
+    src_ty: Ty<'tcx>,
+    dst_ty: Ty<'tcx>
+) -> (ValueRef, ValueRef) {
     debug!("unsize_thin_ptr: {:?} => {:?}", src_ty, dst_ty);
     match (&src_ty.sty, &dst_ty.sty) {
-        (&ty::TyBox(a), &ty::TyBox(b)) |
         (&ty::TyRef(_, ty::TypeAndMut { ty: a, .. }),
          &ty::TyRef(_, ty::TypeAndMut { ty: b, .. })) |
         (&ty::TyRef(_, ty::TypeAndMut { ty: a, .. }),
          &ty::TyRawPtr(ty::TypeAndMut { ty: b, .. })) |
         (&ty::TyRawPtr(ty::TypeAndMut { ty: a, .. }),
          &ty::TyRawPtr(ty::TypeAndMut { ty: b, .. })) => {
-            assert!(common::type_is_sized(bcx.tcx(), a));
-            let ptr_ty = type_of::in_memory_type_of(bcx.ccx(), b).ptr_to();
-            (PointerCast(bcx, src, ptr_ty),
-             unsized_info(bcx.ccx(), a, b, None))
+            assert!(bcx.ccx.shared().type_is_sized(a));
+            let ptr_ty = type_of::in_memory_type_of(bcx.ccx, b).ptr_to();
+            (bcx.pointercast(src, ptr_ty), unsized_info(bcx.ccx, a, b, None))
+        }
+        (&ty::TyAdt(def_a, _), &ty::TyAdt(def_b, _)) if def_a.is_box() && def_b.is_box() => {
+            let (a, b) = (src_ty.boxed_ty(), dst_ty.boxed_ty());
+            assert!(bcx.ccx.shared().type_is_sized(a));
+            let ptr_ty = type_of::in_memory_type_of(bcx.ccx, b).ptr_to();
+            (bcx.pointercast(src, ptr_ty), unsized_info(bcx.ccx, a, b, None))
         }
         _ => bug!("unsize_thin_ptr: called on bad types"),
     }
@@ -336,30 +251,35 @@ pub fn unsize_thin_ptr<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 
 /// Coerce `src`, which is a reference to a value of type `src_ty`,
 /// to a value of type `dst_ty` and store the result in `dst`
-pub fn coerce_unsized_into<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                                       src: ValueRef,
-                                       src_ty: Ty<'tcx>,
-                                       dst: ValueRef,
-                                       dst_ty: Ty<'tcx>) {
+pub fn coerce_unsized_into<'a, 'tcx>(bcx: &Builder<'a, 'tcx>,
+                                     src: &LvalueRef<'tcx>,
+                                     dst: &LvalueRef<'tcx>) {
+    let src_ty = src.ty.to_ty(bcx.tcx());
+    let dst_ty = dst.ty.to_ty(bcx.tcx());
+    let coerce_ptr = || {
+        let (base, info) = if common::type_is_fat_ptr(bcx.ccx, src_ty) {
+            // fat-ptr to fat-ptr unsize preserves the vtable
+            // i.e. &'a fmt::Debug+Send => &'a fmt::Debug
+            // So we need to pointercast the base to ensure
+            // the types match up.
+            let (base, info) = load_fat_ptr(bcx, src.llval, src.alignment, src_ty);
+            let llcast_ty = type_of::fat_ptr_base_ty(bcx.ccx, dst_ty);
+            let base = bcx.pointercast(base, llcast_ty);
+            (base, info)
+        } else {
+            let base = load_ty(bcx, src.llval, src.alignment, src_ty);
+            unsize_thin_ptr(bcx, base, src_ty, dst_ty)
+        };
+        store_fat_ptr(bcx, base, info, dst.llval, dst.alignment, dst_ty);
+    };
     match (&src_ty.sty, &dst_ty.sty) {
-        (&ty::TyBox(..), &ty::TyBox(..)) |
         (&ty::TyRef(..), &ty::TyRef(..)) |
         (&ty::TyRef(..), &ty::TyRawPtr(..)) |
         (&ty::TyRawPtr(..), &ty::TyRawPtr(..)) => {
-            let (base, info) = if common::type_is_fat_ptr(bcx.tcx(), src_ty) {
-                // fat-ptr to fat-ptr unsize preserves the vtable
-                // i.e. &'a fmt::Debug+Send => &'a fmt::Debug
-                // So we need to pointercast the base to ensure
-                // the types match up.
-                let (base, info) = load_fat_ptr(bcx, src, src_ty);
-                let llcast_ty = type_of::fat_ptr_base_ty(bcx.ccx(), dst_ty);
-                let base = PointerCast(bcx, base, llcast_ty);
-                (base, info)
-            } else {
-                let base = load_ty(bcx, src, src_ty);
-                unsize_thin_ptr(bcx, base, src_ty, dst_ty)
-            };
-            store_fat_ptr(bcx, base, info, dst, dst_ty);
+            coerce_ptr()
+        }
+        (&ty::TyAdt(def_a, _), &ty::TyAdt(def_b, _)) if def_a.is_box() && def_b.is_box() => {
+            coerce_ptr()
         }
 
         (&ty::TyAdt(def_a, substs_a), &ty::TyAdt(def_b, substs_b)) => {
@@ -372,21 +292,22 @@ pub fn coerce_unsized_into<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                 monomorphize::field_ty(bcx.tcx(), substs_b, f)
             });
 
-            let src = adt::MaybeSizedValue::sized(src);
-            let dst = adt::MaybeSizedValue::sized(dst);
-
             let iter = src_fields.zip(dst_fields).enumerate();
             for (i, (src_fty, dst_fty)) in iter {
-                if type_is_zero_size(bcx.ccx(), dst_fty) {
+                if type_is_zero_size(bcx.ccx, dst_fty) {
                     continue;
                 }
 
-                let src_f = adt::trans_field_ptr(bcx, src_ty, src, Disr(0), i);
-                let dst_f = adt::trans_field_ptr(bcx, dst_ty, dst, Disr(0), i);
+                let (src_f, src_f_align) = src.trans_field_ptr(bcx, i);
+                let (dst_f, dst_f_align) = dst.trans_field_ptr(bcx, i);
                 if src_fty == dst_fty {
-                    memcpy_ty(bcx, dst_f, src_f, src_fty);
+                    memcpy_ty(bcx, dst_f, src_f, src_fty, None);
                 } else {
-                    coerce_unsized_into(bcx, src_f, src_fty, dst_f, dst_fty);
+                    coerce_unsized_into(
+                        bcx,
+                        &LvalueRef::new_sized_ty(src_f, src_fty, src_f_align),
+                        &LvalueRef::new_sized_ty(dst_f, dst_fty, dst_f_align)
+                    );
                 }
             }
         }
@@ -415,8 +336,10 @@ pub fn custom_coerce_unsize_info<'scx, 'tcx>(scx: &SharedCrateContext<'scx, 'tcx
     }
 }
 
-pub fn cast_shift_expr_rhs(cx: Block, op: hir::BinOp_, lhs: ValueRef, rhs: ValueRef) -> ValueRef {
-    cast_shift_rhs(op, lhs, rhs, |a, b| Trunc(cx, a, b), |a, b| ZExt(cx, a, b))
+pub fn cast_shift_expr_rhs(
+    cx: &Builder, op: hir::BinOp_, lhs: ValueRef, rhs: ValueRef
+) -> ValueRef {
+    cast_shift_rhs(op, lhs, rhs, |a, b| cx.trunc(a, b), |a, b| cx.zext(a, b))
 }
 
 pub fn cast_shift_const_rhs(op: hir::BinOp_, lhs: ValueRef, rhs: ValueRef) -> ValueRef {
@@ -462,42 +385,6 @@ fn cast_shift_rhs<F, G>(op: hir::BinOp_,
     }
 }
 
-pub fn invoke<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                          llfn: ValueRef,
-                          llargs: &[ValueRef],
-                          debug_loc: DebugLoc)
-                          -> (ValueRef, Block<'blk, 'tcx>) {
-    let _icx = push_ctxt("invoke_");
-    if bcx.unreachable.get() {
-        return (C_null(Type::i8(bcx.ccx())), bcx);
-    }
-
-    if need_invoke(bcx) {
-        debug!("invoking {:?} at {:?}", Value(llfn), bcx.llbb);
-        for &llarg in llargs {
-            debug!("arg: {:?}", Value(llarg));
-        }
-        let normal_bcx = bcx.fcx.new_block("normal-return");
-        let landing_pad = bcx.fcx.get_landing_pad();
-
-        let llresult = Invoke(bcx,
-                              llfn,
-                              &llargs[..],
-                              normal_bcx.llbb,
-                              landing_pad,
-                              debug_loc);
-        return (llresult, normal_bcx);
-    } else {
-        debug!("calling {:?} at {:?}", Value(llfn), bcx.llbb);
-        for &llarg in llargs {
-            debug!("arg: {:?}", Value(llarg));
-        }
-
-        let llresult = Call(bcx, llfn, &llargs[..], debug_loc);
-        return (llresult, bcx);
-    }
-}
-
 /// Returns whether this session's target will use SEH-based unwinding.
 ///
 /// This is only true for MSVC targets, and even then the 64-bit MSVC target
@@ -505,18 +392,6 @@ pub fn invoke<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 /// 64-bit MinGW) instead of "full SEH".
 pub fn wants_msvc_seh(sess: &Session) -> bool {
     sess.target.target.options.is_like_msvc
-}
-
-pub fn avoid_invoke(bcx: Block) -> bool {
-    bcx.sess().no_landing_pads() || bcx.lpad().is_some()
-}
-
-pub fn need_invoke(bcx: Block) -> bool {
-    if avoid_invoke(bcx) {
-        false
-    } else {
-        bcx.fcx.needs_invoke()
-    }
 }
 
 pub fn call_assume<'a, 'tcx>(b: &Builder<'a, 'tcx>, val: ValueRef) {
@@ -527,14 +402,8 @@ pub fn call_assume<'a, 'tcx>(b: &Builder<'a, 'tcx>, val: ValueRef) {
 /// Helper for loading values from memory. Does the necessary conversion if the in-memory type
 /// differs from the type used for SSA values. Also handles various special cases where the type
 /// gives us better information about what we are loading.
-pub fn load_ty<'blk, 'tcx>(cx: Block<'blk, 'tcx>, ptr: ValueRef, t: Ty<'tcx>) -> ValueRef {
-    if cx.unreachable.get() {
-        return C_undef(type_of::type_of(cx.ccx(), t));
-    }
-    load_ty_builder(&B(cx), ptr, t)
-}
-
-pub fn load_ty_builder<'a, 'tcx>(b: &Builder<'a, 'tcx>, ptr: ValueRef, t: Ty<'tcx>) -> ValueRef {
+pub fn load_ty<'a, 'tcx>(b: &Builder<'a, 'tcx>, ptr: ValueRef,
+                         alignment: Alignment, t: Ty<'tcx>) -> ValueRef {
     let ccx = b.ccx;
     if type_is_zero_size(ccx, t) {
         return C_undef(type_of::type_of(ccx, t));
@@ -554,192 +423,113 @@ pub fn load_ty_builder<'a, 'tcx>(b: &Builder<'a, 'tcx>, ptr: ValueRef, t: Ty<'tc
     }
 
     if t.is_bool() {
-        b.trunc(b.load_range_assert(ptr, 0, 2, llvm::False), Type::i1(ccx))
+        b.trunc(b.load_range_assert(ptr, 0, 2, llvm::False, alignment.to_align()),
+                Type::i1(ccx))
     } else if t.is_char() {
         // a char is a Unicode codepoint, and so takes values from 0
         // to 0x10FFFF inclusive only.
-        b.load_range_assert(ptr, 0, 0x10FFFF + 1, llvm::False)
-    } else if (t.is_region_ptr() || t.is_unique()) &&
-              !common::type_is_fat_ptr(ccx.tcx(), t) {
-        b.load_nonnull(ptr)
+        b.load_range_assert(ptr, 0, 0x10FFFF + 1, llvm::False, alignment.to_align())
+    } else if (t.is_region_ptr() || t.is_box()) && !common::type_is_fat_ptr(ccx, t) {
+        b.load_nonnull(ptr, alignment.to_align())
     } else {
-        b.load(ptr)
+        b.load(ptr, alignment.to_align())
     }
 }
 
 /// Helper for storing values in memory. Does the necessary conversion if the in-memory type
 /// differs from the type used for SSA values.
-pub fn store_ty<'blk, 'tcx>(cx: Block<'blk, 'tcx>, v: ValueRef, dst: ValueRef, t: Ty<'tcx>) {
-    if cx.unreachable.get() {
-        return;
-    }
-
+pub fn store_ty<'a, 'tcx>(cx: &Builder<'a, 'tcx>, v: ValueRef, dst: ValueRef,
+                          dst_align: Alignment, t: Ty<'tcx>) {
     debug!("store_ty: {:?} : {:?} <- {:?}", Value(dst), t, Value(v));
 
-    if common::type_is_fat_ptr(cx.tcx(), t) {
-        let lladdr = ExtractValue(cx, v, abi::FAT_PTR_ADDR);
-        let llextra = ExtractValue(cx, v, abi::FAT_PTR_EXTRA);
-        store_fat_ptr(cx, lladdr, llextra, dst, t);
+    if common::type_is_fat_ptr(cx.ccx, t) {
+        let lladdr = cx.extract_value(v, abi::FAT_PTR_ADDR);
+        let llextra = cx.extract_value(v, abi::FAT_PTR_EXTRA);
+        store_fat_ptr(cx, lladdr, llextra, dst, dst_align, t);
     } else {
-        Store(cx, from_immediate(cx, v), dst);
+        cx.store(from_immediate(cx, v), dst, dst_align.to_align());
     }
 }
 
-pub fn store_fat_ptr<'blk, 'tcx>(cx: Block<'blk, 'tcx>,
-                                 data: ValueRef,
-                                 extra: ValueRef,
-                                 dst: ValueRef,
-                                 _ty: Ty<'tcx>) {
+pub fn store_fat_ptr<'a, 'tcx>(cx: &Builder<'a, 'tcx>,
+                               data: ValueRef,
+                               extra: ValueRef,
+                               dst: ValueRef,
+                               dst_align: Alignment,
+                               _ty: Ty<'tcx>) {
     // FIXME: emit metadata
-    Store(cx, data, get_dataptr(cx, dst));
-    Store(cx, extra, get_meta(cx, dst));
+    cx.store(data, get_dataptr(cx, dst), dst_align.to_align());
+    cx.store(extra, get_meta(cx, dst), dst_align.to_align());
 }
 
-pub fn load_fat_ptr<'blk, 'tcx>(cx: Block<'blk, 'tcx>,
-                                src: ValueRef,
-                                ty: Ty<'tcx>)
-                                -> (ValueRef, ValueRef)
-{
-    if cx.unreachable.get() {
-        // FIXME: remove me
-        return (Load(cx, get_dataptr(cx, src)),
-                Load(cx, get_meta(cx, src)));
-    }
-
-    load_fat_ptr_builder(&B(cx), src, ty)
-}
-
-pub fn load_fat_ptr_builder<'a, 'tcx>(
-    b: &Builder<'a, 'tcx>,
-    src: ValueRef,
-    t: Ty<'tcx>)
-    -> (ValueRef, ValueRef)
-{
-
-    let ptr = get_dataptr_builder(b, src);
-    let ptr = if t.is_region_ptr() || t.is_unique() {
-        b.load_nonnull(ptr)
+pub fn load_fat_ptr<'a, 'tcx>(
+    b: &Builder<'a, 'tcx>, src: ValueRef, alignment: Alignment, t: Ty<'tcx>
+) -> (ValueRef, ValueRef) {
+    let ptr = get_dataptr(b, src);
+    let ptr = if t.is_region_ptr() || t.is_box() {
+        b.load_nonnull(ptr, alignment.to_align())
     } else {
-        b.load(ptr)
+        b.load(ptr, alignment.to_align())
     };
 
     // FIXME: emit metadata on `meta`.
-    let meta = b.load(get_meta_builder(b, src));
+    let meta = b.load(get_meta(b, src), alignment.to_align());
 
     (ptr, meta)
 }
 
-pub fn from_immediate(bcx: Block, val: ValueRef) -> ValueRef {
-    if val_ty(val) == Type::i1(bcx.ccx()) {
-        ZExt(bcx, val, Type::i8(bcx.ccx()))
+pub fn from_immediate(bcx: &Builder, val: ValueRef) -> ValueRef {
+    if val_ty(val) == Type::i1(bcx.ccx) {
+        bcx.zext(val, Type::i8(bcx.ccx))
     } else {
         val
     }
 }
 
-pub fn to_immediate(bcx: Block, val: ValueRef, ty: Ty) -> ValueRef {
+pub fn to_immediate(bcx: &Builder, val: ValueRef, ty: Ty) -> ValueRef {
     if ty.is_bool() {
-        Trunc(bcx, val, Type::i1(bcx.ccx()))
+        bcx.trunc(val, Type::i1(bcx.ccx))
     } else {
         val
     }
-}
-
-pub fn with_cond<'blk, 'tcx, F>(bcx: Block<'blk, 'tcx>, val: ValueRef, f: F) -> Block<'blk, 'tcx>
-    where F: FnOnce(Block<'blk, 'tcx>) -> Block<'blk, 'tcx>
-{
-    let _icx = push_ctxt("with_cond");
-
-    if bcx.unreachable.get() || common::const_to_opt_uint(val) == Some(0) {
-        return bcx;
-    }
-
-    let fcx = bcx.fcx;
-    let next_cx = fcx.new_block("next");
-    let cond_cx = fcx.new_block("cond");
-    CondBr(bcx, val, cond_cx.llbb, next_cx.llbb, DebugLoc::None);
-    let after_cx = f(cond_cx);
-    if !after_cx.terminated.get() {
-        Br(after_cx, next_cx.llbb, DebugLoc::None);
-    }
-    next_cx
 }
 
 pub enum Lifetime { Start, End }
 
-// If LLVM lifetime intrinsic support is enabled (i.e. optimizations
-// on), and `ptr` is nonzero-sized, then extracts the size of `ptr`
-// and the intrinsic for `lt` and passes them to `emit`, which is in
-// charge of generating code to call the passed intrinsic on whatever
-// block of generated code is targetted for the intrinsic.
-//
-// If LLVM lifetime intrinsic support is disabled (i.e.  optimizations
-// off) or `ptr` is zero-sized, then no-op (does not call `emit`).
-fn core_lifetime_emit<'blk, 'tcx, F>(ccx: &'blk CrateContext<'blk, 'tcx>,
-                                     ptr: ValueRef,
-                                     lt: Lifetime,
-                                     emit: F)
-    where F: FnOnce(&'blk CrateContext<'blk, 'tcx>, machine::llsize, ValueRef)
-{
-    if ccx.sess().opts.optimize == config::OptLevel::No {
-        return;
-    }
-
-    let _icx = push_ctxt(match lt {
-        Lifetime::Start => "lifetime_start",
-        Lifetime::End => "lifetime_end"
-    });
-
-    let size = machine::llsize_of_alloc(ccx, val_ty(ptr).element_type());
-    if size == 0 {
-        return;
-    }
-
-    let lifetime_intrinsic = ccx.get_intrinsic(match lt {
-        Lifetime::Start => "llvm.lifetime.start",
-        Lifetime::End => "llvm.lifetime.end"
-    });
-    emit(ccx, size, lifetime_intrinsic)
-}
-
 impl Lifetime {
+    // If LLVM lifetime intrinsic support is enabled (i.e. optimizations
+    // on), and `ptr` is nonzero-sized, then extracts the size of `ptr`
+    // and the intrinsic for `lt` and passes them to `emit`, which is in
+    // charge of generating code to call the passed intrinsic on whatever
+    // block of generated code is targetted for the intrinsic.
+    //
+    // If LLVM lifetime intrinsic support is disabled (i.e.  optimizations
+    // off) or `ptr` is zero-sized, then no-op (does not call `emit`).
     pub fn call(self, b: &Builder, ptr: ValueRef) {
-        core_lifetime_emit(b.ccx, ptr, self, |ccx, size, lifetime_intrinsic| {
-            let ptr = b.pointercast(ptr, Type::i8p(ccx));
-            b.call(lifetime_intrinsic, &[C_u64(ccx, size), ptr], None);
+        if b.ccx.sess().opts.optimize == config::OptLevel::No {
+            return;
+        }
+
+        let size = machine::llsize_of_alloc(b.ccx, val_ty(ptr).element_type());
+        if size == 0 {
+            return;
+        }
+
+        let lifetime_intrinsic = b.ccx.get_intrinsic(match self {
+            Lifetime::Start => "llvm.lifetime.start",
+            Lifetime::End => "llvm.lifetime.end"
         });
+
+        let ptr = b.pointercast(ptr, Type::i8p(b.ccx));
+        b.call(lifetime_intrinsic, &[C_u64(b.ccx, size), ptr], None);
     }
 }
 
-pub fn call_lifetime_start(bcx: Block, ptr: ValueRef) {
-    if !bcx.unreachable.get() {
-        Lifetime::Start.call(&bcx.build(), ptr);
-    }
-}
-
-pub fn call_lifetime_end(bcx: Block, ptr: ValueRef) {
-    if !bcx.unreachable.get() {
-        Lifetime::End.call(&bcx.build(), ptr);
-    }
-}
-
-// Generates code for resumption of unwind at the end of a landing pad.
-pub fn trans_unwind_resume(bcx: Block, lpval: ValueRef) {
-    if !bcx.sess().target.target.options.custom_unwind_resume {
-        Resume(bcx, lpval);
-    } else {
-        let exc_ptr = ExtractValue(bcx, lpval, 0);
-        bcx.fcx.eh_unwind_resume()
-            .call(bcx, DebugLoc::None, &[exc_ptr], None);
-    }
-}
-
-pub fn call_memcpy<'bcx, 'tcx>(b: &Builder<'bcx, 'tcx>,
+pub fn call_memcpy<'a, 'tcx>(b: &Builder<'a, 'tcx>,
                                dst: ValueRef,
                                src: ValueRef,
                                n_bytes: ValueRef,
                                align: u32) {
-    let _icx = push_ctxt("call_memcpy");
     let ccx = b.ccx;
     let ptr_width = &ccx.sess().target.target.target_pointer_width[..];
     let key = format!("llvm.memcpy.p0i8.p0i8.i{}", ptr_width);
@@ -752,255 +542,36 @@ pub fn call_memcpy<'bcx, 'tcx>(b: &Builder<'bcx, 'tcx>,
     b.call(memcpy, &[dst_ptr, src_ptr, size, align, volatile], None);
 }
 
-pub fn memcpy_ty<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, dst: ValueRef, src: ValueRef, t: Ty<'tcx>) {
-    let _icx = push_ctxt("memcpy_ty");
-    let ccx = bcx.ccx();
+pub fn memcpy_ty<'a, 'tcx>(
+    bcx: &Builder<'a, 'tcx>,
+    dst: ValueRef,
+    src: ValueRef,
+    t: Ty<'tcx>,
+    align: Option<u32>,
+) {
+    let ccx = bcx.ccx;
 
-    if type_is_zero_size(ccx, t) || bcx.unreachable.get() {
+    if type_is_zero_size(ccx, t) {
         return;
     }
 
-    if t.is_structural() {
-        let llty = type_of::type_of(ccx, t);
-        let llsz = llsize_of(ccx, llty);
-        let llalign = type_of::align_of(ccx, t);
-        call_memcpy(&B(bcx), dst, src, llsz, llalign as u32);
-    } else if common::type_is_fat_ptr(bcx.tcx(), t) {
-        let (data, extra) = load_fat_ptr(bcx, src, t);
-        store_fat_ptr(bcx, data, extra, dst, t);
-    } else {
-        store_ty(bcx, load_ty(bcx, src, t), dst, t);
-    }
+    let llty = type_of::type_of(ccx, t);
+    let llsz = llsize_of(ccx, llty);
+    let llalign = align.unwrap_or_else(|| type_of::align_of(ccx, t));
+    call_memcpy(bcx, dst, src, llsz, llalign as u32);
 }
 
-pub fn init_zero_mem<'blk, 'tcx>(cx: Block<'blk, 'tcx>, llptr: ValueRef, t: Ty<'tcx>) {
-    if cx.unreachable.get() {
-        return;
-    }
-    let _icx = push_ctxt("init_zero_mem");
-    let bcx = cx;
-    memfill(&B(bcx), llptr, t, 0);
-}
-
-// Always use this function instead of storing a constant byte to the memory
-// in question. e.g. if you store a zero constant, LLVM will drown in vreg
-// allocation for large data structures, and the generated code will be
-// awful. (A telltale sign of this is large quantities of
-// `mov [byte ptr foo],0` in the generated code.)
-fn memfill<'a, 'tcx>(b: &Builder<'a, 'tcx>, llptr: ValueRef, ty: Ty<'tcx>, byte: u8) {
-    let _icx = push_ctxt("memfill");
-    let ccx = b.ccx;
-    let llty = type_of::type_of(ccx, ty);
-    let llptr = b.pointercast(llptr, Type::i8(ccx).ptr_to());
-    let llzeroval = C_u8(ccx, byte);
-    let size = machine::llsize_of(ccx, llty);
-    let align = C_i32(ccx, type_of::align_of(ccx, ty) as i32);
-    call_memset(b, llptr, llzeroval, size, align, false);
-}
-
-pub fn call_memset<'bcx, 'tcx>(b: &Builder<'bcx, 'tcx>,
+pub fn call_memset<'a, 'tcx>(b: &Builder<'a, 'tcx>,
                                ptr: ValueRef,
                                fill_byte: ValueRef,
                                size: ValueRef,
                                align: ValueRef,
-                               volatile: bool) {
-    let ccx = b.ccx;
-    let ptr_width = &ccx.sess().target.target.target_pointer_width[..];
+                               volatile: bool) -> ValueRef {
+    let ptr_width = &b.ccx.sess().target.target.target_pointer_width[..];
     let intrinsic_key = format!("llvm.memset.p0i8.i{}", ptr_width);
-    let llintrinsicfn = ccx.get_intrinsic(&intrinsic_key);
-    let volatile = C_bool(ccx, volatile);
-    b.call(llintrinsicfn, &[ptr, fill_byte, size, align, volatile], None);
-}
-
-pub fn alloc_ty<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                            ty: Ty<'tcx>,
-                            name: &str) -> ValueRef {
-    assert!(!ty.has_param_types());
-    alloca(bcx, type_of::type_of(bcx.ccx(), ty), name)
-}
-
-pub fn alloca(cx: Block, ty: Type, name: &str) -> ValueRef {
-    let _icx = push_ctxt("alloca");
-    if cx.unreachable.get() {
-        unsafe {
-            return llvm::LLVMGetUndef(ty.ptr_to().to_ref());
-        }
-    }
-    DebugLoc::None.apply(cx.fcx);
-    let result = Alloca(cx, ty, name);
-    debug!("alloca({:?}) = {:?}", name, result);
-    result
-}
-
-impl<'blk, 'tcx> FunctionContext<'blk, 'tcx> {
-    /// Create a function context for the given function.
-    /// Beware that you must call `fcx.init` or `fcx.bind_args`
-    /// before doing anything with the returned function context.
-    pub fn new(ccx: &'blk CrateContext<'blk, 'tcx>,
-               llfndecl: ValueRef,
-               fn_ty: FnType,
-               definition: Option<(Instance<'tcx>, &ty::FnSig<'tcx>, Abi)>,
-               block_arena: &'blk TypedArena<common::BlockS<'blk, 'tcx>>)
-               -> FunctionContext<'blk, 'tcx> {
-        let (param_substs, def_id) = match definition {
-            Some((instance, ..)) => {
-                common::validate_substs(instance.substs);
-                (instance.substs, Some(instance.def))
-            }
-            None => (ccx.tcx().intern_substs(&[]), None)
-        };
-
-        let local_id = def_id.and_then(|id| ccx.tcx().map.as_local_node_id(id));
-
-        debug!("FunctionContext::new({})",
-               definition.map_or(String::new(), |d| d.0.to_string()));
-
-        let no_debug = if let Some(id) = local_id {
-            ccx.tcx().map.attrs(id)
-               .iter().any(|item| item.check_name("no_debug"))
-        } else if let Some(def_id) = def_id {
-            ccx.sess().cstore.item_attrs(def_id)
-               .iter().any(|item| item.check_name("no_debug"))
-        } else {
-            false
-        };
-
-        let mir = def_id.map(|id| ccx.tcx().item_mir(id));
-
-        let debug_context = if let (false, Some((instance, sig, abi)), &Some(ref mir)) =
-                (no_debug, definition, &mir) {
-            debuginfo::create_function_debug_context(ccx, instance, sig, abi, llfndecl, mir)
-        } else {
-            debuginfo::empty_function_debug_context(ccx)
-        };
-
-        FunctionContext {
-            mir: mir,
-            llfn: llfndecl,
-            llretslotptr: Cell::new(None),
-            param_env: ccx.tcx().empty_parameter_environment(),
-            alloca_insert_pt: Cell::new(None),
-            landingpad_alloca: Cell::new(None),
-            fn_ty: fn_ty,
-            param_substs: param_substs,
-            span: None,
-            block_arena: block_arena,
-            lpad_arena: TypedArena::new(),
-            ccx: ccx,
-            debug_context: debug_context,
-            scopes: RefCell::new(Vec::new()),
-        }
-    }
-
-    /// Performs setup on a newly created function, creating the entry
-    /// scope block and allocating space for the return pointer.
-    pub fn init(&'blk self, skip_retptr: bool) -> Block<'blk, 'tcx> {
-        let entry_bcx = self.new_block("entry-block");
-
-        // Use a dummy instruction as the insertion point for all allocas.
-        // This is later removed in FunctionContext::cleanup.
-        self.alloca_insert_pt.set(Some(unsafe {
-            Load(entry_bcx, C_null(Type::i8p(self.ccx)));
-            llvm::LLVMGetFirstInstruction(entry_bcx.llbb)
-        }));
-
-        if !self.fn_ty.ret.is_ignore() && !skip_retptr {
-            // We normally allocate the llretslotptr, unless we
-            // have been instructed to skip it for immediate return
-            // values, or there is nothing to return at all.
-
-            // We create an alloca to hold a pointer of type `ret.original_ty`
-            // which will hold the pointer to the right alloca which has the
-            // final ret value
-            let llty = self.fn_ty.ret.memory_ty(self.ccx);
-            // But if there are no nested returns, we skip the indirection
-            // and have a single retslot
-            let slot = if self.fn_ty.ret.is_indirect() {
-                get_param(self.llfn, 0)
-            } else {
-                AllocaFcx(self, llty, "sret_slot")
-            };
-
-            self.llretslotptr.set(Some(slot));
-        }
-
-        entry_bcx
-    }
-
-    /// Ties up the llstaticallocas -> llloadenv -> lltop edges,
-    /// and builds the return block.
-    pub fn finish(&'blk self, ret_cx: Block<'blk, 'tcx>,
-                  ret_debug_loc: DebugLoc) {
-        let _icx = push_ctxt("FunctionContext::finish");
-
-        self.build_return_block(ret_cx, ret_debug_loc);
-
-        DebugLoc::None.apply(self);
-        self.cleanup();
-    }
-
-    // Builds the return block for a function.
-    pub fn build_return_block(&self, ret_cx: Block<'blk, 'tcx>,
-                              ret_debug_location: DebugLoc) {
-        if self.llretslotptr.get().is_none() ||
-           ret_cx.unreachable.get() ||
-           self.fn_ty.ret.is_indirect() {
-            return RetVoid(ret_cx, ret_debug_location);
-        }
-
-        let retslot = self.llretslotptr.get().unwrap();
-        let retptr = Value(retslot);
-        let llty = self.fn_ty.ret.original_ty;
-        match (retptr.get_dominating_store(ret_cx), self.fn_ty.ret.cast) {
-            // If there's only a single store to the ret slot, we can directly return
-            // the value that was stored and omit the store and the alloca.
-            // However, we only want to do this when there is no cast needed.
-            (Some(s), None) => {
-                let mut retval = s.get_operand(0).unwrap().get();
-                s.erase_from_parent();
-
-                if retptr.has_no_uses() {
-                    retptr.erase_from_parent();
-                }
-
-                if self.fn_ty.ret.is_indirect() {
-                    Store(ret_cx, retval, get_param(self.llfn, 0));
-                    RetVoid(ret_cx, ret_debug_location)
-                } else {
-                    if llty == Type::i1(self.ccx) {
-                        retval = Trunc(ret_cx, retval, llty);
-                    }
-                    Ret(ret_cx, retval, ret_debug_location)
-                }
-            }
-            (_, cast_ty) if self.fn_ty.ret.is_indirect() => {
-                // Otherwise, copy the return value to the ret slot.
-                assert_eq!(cast_ty, None);
-                let llsz = llsize_of(self.ccx, self.fn_ty.ret.ty);
-                let llalign = llalign_of_min(self.ccx, self.fn_ty.ret.ty);
-                call_memcpy(&B(ret_cx), get_param(self.llfn, 0),
-                            retslot, llsz, llalign as u32);
-                RetVoid(ret_cx, ret_debug_location)
-            }
-            (_, Some(cast_ty)) => {
-                let load = Load(ret_cx, PointerCast(ret_cx, retslot, cast_ty.ptr_to()));
-                let llalign = llalign_of_min(self.ccx, self.fn_ty.ret.ty);
-                unsafe {
-                    llvm::LLVMSetAlignment(load, llalign);
-                }
-                Ret(ret_cx, load, ret_debug_location)
-            }
-            (_, None) => {
-                let retval = if llty == Type::i1(self.ccx) {
-                    let val = LoadRangeAssert(ret_cx, retslot, 0, 2, llvm::False);
-                    Trunc(ret_cx, val, llty)
-                } else {
-                    Load(ret_cx, retslot)
-                };
-                Ret(ret_cx, retval, ret_debug_location)
-            }
-        }
-    }
+    let llintrinsicfn = b.ccx.get_intrinsic(&intrinsic_key);
+    let volatile = C_bool(b.ccx, volatile);
+    b.call(llintrinsicfn, &[ptr, fill_byte, size, align, volatile], None)
 }
 
 pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, instance: Instance<'tcx>) {
@@ -1017,8 +588,6 @@ pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, instance: Instance
     // and to allow finding the last function before LLVM aborts from
     // release builds.
     info!("trans_instance({})", instance);
-
-    let _icx = push_ctxt("trans_instance");
 
     let fn_ty = ccx.tcx().item_type(instance.def);
     let fn_ty = ccx.tcx().erase_regions(&fn_ty);
@@ -1040,28 +609,17 @@ pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, instance: Instance
 
     let fn_ty = FnType::new(ccx, abi, &sig, &[]);
 
-    let (arena, fcx): (TypedArena<_>, FunctionContext);
-    arena = TypedArena::new();
-    fcx = FunctionContext::new(ccx,
-                               lldecl,
-                               fn_ty,
-                               Some((instance, &sig, abi)),
-                               &arena);
-
-    if fcx.mir.is_none() {
-        bug!("attempted translation of `{}` w/o MIR", instance);
-    }
-
-    mir::trans_mir(&fcx);
+    let mir = ccx.tcx().item_mir(instance.def);
+    mir::trans_mir(ccx, lldecl, fn_ty, &mir, instance, &sig, abi);
 }
 
 pub fn trans_ctor_shim<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                  def_id: DefId,
                                  substs: &'tcx Substs<'tcx>,
                                  disr: Disr,
-                                 llfndecl: ValueRef) {
-    attributes::inline(llfndecl, attributes::InlineAttr::Hint);
-    attributes::set_frame_pointer_elimination(ccx, llfndecl);
+                                 llfn: ValueRef) {
+    attributes::inline(llfn, attributes::InlineAttr::Hint);
+    attributes::set_frame_pointer_elimination(ccx, llfn);
 
     let ctor_ty = ccx.tcx().item_type(def_id);
     let ctor_ty = monomorphize::apply_param_substs(ccx.shared(), substs, &ctor_ty);
@@ -1069,34 +627,58 @@ pub fn trans_ctor_shim<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let sig = ccx.tcx().erase_late_bound_regions_and_normalize(&ctor_ty.fn_sig());
     let fn_ty = FnType::new(ccx, Abi::Rust, &sig, &[]);
 
-    let (arena, fcx): (TypedArena<_>, FunctionContext);
-    arena = TypedArena::new();
-    fcx = FunctionContext::new(ccx, llfndecl, fn_ty, None, &arena);
-    let bcx = fcx.init(false);
-
-    if !fcx.fn_ty.ret.is_ignore() {
-        let dest = fcx.llretslotptr.get().unwrap();
-        let dest_val = adt::MaybeSizedValue::sized(dest); // Can return unsized value
-        let mut llarg_idx = fcx.fn_ty.ret.is_indirect() as usize;
+    let bcx = Builder::new_block(ccx, llfn, "entry-block");
+    if !fn_ty.ret.is_ignore() {
+        // But if there are no nested returns, we skip the indirection
+        // and have a single retslot
+        let dest = if fn_ty.ret.is_indirect() {
+            get_param(llfn, 0)
+        } else {
+            // We create an alloca to hold a pointer of type `ret.original_ty`
+            // which will hold the pointer to the right alloca which has the
+            // final ret value
+            bcx.alloca(fn_ty.ret.memory_ty(ccx), "sret_slot")
+        };
+        // Can return unsized value
+        let mut dest_val = LvalueRef::new_sized_ty(dest, sig.output(), Alignment::AbiAligned);
+        dest_val.ty = LvalueTy::Downcast {
+            adt_def: sig.output().ty_adt_def().unwrap(),
+            substs: substs,
+            variant_index: disr.0 as usize,
+        };
+        let mut llarg_idx = fn_ty.ret.is_indirect() as usize;
         let mut arg_idx = 0;
         for (i, arg_ty) in sig.inputs().iter().enumerate() {
-            let lldestptr = adt::trans_field_ptr(bcx, sig.output(), dest_val, Disr::from(disr), i);
-            let arg = &fcx.fn_ty.args[arg_idx];
+            let (lldestptr, _) = dest_val.trans_field_ptr(&bcx, i);
+            let arg = &fn_ty.args[arg_idx];
             arg_idx += 1;
-            let b = &bcx.build();
-            if common::type_is_fat_ptr(bcx.tcx(), arg_ty) {
-                let meta = &fcx.fn_ty.args[arg_idx];
+            if common::type_is_fat_ptr(bcx.ccx, arg_ty) {
+                let meta = &fn_ty.args[arg_idx];
                 arg_idx += 1;
-                arg.store_fn_arg(b, &mut llarg_idx, get_dataptr(bcx, lldestptr));
-                meta.store_fn_arg(b, &mut llarg_idx, get_meta(bcx, lldestptr));
+                arg.store_fn_arg(&bcx, &mut llarg_idx, get_dataptr(&bcx, lldestptr));
+                meta.store_fn_arg(&bcx, &mut llarg_idx, get_meta(&bcx, lldestptr));
             } else {
-                arg.store_fn_arg(b, &mut llarg_idx, lldestptr);
+                arg.store_fn_arg(&bcx, &mut llarg_idx, lldestptr);
             }
         }
-        adt::trans_set_discr(bcx, sig.output(), dest, disr);
-    }
+        adt::trans_set_discr(&bcx, sig.output(), dest, disr);
 
-    fcx.finish(bcx, DebugLoc::None);
+        if fn_ty.ret.is_indirect() {
+            bcx.ret_void();
+            return;
+        }
+
+        if let Some(cast_ty) = fn_ty.ret.cast {
+            bcx.ret(bcx.load(
+                bcx.pointercast(dest, cast_ty.ptr_to()),
+                Some(llalign_of_min(ccx, fn_ty.ret.ty))
+            ));
+        } else {
+            bcx.ret(bcx.load(dest, None))
+        }
+    } else {
+        bcx.ret_void();
+    }
 }
 
 pub fn llvm_linkage_by_name(name: &str) -> Option<Linkage> {
@@ -1143,7 +725,7 @@ pub fn set_link_section(ccx: &CrateContext,
 pub fn maybe_create_entry_wrapper(ccx: &CrateContext) {
     let (main_def_id, span) = match *ccx.sess().entry_fn.borrow() {
         Some((id, span)) => {
-            (ccx.tcx().map.local_def_id(id), span)
+            (ccx.tcx().hir.local_def_id(id), span)
         }
         None => return,
     };
@@ -1168,9 +750,7 @@ pub fn maybe_create_entry_wrapper(ccx: &CrateContext) {
 
     let et = ccx.sess().entry_type.get().unwrap();
     match et {
-        config::EntryMain => {
-            create_entry_fn(ccx, span, main_llfn, true);
-        }
+        config::EntryMain => create_entry_fn(ccx, span, main_llfn, true),
         config::EntryStart => create_entry_fn(ccx, span, main_llfn, false),
         config::EntryNone => {}    // Do nothing.
     }
@@ -1194,48 +774,23 @@ pub fn maybe_create_entry_wrapper(ccx: &CrateContext) {
         // `main` should respect same config for frame pointer elimination as rest of code
         attributes::set_frame_pointer_elimination(ccx, llfn);
 
-        let llbb = unsafe {
-            llvm::LLVMAppendBasicBlockInContext(ccx.llcx(), llfn, "top\0".as_ptr() as *const _)
+        let bld = Builder::new_block(ccx, llfn, "top");
+
+        debuginfo::gdb::insert_reference_to_gdb_debug_scripts_section_global(ccx, &bld);
+
+        let (start_fn, args) = if use_start_lang_item {
+            let start_def_id = ccx.tcx().require_lang_item(StartFnLangItem);
+            let empty_substs = ccx.tcx().intern_substs(&[]);
+            let start_fn = Callee::def(ccx, start_def_id, empty_substs).reify(ccx);
+            (start_fn, vec![bld.pointercast(rust_main, Type::i8p(ccx).ptr_to()), get_param(llfn, 0),
+                get_param(llfn, 1)])
+        } else {
+            debug!("using user-defined start fn");
+            (rust_main, vec![get_param(llfn, 0 as c_uint), get_param(llfn, 1 as c_uint)])
         };
-        let bld = ccx.raw_builder();
-        unsafe {
-            llvm::LLVMPositionBuilderAtEnd(bld, llbb);
 
-            debuginfo::gdb::insert_reference_to_gdb_debug_scripts_section_global(ccx);
-
-            let (start_fn, args) = if use_start_lang_item {
-                let start_def_id = match ccx.tcx().lang_items.require(StartFnLangItem) {
-                    Ok(id) => id,
-                    Err(s) => ccx.sess().fatal(&s)
-                };
-                let empty_substs = ccx.tcx().intern_substs(&[]);
-                let start_fn = Callee::def(ccx, start_def_id, empty_substs).reify(ccx);
-                let args = {
-                    let opaque_rust_main =
-                        llvm::LLVMBuildPointerCast(bld,
-                                                   rust_main,
-                                                   Type::i8p(ccx).to_ref(),
-                                                   "rust_main\0".as_ptr() as *const _);
-
-                    vec![opaque_rust_main, get_param(llfn, 0), get_param(llfn, 1)]
-                };
-                (start_fn, args)
-            } else {
-                debug!("using user-defined start fn");
-                let args = vec![get_param(llfn, 0 as c_uint), get_param(llfn, 1 as c_uint)];
-
-                (rust_main, args)
-            };
-
-            let result = llvm::LLVMRustBuildCall(bld,
-                                                 start_fn,
-                                                 args.as_ptr(),
-                                                 args.len() as c_uint,
-                                                 ptr::null_mut(),
-                                                 noname());
-
-            llvm::LLVMBuildRet(bld, result);
-        }
+        let result = bld.call(start_fn, &args, None);
+        bld.ret(result);
     }
 }
 
@@ -1260,8 +815,7 @@ fn write_metadata(cx: &SharedCrateContext,
             config::CrateTypeStaticlib |
             config::CrateTypeCdylib => MetadataKind::None,
 
-            config::CrateTypeRlib |
-            config::CrateTypeMetadata => MetadataKind::Uncompressed,
+            config::CrateTypeRlib => MetadataKind::Uncompressed,
 
             config::CrateTypeDylib |
             config::CrateTypeProcMacro => MetadataKind::Compressed,
@@ -1536,9 +1090,9 @@ pub fn find_exported_symbols(tcx: TyCtxt, reachable: NodeSet) -> NodeSet {
         //
         // As a result, if this id is an FFI item (foreign item) then we only
         // let it through if it's included statically.
-        match tcx.map.get(id) {
+        match tcx.hir.get(id) {
             hir_map::NodeForeignItem(..) => {
-                let def_id = tcx.map.local_def_id(id);
+                let def_id = tcx.hir.local_def_id(id);
                 tcx.sess.cstore.is_statically_included_foreign_item(def_id)
             }
 
@@ -1549,7 +1103,7 @@ pub fn find_exported_symbols(tcx: TyCtxt, reachable: NodeSet) -> NodeSet {
                 node: hir::ItemFn(..), .. }) |
             hir_map::NodeImplItem(&hir::ImplItem {
                 node: hir::ImplItemKind::Method(..), .. }) => {
-                let def_id = tcx.map.local_def_id(id);
+                let def_id = tcx.hir.local_def_id(id);
                 let generics = tcx.item_generics(def_id);
                 let attributes = tcx.get_attrs(def_id);
                 (generics.parent_types == 0 && generics.types.is_empty()) &&
@@ -1573,7 +1127,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     // entire contents of the krate. So if you push any subtasks of
     // `TransCrate`, you need to be careful to register "reads" of the
     // particular items that will be processed.
-    let krate = tcx.map.krate();
+    let krate = tcx.hir.krate();
 
     let ty::CrateAnalysis { export_map, reachable, name, .. } = analysis;
     let exported_symbols = find_exported_symbols(tcx, reachable);
@@ -1605,6 +1159,23 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         }),
     };
     let no_builtins = attr::contains_name(&krate.attrs, "no_builtins");
+
+    // Skip crate items and just output metadata in -Z no-trans mode.
+    if tcx.sess.opts.debugging_opts.no_trans ||
+       !tcx.sess.opts.output_types.should_trans() {
+        let empty_exported_symbols = ExportedSymbols::empty();
+        let linker_info = LinkerInfo::new(&shared_ccx, &empty_exported_symbols);
+        return CrateTranslation {
+            modules: vec![],
+            metadata_module: metadata_module,
+            link: link_meta,
+            metadata: metadata,
+            exported_symbols: empty_exported_symbols,
+            no_builtins: no_builtins,
+            linker_info: linker_info,
+            windows_subsystem: None,
+        };
+    }
 
     // Run the translation item collector and partition the collected items into
     // codegen units.
@@ -1641,22 +1212,6 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         .collect();
 
     assert_module_sources::assert_module_sources(tcx, &modules);
-
-    // Skip crate items and just output metadata in -Z no-trans mode.
-    if tcx.sess.opts.debugging_opts.no_trans ||
-       tcx.sess.crate_types.borrow().iter().all(|ct| ct == &config::CrateTypeMetadata) {
-        let linker_info = LinkerInfo::new(&shared_ccx, &ExportedSymbols::empty());
-        return CrateTranslation {
-            modules: modules,
-            metadata_module: metadata_module,
-            link: link_meta,
-            metadata: metadata,
-            exported_symbols: ExportedSymbols::empty(),
-            no_builtins: no_builtins,
-            linker_info: linker_info,
-            windows_subsystem: None,
-        };
-    }
 
     // Instantiate translation items without filling out definitions yet...
     for ccx in crate_context_list.iter_need_trans() {

@@ -148,8 +148,6 @@ impl SocketAddr {
     /// # Examples
     ///
     /// ```
-    /// #![feature(sockaddr_checker)]
-    ///
     /// use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     ///
     /// fn main() {
@@ -158,7 +156,7 @@ impl SocketAddr {
     ///     assert_eq!(socket.is_ipv6(), false);
     /// }
     /// ```
-    #[unstable(feature = "sockaddr_checker", issue = "36949")]
+    #[stable(feature = "sockaddr_checker", since = "1.16.0")]
     pub fn is_ipv4(&self) -> bool {
         match *self {
             SocketAddr::V4(_) => true,
@@ -172,8 +170,6 @@ impl SocketAddr {
     /// # Examples
     ///
     /// ```
-    /// #![feature(sockaddr_checker)]
-    ///
     /// use std::net::{IpAddr, Ipv6Addr, SocketAddr};
     ///
     /// fn main() {
@@ -183,7 +179,7 @@ impl SocketAddr {
     ///     assert_eq!(socket.is_ipv6(), true);
     /// }
     /// ```
-    #[unstable(feature = "sockaddr_checker", issue = "36949")]
+    #[stable(feature = "sockaddr_checker", since = "1.16.0")]
     pub fn is_ipv6(&self) -> bool {
         match *self {
             SocketAddr::V4(_) => false,
@@ -443,6 +439,20 @@ impl FromInner<c::sockaddr_in> for SocketAddrV4 {
 impl FromInner<c::sockaddr_in6> for SocketAddrV6 {
     fn from_inner(addr: c::sockaddr_in6) -> SocketAddrV6 {
         SocketAddrV6 { inner: addr }
+    }
+}
+
+#[stable(feature = "ip_from_ip", since = "1.16.0")]
+impl From<SocketAddrV4> for SocketAddr {
+    fn from(sock4: SocketAddrV4) -> SocketAddr {
+        SocketAddr::V4(sock4)
+    }
+}
+
+#[stable(feature = "ip_from_ip", since = "1.16.0")]
+impl From<SocketAddrV6> for SocketAddr {
+    fn from(sock6: SocketAddrV6) -> SocketAddr {
+        SocketAddr::V6(sock6)
     }
 }
 
@@ -746,6 +756,14 @@ impl<'a, T: ToSocketAddrs + ?Sized> ToSocketAddrs for &'a T {
     }
 }
 
+#[stable(feature = "string_to_socket_addrs", since = "1.16.0")]
+impl ToSocketAddrs for String {
+    type Iter = vec::IntoIter<SocketAddr>;
+    fn to_socket_addrs(&self) -> io::Result<vec::IntoIter<SocketAddr>> {
+        (&**self).to_socket_addrs()
+    }
+}
+
 #[cfg(all(test, not(target_os = "emscripten")))]
 mod tests {
     use net::*;
@@ -781,6 +799,18 @@ mod tests {
 
         let a = sa4(Ipv4Addr::new(127, 0, 0, 1), 23924);
         assert!(tsa("localhost:23924").unwrap().contains(&a));
+    }
+
+    #[test]
+    fn to_socket_addr_string() {
+        let a = sa4(Ipv4Addr::new(77, 88, 21, 11), 24352);
+        assert_eq!(Ok(vec![a]), tsa(&*format!("{}:{}", "77.88.21.11", "24352")));
+        assert_eq!(Ok(vec![a]), tsa(&format!("{}:{}", "77.88.21.11", "24352")));
+        assert_eq!(Ok(vec![a]), tsa(format!("{}:{}", "77.88.21.11", "24352")));
+
+        let s = format!("{}:{}", "77.88.21.11", "24352");
+        assert_eq!(Ok(vec![a]), tsa(s));
+        // s has been moved into the tsa call
     }
 
     // FIXME: figure out why this fails on openbsd and bitrig and fix it

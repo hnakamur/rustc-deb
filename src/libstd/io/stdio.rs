@@ -182,7 +182,7 @@ pub struct StdinLock<'a> {
 ///
 /// # fn foo() -> io::Result<String> {
 /// let mut buffer = String::new();
-/// try!(io::stdin().read_to_string(&mut buffer));
+/// io::stdin().read_to_string(&mut buffer)?;
 /// # Ok(buffer)
 /// # }
 /// ```
@@ -197,7 +197,7 @@ pub struct StdinLock<'a> {
 /// let stdin = io::stdin();
 /// let mut handle = stdin.lock();
 ///
-/// try!(handle.read_to_string(&mut buffer));
+/// handle.read_to_string(&mut buffer)?;
 /// # Ok(buffer)
 /// # }
 /// ```
@@ -239,7 +239,7 @@ impl Stdin {
     /// let stdin = io::stdin();
     /// let mut handle = stdin.lock();
     ///
-    /// try!(handle.read_to_string(&mut buffer));
+    /// handle.read_to_string(&mut buffer)?;
     /// # Ok(buffer)
     /// # }
     /// ```
@@ -282,6 +282,13 @@ impl Stdin {
     }
 }
 
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl fmt::Debug for Stdin {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("Stdin { .. }")
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl Read for Stdin {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -312,6 +319,13 @@ impl<'a> Read for StdinLock<'a> {
 impl<'a> BufRead for StdinLock<'a> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> { self.inner.fill_buf() }
     fn consume(&mut self, n: usize) { self.inner.consume(n) }
+}
+
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl<'a> fmt::Debug for StdinLock<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("StdinLock { .. }")
+    }
 }
 
 /// A handle to the global standard output stream of the current process.
@@ -360,7 +374,7 @@ pub struct StdoutLock<'a> {
 /// use std::io::{self, Write};
 ///
 /// # fn foo() -> io::Result<()> {
-/// try!(io::stdout().write(b"hello world"));
+/// io::stdout().write(b"hello world")?;
 ///
 /// # Ok(())
 /// # }
@@ -375,7 +389,7 @@ pub struct StdoutLock<'a> {
 /// let stdout = io::stdout();
 /// let mut handle = stdout.lock();
 ///
-/// try!(handle.write(b"hello world"));
+/// handle.write(b"hello world")?;
 ///
 /// # Ok(())
 /// # }
@@ -413,7 +427,7 @@ impl Stdout {
     /// let stdout = io::stdout();
     /// let mut handle = stdout.lock();
     ///
-    /// try!(handle.write(b"hello world"));
+    /// handle.write(b"hello world")?;
     ///
     /// # Ok(())
     /// # }
@@ -421,6 +435,13 @@ impl Stdout {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn lock(&self) -> StdoutLock {
         StdoutLock { inner: self.inner.lock().unwrap_or_else(|e| e.into_inner()) }
+    }
+}
+
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl fmt::Debug for Stdout {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("Stdout { .. }")
     }
 }
 
@@ -446,6 +467,13 @@ impl<'a> Write for StdoutLock<'a> {
     }
     fn flush(&mut self) -> io::Result<()> {
         self.inner.borrow_mut().flush()
+    }
+}
+
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl<'a> fmt::Debug for StdoutLock<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("StdoutLock { .. }")
     }
 }
 
@@ -482,7 +510,7 @@ pub struct StderrLock<'a> {
 /// use std::io::{self, Write};
 ///
 /// # fn foo() -> io::Result<()> {
-/// try!(io::stderr().write(b"hello world"));
+/// io::stderr().write(b"hello world")?;
 ///
 /// # Ok(())
 /// # }
@@ -497,7 +525,7 @@ pub struct StderrLock<'a> {
 /// let stderr = io::stderr();
 /// let mut handle = stderr.lock();
 ///
-/// try!(handle.write(b"hello world"));
+/// handle.write(b"hello world")?;
 ///
 /// # Ok(())
 /// # }
@@ -534,7 +562,7 @@ impl Stderr {
     ///     let stderr = io::stderr();
     ///     let mut handle = stderr.lock();
     ///
-    ///     try!(handle.write(b"hello world"));
+    ///     handle.write(b"hello world")?;
     ///
     ///     Ok(())
     /// }
@@ -542,6 +570,13 @@ impl Stderr {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn lock(&self) -> StderrLock {
         StderrLock { inner: self.inner.lock().unwrap_or_else(|e| e.into_inner()) }
+    }
+}
+
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl fmt::Debug for Stderr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("Stderr { .. }")
     }
 }
 
@@ -567,6 +602,13 @@ impl<'a> Write for StderrLock<'a> {
     }
     fn flush(&mut self) -> io::Result<()> {
         self.inner.borrow_mut().flush()
+    }
+}
+
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl<'a> fmt::Debug for StderrLock<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("StderrLock { .. }")
     }
 }
 

@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use super::gather_moves::{MoveData, MovePathIndex, LookupResult};
+use super::gather_moves::{HasMoveData, MoveData, MovePathIndex, LookupResult};
 use super::dataflow::{MaybeInitializedLvals, MaybeUninitializedLvals};
 use super::dataflow::{DataflowResults};
 use super::{drop_flag_effects_for_location, on_all_children_bits};
@@ -51,11 +51,13 @@ impl<'tcx> MirPass<'tcx> for ElaborateDrops {
                 param_env: param_env
             };
             let flow_inits =
-                super::do_dataflow(tcx, mir, id, &[], &env,
-                                   MaybeInitializedLvals::new(tcx, mir));
+                super::do_dataflow(tcx, mir, id, &[],
+                                   MaybeInitializedLvals::new(tcx, mir, &env),
+                                   |bd, p| &bd.move_data().move_paths[p]);
             let flow_uninits =
-                super::do_dataflow(tcx, mir, id, &[], &env,
-                                   MaybeUninitializedLvals::new(tcx, mir));
+                super::do_dataflow(tcx, mir, id, &[],
+                                   MaybeUninitializedLvals::new(tcx, mir, &env),
+                                   |bd, p| &bd.move_data().move_paths[p]);
 
             ElaborateDropsCtxt {
                 tcx: tcx,
@@ -707,9 +709,6 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
     fn open_drop<'a>(&mut self, c: &DropCtxt<'a, 'tcx>) -> BasicBlock {
         let ty = c.lvalue.ty(self.mir, self.tcx).to_ty(self.tcx);
         match ty.sty {
-            ty::TyAdt(def, substs) => {
-                self.open_drop_for_adt(c, def, substs)
-            }
             ty::TyClosure(def_id, substs) => {
                 let tys : Vec<_> = substs.upvar_tys(def_id, self.tcx).collect();
                 self.open_drop_for_tuple(c, &tys)
@@ -717,8 +716,11 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
             ty::TyTuple(tys) => {
                 self.open_drop_for_tuple(c, tys)
             }
-            ty::TyBox(ty) => {
-                self.open_drop_for_box(c, ty)
+            ty::TyAdt(def, _) if def.is_box() => {
+                self.open_drop_for_box(c, ty.boxed_ty())
+            }
+            ty::TyAdt(def, substs) => {
+                self.open_drop_for_adt(c, def, substs)
             }
             _ => bug!("open drop from non-ADT `{:?}`", ty)
         }
@@ -893,7 +895,7 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
 
         match ty.sty {
             ty::TyAdt(def, _) => {
-                if def.has_dtor() {
+                if def.has_dtor() && !def.is_box() {
                     self.tcx.sess.span_warn(
                         c.source_info.span,
                         &format!("dataflow bug??? moving out of type with dtor {:?}",

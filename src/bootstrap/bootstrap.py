@@ -72,7 +72,7 @@ def download(path, url, probably_big, verbose):
             option = "-#"
         else:
             option = "-s"
-        run(["curl", option, "-Sf", "-o", path, url], verbose=verbose)
+        run(["curl", option, "--retry", "3", "-Sf", "-o", path, url], verbose=verbose)
 
 
 def verify(path, sha_path, verbose):
@@ -290,6 +290,8 @@ class RustBuild(object):
         env["DYLD_LIBRARY_PATH"] = os.path.join(self.bin_root(), "lib")
         env["PATH"] = os.path.join(self.bin_root(), "bin") + \
                       os.pathsep + env["PATH"]
+        if not os.path.isfile(self.cargo()):
+            raise Exception("no cargo executable found at `%s`" % self.cargo())
         args = [self.cargo(), "build", "--manifest-path",
                 os.path.join(self.rust_root, "src/bootstrap/Cargo.toml")]
         if self.use_vendored_sources:
@@ -436,14 +438,14 @@ def main():
     rb.use_vendored_sources = '\nvendor = true' in rb.config_toml or \
                               'CFG_ENABLE_VENDOR' in rb.config_mk
 
-    if 'SUDO_USER' in os.environ:
-        if os.environ['USER'] != os.environ['SUDO_USER']:
+    if 'SUDO_USER' in os.environ and not rb.use_vendored_sources:
+        if os.environ.get('USER') != os.environ['SUDO_USER']:
             rb.use_vendored_sources = True
             print('info: looks like you are running this command under `sudo`')
             print('      and so in order to preserve your $HOME this will now')
             print('      use vendored sources by default. Note that if this')
             print('      does not work you should run a normal build first')
-            print('      before running a command like `sudo make intall`')
+            print('      before running a command like `sudo make install`')
 
     if rb.use_vendored_sources:
         if not os.path.exists('.cargo'):

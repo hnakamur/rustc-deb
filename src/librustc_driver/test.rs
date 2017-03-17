@@ -38,6 +38,7 @@ use errors::{Level, DiagnosticBuilder};
 use syntax::feature_gate::UnstableFeatures;
 use syntax::symbol::Symbol;
 use syntax_pos::DUMMY_SP;
+use arena::DroplessArena;
 
 use rustc::hir;
 
@@ -78,9 +79,9 @@ fn remove_message(e: &mut ExpectErrorEmitter, msg: &str, lvl: Level) {
 
 impl Emitter for ExpectErrorEmitter {
     fn emit(&mut self, db: &DiagnosticBuilder) {
-        remove_message(self, &db.message, db.level);
+        remove_message(self, &db.message(), db.level);
         for child in &db.children {
-            remove_message(self, &child.message, child.level);
+            remove_message(self, &child.message(), child.level);
         }
     }
 }
@@ -128,27 +129,27 @@ fn test_env<F>(source_string: &str,
     };
     let _ignore = dep_graph.in_ignore();
 
-    let arenas = ty::CtxtArenas::new();
-    let ast_map = hir_map::map_crate(&mut hir_forest, defs);
+    let arena = DroplessArena::new();
+    let arenas = ty::GlobalArenas::new();
+    let hir_map = hir_map::map_crate(&mut hir_forest, defs);
 
     // run just enough stuff to build a tcx:
-    let lang_items = lang_items::collect_language_items(&sess, &ast_map);
-    let named_region_map = resolve_lifetime::krate(&sess, &ast_map);
-    let region_map = region::resolve_crate(&sess, &ast_map);
-    let index = stability::Index::new(&ast_map);
+    let lang_items = lang_items::collect_language_items(&sess, &hir_map);
+    let named_region_map = resolve_lifetime::krate(&sess, &hir_map);
+    let region_map = region::resolve_crate(&sess, &hir_map);
+    let index = stability::Index::new(&hir_map);
     TyCtxt::create_and_enter(&sess,
                              &arenas,
-                             resolutions.trait_map,
+                             &arena,
+                             resolutions,
                              named_region_map.unwrap(),
-                             ast_map,
-                             resolutions.freevars,
-                             resolutions.maybe_unused_trait_imports,
+                             hir_map,
                              region_map,
                              lang_items,
                              index,
                              "test_crate",
                              |tcx| {
-        tcx.infer_ctxt(None, None, Reveal::NotSpecializable).enter(|infcx| {
+        tcx.infer_ctxt((), Reveal::NotSpecializable).enter(|infcx| {
 
             body(Env { infcx: &infcx });
             let free_regions = FreeRegionMap::new();
@@ -196,7 +197,7 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
 
     #[allow(dead_code)] // this seems like it could be useful, even if we don't use it now
     pub fn lookup_item(&self, names: &[String]) -> ast::NodeId {
-        return match search_mod(self, &self.infcx.tcx.map.krate().module, 0, names) {
+        return match search_mod(self, &self.infcx.tcx.hir.krate().module, 0, names) {
             Some(id) => id,
             None => {
                 panic!("no item found: `{}`", names.join("::"));
@@ -210,7 +211,7 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
                       -> Option<ast::NodeId> {
             assert!(idx < names.len());
             for item in &m.item_ids {
-                let item = this.infcx.tcx.map.expect_item(item.id);
+                let item = this.infcx.tcx.hir.expect_item(item.id);
                 if item.name.to_string() == names[idx] {
                     return search(this, item, idx + 1, names);
                 }
@@ -804,10 +805,9 @@ fn walk_ty() {
         let uint_ty = tcx.types.usize;
         let tup1_ty = tcx.intern_tup(&[int_ty, uint_ty, int_ty, uint_ty]);
         let tup2_ty = tcx.intern_tup(&[tup1_ty, tup1_ty, uint_ty]);
-        let uniq_ty = tcx.mk_box(tup2_ty);
-        let walked: Vec<_> = uniq_ty.walk().collect();
+        let walked: Vec<_> = tup2_ty.walk().collect();
         assert_eq!(walked,
-                   [uniq_ty, tup2_ty, tup1_ty, int_ty, uint_ty, int_ty, uint_ty, tup1_ty, int_ty,
+                   [tup2_ty, tup1_ty, int_ty, uint_ty, int_ty, uint_ty, tup1_ty, int_ty,
                     uint_ty, int_ty, uint_ty, uint_ty]);
     })
 }
@@ -820,12 +820,10 @@ fn walk_ty_skip_subtree() {
         let uint_ty = tcx.types.usize;
         let tup1_ty = tcx.intern_tup(&[int_ty, uint_ty, int_ty, uint_ty]);
         let tup2_ty = tcx.intern_tup(&[tup1_ty, tup1_ty, uint_ty]);
-        let uniq_ty = tcx.mk_box(tup2_ty);
 
         // types we expect to see (in order), plus a boolean saying
         // whether to skip the subtree.
-        let mut expected = vec![(uniq_ty, false),
-                                (tup2_ty, false),
+        let mut expected = vec![(tup2_ty, false),
                                 (tup1_ty, false),
                                 (int_ty, false),
                                 (uint_ty, false),
@@ -835,7 +833,7 @@ fn walk_ty_skip_subtree() {
                                 (uint_ty, false)];
         expected.reverse();
 
-        let mut walker = uniq_ty.walk();
+        let mut walker = tup2_ty.walk();
         while let Some(t) = walker.next() {
             debug!("walked to {:?}", t);
             let (expected_ty, skip) = expected.pop().unwrap();

@@ -216,7 +216,22 @@ pub use self::local::{LocalKey, LocalKeyState};
 
 /// Thread configuration. Provides detailed control over the properties
 /// and behavior of new threads.
+///
+/// # Examples
+///
+/// ```
+/// use std::thread;
+///
+/// let builder = thread::Builder::new();
+///
+/// let handler = builder.spawn(|| {
+///     // thread code
+/// }).unwrap();
+///
+/// handler.join().unwrap();
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
+#[derive(Debug)]
 pub struct Builder {
     // A name for the thread-to-be, for identification in panic messages
     name: Option<String>,
@@ -227,6 +242,22 @@ pub struct Builder {
 impl Builder {
     /// Generates the base configuration for spawning a thread, from which
     /// configuration methods can be chained.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::thread;
+    ///
+    /// let builder = thread::Builder::new()
+    ///                               .name("foo".into())
+    ///                               .stack_size(10);
+    ///
+    /// let handler = builder.spawn(|| {
+    ///     // thread code
+    /// }).unwrap();
+    ///
+    /// handler.join().unwrap();
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new() -> Builder {
         Builder {
@@ -240,7 +271,7 @@ impl Builder {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
     /// use std::thread;
     ///
     /// let builder = thread::Builder::new()
@@ -259,6 +290,14 @@ impl Builder {
     }
 
     /// Sets the size of the stack for the new thread.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::thread;
+    ///
+    /// let builder = thread::Builder::new().stack_size(10);
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn stack_size(mut self, size: usize) -> Builder {
         self.stack_size = Some(size);
@@ -274,9 +313,26 @@ impl Builder {
     ///
     /// # Errors
     ///
-    /// Unlike the `spawn` free function, this method yields an
-    /// `io::Result` to capture any failure to create the thread at
+    /// Unlike the [`spawn`] free function, this method yields an
+    /// [`io::Result`] to capture any failure to create the thread at
     /// the OS level.
+    ///
+    /// [`spawn`]: ../../std/thread/fn.spawn.html
+    /// [`io::Result`]: ../../std/io/type.Result.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::thread;
+    ///
+    /// let builder = thread::Builder::new();
+    ///
+    /// let handler = builder.spawn(|| {
+    ///     // thread code
+    /// }).unwrap();
+    ///
+    /// handler.join().unwrap();
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn spawn<F, T>(self, f: F) -> io::Result<JoinHandle<T>> where
         F: FnOnce() -> T, F: Send + 'static, T: Send + 'static
@@ -317,20 +373,38 @@ impl Builder {
 // Free functions
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Spawns a new thread, returning a `JoinHandle` for it.
+/// Spawns a new thread, returning a [`JoinHandle`] for it.
 ///
 /// The join handle will implicitly *detach* the child thread upon being
 /// dropped. In this case, the child thread may outlive the parent (unless
 /// the parent thread is the main thread; the whole process is terminated when
-/// the main thread finishes.) Additionally, the join handle provides a `join`
+/// the main thread finishes). Additionally, the join handle provides a [`join`]
 /// method that can be used to join the child thread. If the child thread
-/// panics, `join` will return an `Err` containing the argument given to
-/// `panic`.
+/// panics, [`join`] will return an [`Err`] containing the argument given to
+/// [`panic`].
 ///
 /// # Panics
 ///
-/// Panics if the OS fails to create a thread; use `Builder::spawn`
+/// Panics if the OS fails to create a thread; use [`Builder::spawn`]
 /// to recover from such errors.
+///
+/// [`JoinHandle`]: ../../std/thread/struct.JoinHandle.html
+/// [`join`]: ../../std/thread/struct.JoinHandle.html#method.join
+/// [`Err`]: ../../std/result/enum.Result.html#variant.Err
+/// [`panic`]: ../../std/macro.panic.html
+/// [`Builder::spawn`]: ../../std/thread/struct.Builder.html#method.spawn
+///
+/// # Examples
+///
+/// ```
+/// use std::thread;
+///
+/// let handler = thread::spawn(|| {
+///     // thread code
+/// });
+///
+/// handler.join().unwrap();
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn spawn<F, T>(f: F) -> JoinHandle<T> where
     F: FnOnce() -> T, F: Send + 'static, T: Send + 'static
@@ -340,7 +414,7 @@ pub fn spawn<F, T>(f: F) -> JoinHandle<T> where
 
 /// Gets a handle to the thread that invokes it.
 ///
-/// #Examples
+/// # Examples
 ///
 /// Getting a handle to the current thread with `thread::current()`:
 ///
@@ -365,6 +439,14 @@ pub fn current() -> Thread {
 }
 
 /// Cooperatively gives up a timeslice to the OS scheduler.
+///
+/// # Examples
+///
+/// ```
+/// use std::thread;
+///
+/// thread::yield_now();
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn yield_now() {
     imp::Thread::yield_now()
@@ -374,7 +456,7 @@ pub fn yield_now() {
 ///
 /// # Examples
 ///
-/// ```rust,should_panic
+/// ```should_panic
 /// use std::thread;
 ///
 /// struct SomeStruct;
@@ -409,9 +491,21 @@ pub fn panicking() -> bool {
 /// Puts the current thread to sleep for the specified amount of time.
 ///
 /// The thread may sleep longer than the duration specified due to scheduling
-/// specifics or platform-dependent functionality. Note that on unix platforms
-/// this function will not return early due to a signal being received or a
-/// spurious wakeup.
+/// specifics or platform-dependent functionality.
+///
+/// # Platform behavior
+///
+/// On Unix platforms this function will not return early due to a
+/// signal being received or a spurious wakeup.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::thread;
+///
+/// // Let's sleep for 2 seconds:
+/// thread::sleep_ms(2000);
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_deprecated(since = "1.6.0", reason = "replaced by `std::thread::sleep`")]
 pub fn sleep_ms(ms: u32) {
@@ -432,7 +526,7 @@ pub fn sleep_ms(ms: u32) {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```no_run
 /// use std::{thread, time};
 ///
 /// let ten_millis = time::Duration::from_millis(10);
@@ -557,6 +651,23 @@ pub fn park_timeout(dur: Duration) {
 /// A `ThreadId` is an opaque object that has a unique value for each thread
 /// that creates one. `ThreadId`s do not correspond to a thread's system-
 /// designated identifier.
+///
+/// # Examples
+///
+/// ```
+/// #![feature(thread_id)]
+///
+/// use std::thread;
+///
+/// let handler = thread::Builder::new()
+///     .spawn(|| {
+///         let thread = thread::current();
+///         let thread_id = thread.id();
+///     })
+///     .unwrap();
+///
+/// handler.join().unwrap();
+/// ```
 #[unstable(feature = "thread_id", issue = "21507")]
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub struct ThreadId(u64);
@@ -587,6 +698,13 @@ impl ThreadId {
     }
 }
 
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl fmt::Debug for ThreadId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("ThreadId { .. }")
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Thread
 ////////////////////////////////////////////////////////////////////////////////
@@ -602,6 +720,22 @@ struct Inner {
 #[derive(Clone)]
 #[stable(feature = "rust1", since = "1.0.0")]
 /// A handle to a thread.
+///
+/// # Examples
+///
+/// ```
+/// use std::thread;
+///
+/// let handler = thread::Builder::new()
+///     .name("foo".into())
+///     .spawn(|| {
+///         let thread = thread::current();
+///         println!("thread name: {}", thread.name().unwrap());
+///     })
+///     .unwrap();
+///
+/// handler.join().unwrap();
+/// ```
 pub struct Thread {
     inner: Arc<Inner>,
 }
@@ -625,6 +759,21 @@ impl Thread {
     /// Atomically makes the handle's token available if it is not already.
     ///
     /// See the module doc for more detail.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::thread;
+    ///
+    /// let handler = thread::Builder::new()
+    ///     .spawn(|| {
+    ///         let thread = thread::current();
+    ///         thread.unpark();
+    ///     })
+    ///     .unwrap();
+    ///
+    /// handler.join().unwrap();
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn unpark(&self) {
         let mut guard = self.inner.lock.lock().unwrap();
@@ -635,6 +784,23 @@ impl Thread {
     }
 
     /// Gets the thread's unique identifier.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(thread_id)]
+    ///
+    /// use std::thread;
+    ///
+    /// let handler = thread::Builder::new()
+    ///     .spawn(|| {
+    ///         let thread = thread::current();
+    ///         println!("thread id: {:?}", thread.id());
+    ///     })
+    ///     .unwrap();
+    ///
+    /// handler.join().unwrap();
+    /// ```
     #[unstable(feature = "thread_id", issue = "21507")]
     pub fn id(&self) -> ThreadId {
         self.inner.id
@@ -741,7 +907,7 @@ impl<T> JoinInner<T> {
 ///
 /// A `JoinHandle` *detaches* the child thread when it is dropped.
 ///
-/// Due to platform restrictions, it is not possible to `Clone` this
+/// Due to platform restrictions, it is not possible to [`Clone`] this
 /// handle: the ability to join a child thread is a uniquely-owned
 /// permission.
 ///
@@ -752,7 +918,7 @@ impl<T> JoinInner<T> {
 ///
 /// Creation from [`thread::spawn`]:
 ///
-/// ```rust
+/// ```
 /// use std::thread;
 ///
 /// let join_handle: thread::JoinHandle<_> = thread::spawn(|| {
@@ -762,7 +928,7 @@ impl<T> JoinInner<T> {
 ///
 /// Creation from [`thread::Builder::spawn`]:
 ///
-/// ```rust
+/// ```
 /// use std::thread;
 ///
 /// let builder = thread::Builder::new();
@@ -772,13 +938,31 @@ impl<T> JoinInner<T> {
 /// }).unwrap();
 /// ```
 ///
+/// [`Clone`]: ../../std/clone/trait.Clone.html
 /// [`thread::spawn`]: fn.spawn.html
 /// [`thread::Builder::spawn`]: struct.Builder.html#method.spawn
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct JoinHandle<T>(JoinInner<T>);
 
 impl<T> JoinHandle<T> {
-    /// Extracts a handle to the underlying thread
+    /// Extracts a handle to the underlying thread.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(thread_id)]
+    ///
+    /// use std::thread;
+    ///
+    /// let builder = thread::Builder::new();
+    ///
+    /// let join_handle: thread::JoinHandle<_> = builder.spawn(|| {
+    ///     // some work here
+    /// }).unwrap();
+    ///
+    /// let thread = join_handle.thread();
+    /// println!("thread id: {:?}", thread.id());
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn thread(&self) -> &Thread {
         &self.0.thread
@@ -786,8 +970,24 @@ impl<T> JoinHandle<T> {
 
     /// Waits for the associated thread to finish.
     ///
-    /// If the child thread panics, `Err` is returned with the parameter given
-    /// to `panic`.
+    /// If the child thread panics, [`Err`] is returned with the parameter given
+    /// to [`panic`].
+    ///
+    /// [`Err`]: ../../std/result/enum.Result.html#variant.Err
+    /// [`panic`]: ../../std/macro.panic.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::thread;
+    ///
+    /// let builder = thread::Builder::new();
+    ///
+    /// let join_handle: thread::JoinHandle<_> = builder.spawn(|| {
+    ///     // some work here
+    /// }).unwrap();
+    /// join_handle.join().expect("Couldn't join on the associated thread");
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn join(mut self) -> Result<T> {
         self.0.join()
@@ -800,6 +1000,13 @@ impl<T> AsInner<imp::Thread> for JoinHandle<T> {
 
 impl<T> IntoInner<imp::Thread> for JoinHandle<T> {
     fn into_inner(self) -> imp::Thread { self.0.native.unwrap() }
+}
+
+#[stable(feature = "std_debug", since = "1.15.0")]
+impl<T> fmt::Debug for JoinHandle<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("JoinHandle { .. }")
+    }
 }
 
 fn _assert_sync_and_send() {

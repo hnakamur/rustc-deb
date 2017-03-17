@@ -16,7 +16,7 @@
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/",
        html_playground_url = "https://play.rust-lang.org/")]
-#![cfg_attr(not(stage0), deny(warnings))]
+#![deny(warnings)]
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
@@ -33,7 +33,6 @@ extern crate getopts;
 extern crate libc;
 extern crate rustc;
 extern crate rustc_const_eval;
-extern crate rustc_const_math;
 extern crate rustc_data_structures;
 extern crate rustc_trans;
 extern crate rustc_driver;
@@ -259,20 +258,22 @@ pub fn main_args(args: &[String]) -> isize {
     }
 
     let external_html = match ExternalHtml::load(
-            &matches.opt_strs("html-in-header"), &matches.opt_strs("html-before-content"),
+            &matches.opt_strs("html-in-header"),
+            &matches.opt_strs("html-before-content"),
             &matches.opt_strs("html-after-content")) {
         Some(eh) => eh,
-        None => return 3
+        None => return 3,
     };
     let crate_name = matches.opt_str("crate-name");
     let playground_url = matches.opt_str("playground-url");
+    let maybe_sysroot = matches.opt_str("sysroot").map(PathBuf::from);
 
     match (should_test, markdown_input) {
         (true, true) => {
-            return markdown::test(input, cfgs, libs, externs, test_args)
+            return markdown::test(input, cfgs, libs, externs, test_args, maybe_sysroot)
         }
         (true, false) => {
-            return test::run(input, cfgs, libs, externs, test_args, crate_name)
+            return test::run(input, cfgs, libs, externs, test_args, crate_name, maybe_sysroot)
         }
         (false, true) => return markdown::render(input,
                                                  output.unwrap_or(PathBuf::from("doc")),

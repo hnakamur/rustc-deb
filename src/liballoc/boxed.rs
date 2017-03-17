@@ -103,6 +103,7 @@ pub struct ExchangeHeapSingleton {
 ///
 /// See the [module-level documentation](../../std/boxed/index.html) for more.
 #[lang = "owned_box"]
+#[fundamental]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Box<T: ?Sized>(Unique<T>);
 
@@ -289,6 +290,14 @@ impl<T: ?Sized> Box<T> {
     #[inline]
     pub fn into_raw(b: Box<T>) -> *mut T {
         unsafe { mem::transmute(b) }
+    }
+}
+
+#[cfg(not(stage0))]
+#[stable(feature = "rust1", since = "1.0.0")]
+unsafe impl<#[may_dangle] T: ?Sized> Drop for Box<T> {
+    fn drop(&mut self) {
+        // FIXME: Do nothing, drop is currently performed by compiler.
     }
 }
 
@@ -587,7 +596,7 @@ impl<I: FusedIterator + ?Sized> FusedIterator for Box<I> {}
 /// ```
 #[rustc_paren_sugar]
 #[unstable(feature = "fnbox",
-           reason = "will be deprecated if and when Box<FnOnce> becomes usable", issue = "28796")]
+           reason = "will be deprecated if and when `Box<FnOnce>` becomes usable", issue = "28796")]
 pub trait FnBox<A> {
     type Output;
 
@@ -595,7 +604,7 @@ pub trait FnBox<A> {
 }
 
 #[unstable(feature = "fnbox",
-           reason = "will be deprecated if and when Box<FnOnce> becomes usable", issue = "28796")]
+           reason = "will be deprecated if and when `Box<FnOnce>` becomes usable", issue = "28796")]
 impl<A, F> FnBox<A> for F
     where F: FnOnce<A>
 {
@@ -607,7 +616,7 @@ impl<A, F> FnBox<A> for F
 }
 
 #[unstable(feature = "fnbox",
-           reason = "will be deprecated if and when Box<FnOnce> becomes usable", issue = "28796")]
+           reason = "will be deprecated if and when `Box<FnOnce>` becomes usable", issue = "28796")]
 impl<'a, A, R> FnOnce<A> for Box<FnBox<A, Output = R> + 'a> {
     type Output = R;
 
@@ -617,7 +626,7 @@ impl<'a, A, R> FnOnce<A> for Box<FnBox<A, Output = R> + 'a> {
 }
 
 #[unstable(feature = "fnbox",
-           reason = "will be deprecated if and when Box<FnOnce> becomes usable", issue = "28796")]
+           reason = "will be deprecated if and when `Box<FnOnce>` becomes usable", issue = "28796")]
 impl<'a, A, R> FnOnce<A> for Box<FnBox<A, Output = R> + Send + 'a> {
     type Output = R;
 

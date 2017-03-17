@@ -26,7 +26,7 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![cfg_attr(not(stage0), deny(warnings))]
+#![deny(warnings)]
 
 #![cfg_attr(test, feature(test))]
 #![feature(box_patterns)]
@@ -37,7 +37,6 @@
 #![feature(slice_patterns)]
 #![feature(staged_api)]
 
-#[macro_use]
 extern crate syntax;
 #[macro_use]
 extern crate rustc;
@@ -46,6 +45,8 @@ extern crate log;
 extern crate rustc_back;
 extern crate rustc_const_eval;
 extern crate syntax_pos;
+
+extern crate rustc_i128;
 
 pub use rustc::lint;
 pub use rustc::middle;
@@ -163,6 +164,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                     DEAD_CODE,
                     UNUSED_MUT,
                     UNREACHABLE_CODE,
+                    UNREACHABLE_PATTERNS,
                     UNUSED_MUST_USE,
                     UNUSED_UNSAFE,
                     PATH_STATEMENTS,

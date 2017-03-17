@@ -71,6 +71,12 @@ declare_lint! {
 }
 
 declare_lint! {
+    pub UNREACHABLE_PATTERNS,
+    Warn,
+    "detects unreachable patterns"
+}
+
+declare_lint! {
     pub WARNINGS,
     Warn,
     "mass-change the level for lints which produce warnings"
@@ -200,7 +206,7 @@ declare_lint! {
 
 declare_lint! {
     pub EXTRA_REQUIREMENT_IN_IMPL,
-    Warn,
+    Deny,
     "detects extra requirements in impls that were erroneously allowed"
 }
 
@@ -239,6 +245,7 @@ impl LintPass for HardwiredLints {
             UNUSED_ASSIGNMENTS,
             DEAD_CODE,
             UNREACHABLE_CODE,
+            UNREACHABLE_PATTERNS,
             WARNINGS,
             UNUSED_FEATURES,
             STABLE_FEATURES,

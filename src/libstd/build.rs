@@ -26,7 +26,7 @@ fn main() {
     let target = env::var("TARGET").expect("TARGET was not set");
     let host = env::var("HOST").expect("HOST was not set");
     if cfg!(feature = "backtrace") && !target.contains("apple") && !target.contains("msvc") &&
-        !target.contains("emscripten") && !target.contains("fuchsia") {
+        !target.contains("emscripten") && !target.contains("fuchsia") && !target.contains("redox") {
         build_libbacktrace(&host, &target);
     }
 
@@ -87,8 +87,9 @@ fn build_libbacktrace(host: &str, target: &str) {
     let compiler = gcc::Config::new().get_compiler();
     // only msvc returns None for ar so unwrap is okay
     let ar = build_helper::cc2ar(compiler.path(), target).unwrap();
-    let cflags = compiler.args().iter().map(|s| s.to_str().unwrap())
-                         .collect::<Vec<_>>().join(" ");
+    let mut cflags = compiler.args().iter().map(|s| s.to_str().unwrap())
+                             .collect::<Vec<_>>().join(" ");
+    cflags.push_str(" -fvisibility=hidden");
     run(Command::new("sh")
                 .current_dir(&build_dir)
                 .arg(src_dir.join("configure").to_str().unwrap()

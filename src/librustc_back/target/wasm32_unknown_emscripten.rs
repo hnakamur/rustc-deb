@@ -9,11 +9,12 @@
 // except according to those terms.
 
 use super::{Target, TargetOptions};
+use super::emscripten_base::{cmd};
 
 pub fn target() -> Result<Target, String> {
     let opts = TargetOptions {
-        linker: "emcc".to_string(),
-        ar: "emar".to_string(),
+        linker: cmd("emcc"),
+        ar: cmd("emar"),
 
         dynamic_linking: false,
         executables: true,
@@ -26,6 +27,7 @@ pub fn target() -> Result<Target, String> {
         max_atomic_width: Some(32),
         post_link_args: vec!["-s".to_string(), "BINARYEN=1".to_string(),
                              "-s".to_string(), "ERROR_ON_UNDEFINED_SYMBOLS=1".to_string()],
+        target_family: Some("unix".to_string()),
         .. Default::default()
     };
     Ok(Target {

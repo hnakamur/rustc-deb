@@ -12,14 +12,16 @@ use llvm::{self, ValueRef};
 use rustc::ty::{self, Ty};
 use rustc::ty::cast::{CastTy, IntTy};
 use rustc::ty::layout::Layout;
+use rustc::mir::tcx::LvalueTy;
 use rustc::mir;
+use middle::lang_items::ExchangeMallocFnLangItem;
 
 use asm;
 use base;
+use builder::Builder;
 use callee::Callee;
-use common::{self, val_ty, C_bool, C_null, C_uint, BlockAndBuilder, Result};
+use common::{self, val_ty, C_bool, C_null, C_uint};
 use common::{C_integral};
-use debuginfo::DebugLoc;
 use adt;
 use machine;
 use type_::Type;
@@ -31,15 +33,14 @@ use Disr;
 use super::MirContext;
 use super::constant::const_scalar_checked_binop;
 use super::operand::{OperandRef, OperandValue};
-use super::lvalue::{LvalueRef};
+use super::lvalue::LvalueRef;
 
-impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
+impl<'a, 'tcx> MirContext<'a, 'tcx> {
     pub fn trans_rvalue(&mut self,
-                        bcx: BlockAndBuilder<'bcx, 'tcx>,
+                        bcx: Builder<'a, 'tcx>,
                         dest: LvalueRef<'tcx>,
-                        rvalue: &mir::Rvalue<'tcx>,
-                        debug_loc: DebugLoc)
-                        -> BlockAndBuilder<'bcx, 'tcx>
+                        rvalue: &mir::Rvalue<'tcx>)
+                        -> Builder<'a, 'tcx>
     {
         debug!("trans_rvalue(dest.llval={:?}, rvalue={:?})",
                Value(dest.llval), rvalue);
@@ -49,18 +50,18 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                let tr_operand = self.trans_operand(&bcx, operand);
                // FIXME: consider not copying constants through stack. (fixable by translating
                // constants into OperandValue::Ref, why don’t we do that yet if we don’t?)
-               self.store_operand(&bcx, dest.llval, tr_operand);
+               self.store_operand(&bcx, dest.llval, dest.alignment.to_align(), tr_operand);
                bcx
            }
 
             mir::Rvalue::Cast(mir::CastKind::Unsize, ref source, cast_ty) => {
-                let cast_ty = bcx.monomorphize(&cast_ty);
+                let cast_ty = self.monomorphize(&cast_ty);
 
-                if common::type_is_fat_ptr(bcx.tcx(), cast_ty) {
+                if common::type_is_fat_ptr(bcx.ccx, cast_ty) {
                     // into-coerce of a thin pointer to a fat pointer - just
                     // use the operand path.
-                    let (bcx, temp) = self.trans_rvalue_operand(bcx, rvalue, debug_loc);
-                    self.store_operand(&bcx, dest.llval, temp);
+                    let (bcx, temp) = self.trans_rvalue_operand(bcx, rvalue);
+                    self.store_operand(&bcx, dest.llval, dest.alignment.to_align(), temp);
                     return bcx;
                 }
 
@@ -70,80 +71,74 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 // so the (generic) MIR may not be able to expand it.
                 let operand = self.trans_operand(&bcx, source);
                 let operand = operand.pack_if_pair(&bcx);
-                bcx.with_block(|bcx| {
-                    match operand.val {
-                        OperandValue::Pair(..) => bug!(),
-                        OperandValue::Immediate(llval) => {
-                            // unsize from an immediate structure. We don't
-                            // really need a temporary alloca here, but
-                            // avoiding it would require us to have
-                            // `coerce_unsized_into` use extractvalue to
-                            // index into the struct, and this case isn't
-                            // important enough for it.
-                            debug!("trans_rvalue: creating ugly alloca");
-                            let lltemp = base::alloc_ty(bcx, operand.ty, "__unsize_temp");
-                            base::store_ty(bcx, llval, lltemp, operand.ty);
-                            base::coerce_unsized_into(bcx,
-                                                      lltemp, operand.ty,
-                                                      dest.llval, cast_ty);
-                        }
-                        OperandValue::Ref(llref) => {
-                            base::coerce_unsized_into(bcx,
-                                                      llref, operand.ty,
-                                                      dest.llval, cast_ty);
-                        }
+                let llref = match operand.val {
+                    OperandValue::Pair(..) => bug!(),
+                    OperandValue::Immediate(llval) => {
+                        // unsize from an immediate structure. We don't
+                        // really need a temporary alloca here, but
+                        // avoiding it would require us to have
+                        // `coerce_unsized_into` use extractvalue to
+                        // index into the struct, and this case isn't
+                        // important enough for it.
+                        debug!("trans_rvalue: creating ugly alloca");
+                        let scratch = LvalueRef::alloca(&bcx, operand.ty, "__unsize_temp");
+                        base::store_ty(&bcx, llval, scratch.llval, scratch.alignment, operand.ty);
+                        scratch
                     }
-                });
+                    OperandValue::Ref(llref, align) => {
+                        LvalueRef::new_sized_ty(llref, operand.ty, align)
+                    }
+                };
+                base::coerce_unsized_into(&bcx, &llref, &dest);
                 bcx
             }
 
             mir::Rvalue::Repeat(ref elem, ref count) => {
                 let tr_elem = self.trans_operand(&bcx, elem);
                 let size = count.value.as_u64(bcx.tcx().sess.target.uint_type);
-                let size = C_uint(bcx.ccx(), size);
-                let base = base::get_dataptr_builder(&bcx, dest.llval);
-                let bcx = bcx.map_block(|block| {
-                    tvec::slice_for_each(block, base, tr_elem.ty, size, |block, llslot| {
-                        self.store_operand_direct(block, llslot, tr_elem);
-                        block
-                    })
-                });
-                bcx
+                let size = C_uint(bcx.ccx, size);
+                let base = base::get_dataptr(&bcx, dest.llval);
+                tvec::slice_for_each(&bcx, base, tr_elem.ty, size, |bcx, llslot| {
+                    self.store_operand(bcx, llslot, dest.alignment.to_align(), tr_elem);
+                })
             }
 
             mir::Rvalue::Aggregate(ref kind, ref operands) => {
                 match *kind {
-                    mir::AggregateKind::Adt(adt_def, variant_index, _, active_field_index) => {
+                    mir::AggregateKind::Adt(adt_def, variant_index, substs, active_field_index) => {
                         let disr = Disr::from(adt_def.variants[variant_index].disr_val);
-                        bcx.with_block(|bcx| {
-                            adt::trans_set_discr(bcx,
-                                dest.ty.to_ty(bcx.tcx()), dest.llval, Disr::from(disr));
-                        });
+                        let dest_ty = dest.ty.to_ty(bcx.tcx());
+                        adt::trans_set_discr(&bcx, dest_ty, dest.llval, Disr::from(disr));
                         for (i, operand) in operands.iter().enumerate() {
                             let op = self.trans_operand(&bcx, operand);
                             // Do not generate stores and GEPis for zero-sized fields.
-                            if !common::type_is_zero_size(bcx.ccx(), op.ty) {
-                                let val = adt::MaybeSizedValue::sized(dest.llval);
+                            if !common::type_is_zero_size(bcx.ccx, op.ty) {
+                                let mut val = LvalueRef::new_sized(
+                                    dest.llval, dest.ty, dest.alignment);
                                 let field_index = active_field_index.unwrap_or(i);
-                                let lldest_i = adt::trans_field_ptr_builder(&bcx,
-                                    dest.ty.to_ty(bcx.tcx()),
-                                    val, disr, field_index);
-                                self.store_operand(&bcx, lldest_i, op);
+                                val.ty = LvalueTy::Downcast {
+                                    adt_def: adt_def,
+                                    substs: self.monomorphize(&substs),
+                                    variant_index: disr.0 as usize,
+                                };
+                                let (lldest_i, align) = val.trans_field_ptr(&bcx, field_index);
+                                self.store_operand(&bcx, lldest_i, align.to_align(), op);
                             }
                         }
                     },
                     _ => {
                         // If this is a tuple or closure, we need to translate GEP indices.
-                        let layout = bcx.ccx().layout_of(dest.ty.to_ty(bcx.tcx()));
+                        let layout = bcx.ccx.layout_of(dest.ty.to_ty(bcx.tcx()));
                         let translation = if let Layout::Univariant { ref variant, .. } = *layout {
                             Some(&variant.memory_index)
                         } else {
                             None
                         };
+                        let alignment = dest.alignment;
                         for (i, operand) in operands.iter().enumerate() {
                             let op = self.trans_operand(&bcx, operand);
                             // Do not generate stores and GEPis for zero-sized fields.
-                            if !common::type_is_zero_size(bcx.ccx(), op.ty) {
+                            if !common::type_is_zero_size(bcx.ccx, op.ty) {
                                 // Note: perhaps this should be StructGep, but
                                 // note that in some cases the values here will
                                 // not be structs but arrays.
@@ -153,7 +148,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                                     i
                                 };
                                 let dest = bcx.gepi(dest.llval, &[0, i]);
-                                self.store_operand(&bcx, dest, op);
+                                self.store_operand(&bcx, dest, alignment.to_align(), op);
                             }
                         }
                     }
@@ -171,44 +166,39 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     self.trans_operand(&bcx, input).immediate()
                 }).collect();
 
-                bcx.with_block(|bcx| {
-                    asm::trans_inline_asm(bcx, asm, outputs, input_vals);
-                });
-
+                asm::trans_inline_asm(&bcx, asm, outputs, input_vals);
                 bcx
             }
 
             _ => {
-                assert!(rvalue_creates_operand(&self.mir, &bcx, rvalue));
-                let (bcx, temp) = self.trans_rvalue_operand(bcx, rvalue, debug_loc);
-                self.store_operand(&bcx, dest.llval, temp);
+                assert!(rvalue_creates_operand(rvalue));
+                let (bcx, temp) = self.trans_rvalue_operand(bcx, rvalue);
+                self.store_operand(&bcx, dest.llval, dest.alignment.to_align(), temp);
                 bcx
             }
         }
     }
 
     pub fn trans_rvalue_operand(&mut self,
-                                bcx: BlockAndBuilder<'bcx, 'tcx>,
-                                rvalue: &mir::Rvalue<'tcx>,
-                                debug_loc: DebugLoc)
-                                -> (BlockAndBuilder<'bcx, 'tcx>, OperandRef<'tcx>)
+                                bcx: Builder<'a, 'tcx>,
+                                rvalue: &mir::Rvalue<'tcx>)
+                                -> (Builder<'a, 'tcx>, OperandRef<'tcx>)
     {
-        assert!(rvalue_creates_operand(&self.mir, &bcx, rvalue),
-                "cannot trans {:?} to operand", rvalue);
+        assert!(rvalue_creates_operand(rvalue), "cannot trans {:?} to operand", rvalue);
 
         match *rvalue {
             mir::Rvalue::Cast(ref kind, ref source, cast_ty) => {
                 let operand = self.trans_operand(&bcx, source);
                 debug!("cast operand is {:?}", operand);
-                let cast_ty = bcx.monomorphize(&cast_ty);
+                let cast_ty = self.monomorphize(&cast_ty);
 
                 let val = match *kind {
                     mir::CastKind::ReifyFnPointer => {
                         match operand.ty.sty {
                             ty::TyFnDef(def_id, substs, _) => {
                                 OperandValue::Immediate(
-                                    Callee::def(bcx.ccx(), def_id, substs)
-                                        .reify(bcx.ccx()))
+                                    Callee::def(bcx.ccx, def_id, substs)
+                                        .reify(bcx.ccx))
                             }
                             _ => {
                                 bug!("{} cannot be reified to a fn ptr", operand.ty)
@@ -222,7 +212,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     mir::CastKind::Unsize => {
                         // unsize targets other than to a fat pointer currently
                         // can't be operands.
-                        assert!(common::type_is_fat_ptr(bcx.tcx(), cast_ty));
+                        assert!(common::type_is_fat_ptr(bcx.ccx, cast_ty));
 
                         match operand.val {
                             OperandValue::Pair(lldata, llextra) => {
@@ -232,29 +222,27 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                                 //   &'a fmt::Debug+Send => &'a fmt::Debug,
                                 // So we need to pointercast the base to ensure
                                 // the types match up.
-                                let llcast_ty = type_of::fat_ptr_base_ty(bcx.ccx(), cast_ty);
+                                let llcast_ty = type_of::fat_ptr_base_ty(bcx.ccx, cast_ty);
                                 let lldata = bcx.pointercast(lldata, llcast_ty);
                                 OperandValue::Pair(lldata, llextra)
                             }
                             OperandValue::Immediate(lldata) => {
                                 // "standard" unsize
-                                let (lldata, llextra) = bcx.with_block(|bcx| {
-                                    base::unsize_thin_ptr(bcx, lldata,
-                                                          operand.ty, cast_ty)
-                                });
+                                let (lldata, llextra) = base::unsize_thin_ptr(&bcx, lldata,
+                                    operand.ty, cast_ty);
                                 OperandValue::Pair(lldata, llextra)
                             }
-                            OperandValue::Ref(_) => {
+                            OperandValue::Ref(..) => {
                                 bug!("by-ref operand {:?} in trans_rvalue_operand",
                                      operand);
                             }
                         }
                     }
-                    mir::CastKind::Misc if common::type_is_fat_ptr(bcx.tcx(), operand.ty) => {
-                        let ll_cast_ty = type_of::immediate_type_of(bcx.ccx(), cast_ty);
-                        let ll_from_ty = type_of::immediate_type_of(bcx.ccx(), operand.ty);
+                    mir::CastKind::Misc if common::type_is_fat_ptr(bcx.ccx, operand.ty) => {
+                        let ll_cast_ty = type_of::immediate_type_of(bcx.ccx, cast_ty);
+                        let ll_from_ty = type_of::immediate_type_of(bcx.ccx, operand.ty);
                         if let OperandValue::Pair(data_ptr, meta_ptr) = operand.val {
-                            if common::type_is_fat_ptr(bcx.tcx(), cast_ty) {
+                            if common::type_is_fat_ptr(bcx.ccx, cast_ty) {
                                 let ll_cft = ll_cast_ty.field_types();
                                 let ll_fft = ll_from_ty.field_types();
                                 let data_cast = bcx.pointercast(data_ptr, ll_cft[0]);
@@ -271,29 +259,14 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         }
                     }
                     mir::CastKind::Misc => {
-                        debug_assert!(common::type_is_immediate(bcx.ccx(), cast_ty));
+                        debug_assert!(common::type_is_immediate(bcx.ccx, cast_ty));
                         let r_t_in = CastTy::from_ty(operand.ty).expect("bad input type for cast");
                         let r_t_out = CastTy::from_ty(cast_ty).expect("bad output type for cast");
-                        let ll_t_in = type_of::immediate_type_of(bcx.ccx(), operand.ty);
-                        let ll_t_out = type_of::immediate_type_of(bcx.ccx(), cast_ty);
-                        let (llval, signed) = if let CastTy::Int(IntTy::CEnum) = r_t_in {
-                            let l = bcx.ccx().layout_of(operand.ty);
-                            let discr = match operand.val {
-                                OperandValue::Immediate(llval) => llval,
-                                OperandValue::Ref(llptr) => {
-                                    bcx.with_block(|bcx| {
-                                        adt::trans_get_discr(bcx, operand.ty, llptr, None, true)
-                                    })
-                                }
-                                OperandValue::Pair(..) => bug!("Unexpected Pair operand")
-                            };
-                            let (signed, min, max) = match l {
-                                &Layout::CEnum { signed, min, max, .. } => {
-                                    (signed, min, max)
-                                }
-                                _ => bug!("CEnum {:?} is not an enum", operand)
-                            };
-
+                        let ll_t_in = type_of::immediate_type_of(bcx.ccx, operand.ty);
+                        let ll_t_out = type_of::immediate_type_of(bcx.ccx, cast_ty);
+                        let llval = operand.immediate();
+                        let l = bcx.ccx.layout_of(operand.ty);
+                        let signed = if let Layout::CEnum { signed, min, max, .. } = *l {
                             if max > min {
                                 // We want `table[e as usize]` to not
                                 // have bound checks, and this is the most
@@ -301,14 +274,14 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
                                 base::call_assume(&bcx, bcx.icmp(
                                     llvm::IntULE,
-                                    discr,
-                                    C_integral(common::val_ty(discr), max, false)
-                                ))
+                                    llval,
+                                    C_integral(common::val_ty(llval), max, false)
+                                ));
                             }
 
-                            (discr, signed)
+                            signed
                         } else {
-                            (operand.immediate(), operand.ty.is_signed())
+                            operand.ty.is_signed()
                         };
 
                         let newval = match (r_t_in, r_t_out) {
@@ -376,7 +349,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
                 // Note: lvalues are indirect, so storing the `llval` into the
                 // destination effectively creates a reference.
-                let operand = if common::type_is_sized(bcx.tcx(), ty) {
+                let operand = if bcx.ccx.shared().type_is_sized(ty) {
                     OperandRef {
                         val: OperandValue::Immediate(tr_lvalue.llval),
                         ty: ref_ty,
@@ -394,7 +367,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             mir::Rvalue::Len(ref lvalue) => {
                 let tr_lvalue = self.trans_lvalue(&bcx, lvalue);
                 let operand = OperandRef {
-                    val: OperandValue::Immediate(tr_lvalue.len(bcx.ccx())),
+                    val: OperandValue::Immediate(tr_lvalue.len(bcx.ccx)),
                     ty: bcx.tcx().types.usize,
                 };
                 (bcx, operand)
@@ -403,7 +376,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             mir::Rvalue::BinaryOp(op, ref lhs, ref rhs) => {
                 let lhs = self.trans_operand(&bcx, lhs);
                 let rhs = self.trans_operand(&bcx, rhs);
-                let llresult = if common::type_is_fat_ptr(bcx.tcx(), lhs.ty) {
+                let llresult = if common::type_is_fat_ptr(bcx.ccx, lhs.ty) {
                     match (lhs.val, rhs.val) {
                         (OperandValue::Pair(lhs_addr, lhs_extra),
                          OperandValue::Pair(rhs_addr, rhs_extra)) => {
@@ -461,26 +434,27 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             }
 
             mir::Rvalue::Box(content_ty) => {
-                let content_ty: Ty<'tcx> = bcx.monomorphize(&content_ty);
-                let llty = type_of::type_of(bcx.ccx(), content_ty);
-                let llsize = machine::llsize_of(bcx.ccx(), llty);
-                let align = type_of::align_of(bcx.ccx(), content_ty);
-                let llalign = C_uint(bcx.ccx(), align);
+                let content_ty: Ty<'tcx> = self.monomorphize(&content_ty);
+                let llty = type_of::type_of(bcx.ccx, content_ty);
+                let llsize = machine::llsize_of(bcx.ccx, llty);
+                let align = type_of::align_of(bcx.ccx, content_ty);
+                let llalign = C_uint(bcx.ccx, align);
                 let llty_ptr = llty.ptr_to();
                 let box_ty = bcx.tcx().mk_box(content_ty);
-                let mut llval = None;
-                let bcx = bcx.map_block(|bcx| {
-                    let Result { bcx, val } = base::malloc_raw_dyn(bcx,
-                                                                   llty_ptr,
-                                                                   box_ty,
-                                                                   llsize,
-                                                                   llalign,
-                                                                   debug_loc);
-                    llval = Some(val);
-                    bcx
-                });
+
+                // Allocate space:
+                let def_id = match bcx.tcx().lang_items.require(ExchangeMallocFnLangItem) {
+                    Ok(id) => id,
+                    Err(s) => {
+                        bcx.sess().fatal(&format!("allocation of `{}` {}", box_ty, s));
+                    }
+                };
+                let r = Callee::def(bcx.ccx, def_id, bcx.tcx().intern_substs(&[]))
+                    .reify(bcx.ccx);
+                let val = bcx.pointercast(bcx.call(r, &[llsize, llalign], None), llty_ptr);
+
                 let operand = OperandRef {
-                    val: OperandValue::Immediate(llval.unwrap()),
+                    val: OperandValue::Immediate(val),
                     ty: box_ty,
                 };
                 (bcx, operand)
@@ -500,7 +474,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     }
 
     pub fn trans_scalar_binop(&mut self,
-                              bcx: &BlockAndBuilder<'bcx, 'tcx>,
+                              bcx: &Builder<'a, 'tcx>,
                               op: mir::BinOp,
                               lhs: ValueRef,
                               rhs: ValueRef,
@@ -542,26 +516,11 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             mir::BinOp::BitOr => bcx.or(lhs, rhs),
             mir::BinOp::BitAnd => bcx.and(lhs, rhs),
             mir::BinOp::BitXor => bcx.xor(lhs, rhs),
-            mir::BinOp::Shl => {
-                bcx.with_block(|bcx| {
-                    common::build_unchecked_lshift(bcx,
-                                                   lhs,
-                                                   rhs,
-                                                   DebugLoc::None)
-                })
-            }
-            mir::BinOp::Shr => {
-                bcx.with_block(|bcx| {
-                    common::build_unchecked_rshift(bcx,
-                                                   input_ty,
-                                                   lhs,
-                                                   rhs,
-                                                   DebugLoc::None)
-                })
-            }
+            mir::BinOp::Shl => common::build_unchecked_lshift(bcx, lhs, rhs),
+            mir::BinOp::Shr => common::build_unchecked_rshift(bcx, input_ty, lhs, rhs),
             mir::BinOp::Ne | mir::BinOp::Lt | mir::BinOp::Gt |
             mir::BinOp::Eq | mir::BinOp::Le | mir::BinOp::Ge => if is_nil {
-                C_bool(bcx.ccx(), match op {
+                C_bool(bcx.ccx, match op {
                     mir::BinOp::Ne | mir::BinOp::Lt | mir::BinOp::Gt => false,
                     mir::BinOp::Eq | mir::BinOp::Le | mir::BinOp::Ge => true,
                     _ => unreachable!()
@@ -575,8 +534,8 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 let (lhs, rhs) = if is_bool {
                     // FIXME(#36856) -- extend the bools into `i8` because
                     // LLVM's i1 comparisons are broken.
-                    (bcx.zext(lhs, Type::i8(bcx.ccx())),
-                     bcx.zext(rhs, Type::i8(bcx.ccx())))
+                    (bcx.zext(lhs, Type::i8(bcx.ccx)),
+                     bcx.zext(rhs, Type::i8(bcx.ccx)))
                 } else {
                     (lhs, rhs)
                 };
@@ -590,7 +549,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     }
 
     pub fn trans_fat_ptr_binop(&mut self,
-                               bcx: &BlockAndBuilder<'bcx, 'tcx>,
+                               bcx: &Builder<'a, 'tcx>,
                                op: mir::BinOp,
                                lhs_addr: ValueRef,
                                lhs_extra: ValueRef,
@@ -637,7 +596,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     }
 
     pub fn trans_scalar_checked_binop(&mut self,
-                                      bcx: &BlockAndBuilder<'bcx, 'tcx>,
+                                      bcx: &Builder<'a, 'tcx>,
                                       op: mir::BinOp,
                                       lhs: ValueRef,
                                       rhs: ValueRef,
@@ -646,9 +605,9 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
         // with #[rustc_inherit_overflow_checks] and inlined from
         // another crate (mostly core::num generic/#[inline] fns),
         // while the current crate doesn't use overflow checks.
-        if !bcx.ccx().check_overflow() {
+        if !bcx.ccx.check_overflow() {
             let val = self.trans_scalar_binop(bcx, op, lhs, rhs, input_ty);
-            return OperandValue::Pair(val, C_bool(bcx.ccx(), false));
+            return OperandValue::Pair(val, C_bool(bcx.ccx, false));
         }
 
         // First try performing the operation on constants, which
@@ -656,7 +615,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
         // This is necessary to determine when an overflow Assert
         // will always panic at runtime, and produce a warning.
         if let Some((val, of)) = const_scalar_checked_binop(bcx.tcx(), op, lhs, rhs, input_ty) {
-            return OperandValue::Pair(val, C_bool(bcx.ccx(), of));
+            return OperandValue::Pair(val, C_bool(bcx.ccx, of));
         }
 
         let (val, of) = match op {
@@ -677,9 +636,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             mir::BinOp::Shl | mir::BinOp::Shr => {
                 let lhs_llty = val_ty(lhs);
                 let rhs_llty = val_ty(rhs);
-                let invert_mask = bcx.with_block(|bcx| {
-                    common::shift_mask_val(bcx, lhs_llty, rhs_llty, true)
-                });
+                let invert_mask = common::shift_mask_val(&bcx, lhs_llty, rhs_llty, true);
                 let outer_bits = bcx.and(rhs, invert_mask);
 
                 let of = bcx.icmp(llvm::IntNE, outer_bits, C_null(rhs_llty));
@@ -696,9 +653,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     }
 }
 
-pub fn rvalue_creates_operand<'bcx, 'tcx>(_mir: &mir::Mir<'tcx>,
-                                          _bcx: &BlockAndBuilder<'bcx, 'tcx>,
-                                          rvalue: &mir::Rvalue<'tcx>) -> bool {
+pub fn rvalue_creates_operand(rvalue: &mir::Rvalue) -> bool {
     match *rvalue {
         mir::Rvalue::Ref(..) |
         mir::Rvalue::Len(..) |
@@ -723,7 +678,7 @@ enum OverflowOp {
     Add, Sub, Mul
 }
 
-fn get_overflow_intrinsic(oop: OverflowOp, bcx: &BlockAndBuilder, ty: Ty) -> ValueRef {
+fn get_overflow_intrinsic(oop: OverflowOp, bcx: &Builder, ty: Ty) -> ValueRef {
     use syntax::ast::IntTy::*;
     use syntax::ast::UintTy::*;
     use rustc::ty::{TyInt, TyUint};
@@ -753,11 +708,13 @@ fn get_overflow_intrinsic(oop: OverflowOp, bcx: &BlockAndBuilder, ty: Ty) -> Val
             TyInt(I16) => "llvm.sadd.with.overflow.i16",
             TyInt(I32) => "llvm.sadd.with.overflow.i32",
             TyInt(I64) => "llvm.sadd.with.overflow.i64",
+            TyInt(I128) => "llvm.sadd.with.overflow.i128",
 
             TyUint(U8) => "llvm.uadd.with.overflow.i8",
             TyUint(U16) => "llvm.uadd.with.overflow.i16",
             TyUint(U32) => "llvm.uadd.with.overflow.i32",
             TyUint(U64) => "llvm.uadd.with.overflow.i64",
+            TyUint(U128) => "llvm.uadd.with.overflow.i128",
 
             _ => unreachable!(),
         },
@@ -766,11 +723,13 @@ fn get_overflow_intrinsic(oop: OverflowOp, bcx: &BlockAndBuilder, ty: Ty) -> Val
             TyInt(I16) => "llvm.ssub.with.overflow.i16",
             TyInt(I32) => "llvm.ssub.with.overflow.i32",
             TyInt(I64) => "llvm.ssub.with.overflow.i64",
+            TyInt(I128) => "llvm.ssub.with.overflow.i128",
 
             TyUint(U8) => "llvm.usub.with.overflow.i8",
             TyUint(U16) => "llvm.usub.with.overflow.i16",
             TyUint(U32) => "llvm.usub.with.overflow.i32",
             TyUint(U64) => "llvm.usub.with.overflow.i64",
+            TyUint(U128) => "llvm.usub.with.overflow.i128",
 
             _ => unreachable!(),
         },
@@ -779,15 +738,17 @@ fn get_overflow_intrinsic(oop: OverflowOp, bcx: &BlockAndBuilder, ty: Ty) -> Val
             TyInt(I16) => "llvm.smul.with.overflow.i16",
             TyInt(I32) => "llvm.smul.with.overflow.i32",
             TyInt(I64) => "llvm.smul.with.overflow.i64",
+            TyInt(I128) => "llvm.smul.with.overflow.i128",
 
             TyUint(U8) => "llvm.umul.with.overflow.i8",
             TyUint(U16) => "llvm.umul.with.overflow.i16",
             TyUint(U32) => "llvm.umul.with.overflow.i32",
             TyUint(U64) => "llvm.umul.with.overflow.i64",
+            TyUint(U128) => "llvm.umul.with.overflow.i128",
 
             _ => unreachable!(),
         },
     };
 
-    bcx.ccx().get_intrinsic(&name)
+    bcx.ccx.get_intrinsic(&name)
 }

@@ -384,7 +384,7 @@ currently trying to run the tests. This can save compile time, and also ensures
 that our tests are entirely left out of a normal build.
 
 The second change is the `use` declaration. Because we're in an inner module,
-we need to bring our test function into scope. This can be annoying if you have
+we need to bring the tested function into scope. This can be annoying if you have
 a large module, and so this is a common use of globs. Let's change our
 `src/lib.rs` to make use of it:
 
@@ -589,11 +589,10 @@ please see the [Documentation chapter](documentation.html).
 
 # Testing and concurrency
 
-One thing that is important to note when writing tests is that they may be run
-concurrently using threads. For this reason you should take care that your tests
-are written in such a way as to not depend on each-other, or on any shared
-state. "Shared state" can also include the environment, such as the current
-working directory, or environment variables.
+It is important to note that tests are run concurrently using threads. For this
+reason, care should be taken to ensure your tests do not depend on each-other,
+or on any shared state. "Shared state" can also include the environment, such
+as the current working directory, or environment variables.
 
 If this is an issue it is possible to control this concurrency, either by
 setting the environment variable `RUST_TEST_THREADS`, or by passing the argument

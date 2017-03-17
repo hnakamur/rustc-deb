@@ -17,7 +17,7 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![cfg_attr(not(stage0), deny(warnings))]
+#![deny(warnings)]
 
 #![feature(rustc_private)]
 #![feature(staged_api)]
@@ -30,7 +30,7 @@ extern crate rustc_data_structures;
 extern crate serialize as rustc_serialize;
 
 #[macro_use] extern crate log;
-#[macro_use] extern crate syntax;
+extern crate syntax;
 extern crate syntax_pos;
 
 const ATTR_DIRTY: &'static str = "rustc_dirty";
@@ -55,3 +55,4 @@ pub use persist::save_trans_partition;
 pub use persist::save_work_products;
 pub use persist::in_incr_comp_dir;
 pub use persist::finalize_session_directory;
+pub use persist::delete_workproduct_files;

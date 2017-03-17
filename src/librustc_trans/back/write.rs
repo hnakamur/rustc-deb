@@ -19,7 +19,7 @@ use llvm;
 use llvm::{ModuleRef, TargetMachineRef, PassManagerRef, DiagnosticInfoRef, ContextRef};
 use llvm::SMDiagnosticRef;
 use {CrateTranslation, ModuleLlvm, ModuleSource, ModuleTranslation};
-use util::common::time;
+use util::common::{time, time_depth, set_time_depth};
 use util::common::path2cstr;
 use util::fs::link_or_copy;
 use errors::{self, Handler, Level, DiagnosticBuilder};
@@ -121,13 +121,13 @@ impl SharedEmitter {
 impl Emitter for SharedEmitter {
     fn emit(&mut self, db: &DiagnosticBuilder) {
         self.buffer.lock().unwrap().push(Diagnostic {
-            msg: db.message.to_string(),
+            msg: db.message(),
             code: db.code.clone(),
             lvl: db.level,
         });
         for child in &db.children {
             self.buffer.lock().unwrap().push(Diagnostic {
-                msg: child.message.to_string(),
+                msg: child.message(),
                 code: None,
                 lvl: child.level,
             });
@@ -667,7 +667,9 @@ pub fn run_passes(sess: &Session,
 
     // Sanity check
     assert!(trans.modules.len() == sess.opts.cg.codegen_units ||
-            sess.opts.debugging_opts.incremental.is_some());
+            sess.opts.debugging_opts.incremental.is_some() ||
+            !sess.opts.output_types.should_trans() ||
+            sess.opts.debugging_opts.no_trans);
 
     let tm = create_target_machine(sess);
 
@@ -701,8 +703,8 @@ pub fn run_passes(sess: &Session,
 
     for output_type in output_types.keys() {
         match *output_type {
-            OutputType::Bitcode => { modules_config.emit_bc = true; },
-            OutputType::LlvmAssembly => { modules_config.emit_ir = true; },
+            OutputType::Bitcode => { modules_config.emit_bc = true; }
+            OutputType::LlvmAssembly => { modules_config.emit_ir = true; }
             OutputType::Assembly => {
                 modules_config.emit_asm = true;
                 // If we're not using the LLVM assembler, this function
@@ -711,8 +713,9 @@ pub fn run_passes(sess: &Session,
                 if !sess.opts.output_types.contains_key(&OutputType::Assembly) {
                     metadata_config.emit_obj = true;
                 }
-            },
-            OutputType::Object => { modules_config.emit_obj = true; },
+            }
+            OutputType::Object => { modules_config.emit_obj = true; }
+            OutputType::Metadata => { metadata_config.emit_obj = true; }
             OutputType::Exe => {
                 modules_config.emit_obj = true;
                 metadata_config.emit_obj = true;
@@ -755,7 +758,7 @@ pub fn run_passes(sess: &Session,
     //       the compiler decides the number of codegen units (and will
     //       potentially create hundreds of them).
     let num_workers = work_items.len() - 1;
-    if num_workers == 1 {
+    if num_workers <= 1 {
         run_work_singlethreaded(sess, &trans.exported_symbols, work_items);
     } else {
         run_work_multithreaded(sess, work_items, num_workers);
@@ -853,6 +856,7 @@ pub fn run_passes(sess: &Session,
                 user_wants_objects = true;
                 copy_if_one_unit(OutputType::Object, true);
             }
+            OutputType::Metadata |
             OutputType::Exe |
             OutputType::DepInfo => {}
         }
@@ -1033,7 +1037,10 @@ fn run_work_multithreaded(sess: &Session,
 
         let incr_comp_session_dir = sess.incr_comp_session_dir_opt().map(|r| r.clone());
 
+        let depth = time_depth();
         thread::Builder::new().name(format!("codegen-{}", i)).spawn(move || {
+            set_time_depth(depth);
+
             let diag_handler = Handler::with_emitter(true, false, box diag_emitter);
 
             // Must construct cgcx inside the proc because it has non-Send
@@ -1084,6 +1091,10 @@ fn run_work_multithreaded(sess: &Session,
 
 pub fn run_assembler(sess: &Session, outputs: &OutputFilenames) {
     let (pname, mut cmd, _) = get_linker(sess);
+
+    for arg in &sess.target.target.options.asm_args {
+        cmd.arg(arg);
+    }
 
     cmd.arg("-c").arg("-o").arg(&outputs.path(OutputType::Object))
                            .arg(&outputs.temp_path(OutputType::Assembly, None));

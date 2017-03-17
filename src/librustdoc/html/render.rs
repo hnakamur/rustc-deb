@@ -71,7 +71,7 @@ use html::format::{TyParamBounds, WhereClause, href, AbiSpace};
 use html::format::{VisSpace, Method, UnsafetySpace, MutableSpace};
 use html::format::fmt_impl_for_trait_page;
 use html::item_type::ItemType;
-use html::markdown::{self, Markdown};
+use html::markdown::{self, Markdown, MarkdownHtml};
 use html::{highlight, layout};
 
 /// A pair of name and its optional document.
@@ -591,7 +591,7 @@ fn build_index(krate: &clean::Crate, cache: &mut Cache) -> String {
                 ty: item.type_(),
                 name: item.name.clone().unwrap(),
                 path: fqp[..fqp.len() - 1].join("::"),
-                desc: Escape(&shorter(item.doc_value())).to_string(),
+                desc: plain_summary_line(item.doc_value()),
                 parent: Some(did),
                 parent_idx: None,
                 search_type: get_index_search_type(&item),
@@ -629,7 +629,7 @@ fn build_index(krate: &clean::Crate, cache: &mut Cache) -> String {
     }
 
     let crate_doc = krate.module.as_ref().map(|module| {
-        Escape(&shorter(module.doc_value())).to_string()
+        plain_summary_line(module.doc_value())
     }).unwrap_or(String::new());
 
     let mut crate_data = BTreeMap::new();
@@ -1064,7 +1064,7 @@ impl DocFolder for Cache {
                             ty: item.type_(),
                             name: s.to_string(),
                             path: path.join("::").to_string(),
-                            desc: Escape(&shorter(item.doc_value())).to_string(),
+                            desc: plain_summary_line(item.doc_value()),
                             parent: parent,
                             parent_idx: None,
                             search_type: get_index_search_type(&item),
@@ -1662,8 +1662,13 @@ fn document_full(w: &mut fmt::Formatter, item: &clean::Item) -> fmt::Result {
 }
 
 fn document_stability(w: &mut fmt::Formatter, cx: &Context, item: &clean::Item) -> fmt::Result {
-    for stability in short_stability(item, cx, true) {
-        write!(w, "<div class='stability'>{}</div>", stability)?;
+    let stabilities = short_stability(item, cx, true);
+    if !stabilities.is_empty() {
+        write!(w, "<div class='stability'>")?;
+        for stability in stabilities {
+            write!(w, "{}", stability)?;
+        }
+        write!(w, "</div>")?;
     }
     Ok(())
 }
@@ -1861,13 +1866,15 @@ fn short_stability(item: &clean::Item, cx: &Context, show_reason: bool) -> Vec<S
             } else {
                 String::new()
             };
-            let text = format!("Deprecated{}{}", since, Markdown(&deprecated_reason));
-            stability.push(format!("<em class='stab deprecated'>{}</em>", text))
+            let text = format!("Deprecated{}{}", since, MarkdownHtml(&deprecated_reason));
+            stability.push(format!("<div class='stab deprecated'>{}</div>", text))
         };
 
         if stab.level == stability::Unstable {
-            let unstable_extra = if show_reason {
-                match (!stab.feature.is_empty(), &cx.shared.issue_tracker_base_url, stab.issue) {
+            if show_reason {
+                let unstable_extra = match (!stab.feature.is_empty(),
+                                            &cx.shared.issue_tracker_base_url,
+                                            stab.issue) {
                     (true, &Some(ref tracker_url), Some(issue_no)) if issue_no > 0 =>
                         format!(" (<code>{}</code> <a href=\"{}{}\">#{}</a>)",
                                 Escape(&stab.feature), tracker_url, issue_no, issue_no),
@@ -1877,17 +1884,24 @@ fn short_stability(item: &clean::Item, cx: &Context, show_reason: bool) -> Vec<S
                     (true, ..) =>
                         format!(" (<code>{}</code>)", Escape(&stab.feature)),
                     _ => String::new(),
+                };
+                if stab.unstable_reason.is_empty() {
+                    stability.push(format!("<div class='stab unstable'>\
+                                            <span class=microscope>🔬</span> \
+                                            This is a nightly-only experimental API. &nbsp;{}\
+                                            </div>",
+                                   unstable_extra));
+                } else {
+                    let text = format!("<summary><span class=microscope>🔬</span> \
+                                        This is a nightly-only experimental API. &nbsp;{}\
+                                        </summary>{}",
+                                       unstable_extra, MarkdownHtml(&stab.unstable_reason));
+                    stability.push(format!("<div class='stab unstable'><details>{}</details></div>",
+                                   text));
                 }
             } else {
-                String::new()
-            };
-            let unstable_reason = if show_reason && !stab.unstable_reason.is_empty() {
-                format!(": {}", stab.unstable_reason)
-            } else {
-                String::new()
-            };
-            let text = format!("Unstable{}{}", unstable_extra, Markdown(&unstable_reason));
-            stability.push(format!("<em class='stab unstable'>{}</em>", text))
+                stability.push(format!("<div class='stab unstable'>Experimental</div>"))
+            }
         };
     } else if let Some(depr) = item.deprecation.as_ref() {
         let note = if show_reason && !depr.note.is_empty() {
@@ -1901,8 +1915,8 @@ fn short_stability(item: &clean::Item, cx: &Context, show_reason: bool) -> Vec<S
             String::new()
         };
 
-        let text = format!("Deprecated{}{}", since, Markdown(&note));
-        stability.push(format!("<em class='stab deprecated'>{}</em>", text))
+        let text = format!("Deprecated{}{}", since, MarkdownHtml(&note));
+        stability.push(format!("<div class='stab deprecated'>{}</div>", text))
     }
 
     stability
@@ -2052,10 +2066,9 @@ fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
         let item_type = m.type_();
         let id = derive_id(format!("{}.{}", item_type, name));
         let ns_id = derive_id(format!("{}.{}", name, item_type.name_space()));
-        write!(w, "<h3 id='{id}' class='method stab {stab}'>\
+        write!(w, "<h3 id='{id}' class='method'>\
                    <span id='{ns_id}' class='invisible'><code>",
                id = id,
-               stab = m.stability_class(),
                ns_id = ns_id)?;
         render_assoc_item(w, m, AssocItemLink::Anchor(Some(&id)), ItemType::Impl)?;
         write!(w, "</code>")?;
@@ -2118,9 +2131,25 @@ fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
         <ul class='item-list' id='implementors-list'>
     ")?;
     if let Some(implementors) = cache.implementors.get(&it.def_id) {
-        for i in implementors {
+        let mut implementor_count: FxHashMap<&str, usize> = FxHashMap();
+        for implementor in implementors {
+            if let clean::Type::ResolvedPath {ref path, ..} = implementor.impl_.for_ {
+                *implementor_count.entry(path.last_name()).or_insert(0) += 1;
+            }
+        }
+
+        for implementor in implementors {
             write!(w, "<li><code>")?;
-            fmt_impl_for_trait_page(&i.impl_, w)?;
+            // If there's already another implementor that has the same abbridged name, use the
+            // full path, for example in `std::iter::ExactSizeIterator`
+            let use_absolute = if let clean::Type::ResolvedPath {
+                ref path, ..
+            } = implementor.impl_.for_ {
+                implementor_count[path.last_name()] > 1
+            } else {
+                false
+            };
+            fmt_impl_for_trait_page(&implementor.impl_, w, use_absolute)?;
             writeln!(w, "</code></li>")?;
         }
     }

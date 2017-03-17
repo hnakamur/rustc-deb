@@ -15,11 +15,8 @@
 //! ## Usage
 //! This crate provides the `qquote!` macro for syntax creation.
 //!
-//! The `qquote!` macro imports `syntax::ext::proc_macro_shim::prelude::*`, so you
-//! will need to `extern crate syntax` for usage. (This is a temporary solution until more
-//! of the external API in libproc_macro_tokens is stabilized to support the token construction
-//! operations that the qausiquoter relies on.) The shim file also provides additional
-//! operations, such as `build_block_emitter` (as used in the `cond` example below).
+//! The `qquote!` macro uses the crate `syntax`, so users must declare `extern crate syntax;`
+//! at the crate root. This is a temporary solution until we have better hygiene.
 //!
 //! ## Quasiquotation
 //!
@@ -80,7 +77,7 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![cfg_attr(not(stage0), deny(warnings))]
+#![deny(warnings)]
 
 #![feature(staged_api)]
 #![feature(rustc_diagnostic_macros)]
@@ -89,19 +86,19 @@
 extern crate rustc_plugin;
 extern crate syntax;
 extern crate syntax_pos;
-extern crate proc_macro_tokens;
-#[macro_use] extern crate log;
 
 mod qquote;
-
 use qquote::qquote;
 
 use rustc_plugin::Registry;
+use syntax::ext::base::SyntaxExtension;
+use syntax::symbol::Symbol;
 
 // ____________________________________________________________________________________________
 // Main macro definition
 
 #[plugin_registrar]
 pub fn plugin_registrar(reg: &mut Registry) {
-    reg.register_macro("qquote", qquote);
+    reg.register_syntax_extension(Symbol::intern("qquote"),
+                                  SyntaxExtension::ProcMacro(Box::new(qquote)));
 }

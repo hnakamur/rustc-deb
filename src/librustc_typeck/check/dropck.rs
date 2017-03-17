@@ -75,13 +75,13 @@ fn ensure_drop_params_and_item_params_correspond<'a, 'tcx>(
     -> Result<(), ()>
 {
     let tcx = ccx.tcx;
-    let drop_impl_node_id = tcx.map.as_local_node_id(drop_impl_did).unwrap();
-    let self_type_node_id = tcx.map.as_local_node_id(self_type_did).unwrap();
+    let drop_impl_node_id = tcx.hir.as_local_node_id(drop_impl_did).unwrap();
+    let self_type_node_id = tcx.hir.as_local_node_id(self_type_did).unwrap();
 
     // check that the impl type can be made to match the trait type.
 
     let impl_param_env = ty::ParameterEnvironment::for_item(tcx, self_type_node_id);
-    tcx.infer_ctxt(None, Some(impl_param_env), Reveal::NotSpecializable).enter(|infcx| {
+    tcx.infer_ctxt(impl_param_env, Reveal::NotSpecializable).enter(|infcx| {
         let tcx = infcx.tcx;
         let mut fulfillment_cx = traits::FulfillmentContext::new();
 
@@ -100,7 +100,7 @@ fn ensure_drop_params_and_item_params_correspond<'a, 'tcx>(
                 assert!(obligations.is_empty());
             }
             Err(_) => {
-                let item_span = tcx.map.span(self_type_node_id);
+                let item_span = tcx.hir.span(self_type_node_id);
                 struct_span_err!(tcx.sess, drop_impl_span, E0366,
                                  "Implementations of Drop cannot be specialized")
                     .span_note(item_span,
@@ -171,7 +171,7 @@ fn ensure_drop_predicates_are_implied_by_item_defn<'a, 'tcx>(
 
     let tcx = ccx.tcx;
 
-    let self_type_node_id = tcx.map.as_local_node_id(self_type_did).unwrap();
+    let self_type_node_id = tcx.hir.as_local_node_id(self_type_did).unwrap();
 
     let drop_impl_span = tcx.def_span(drop_impl_did);
 
@@ -203,7 +203,7 @@ fn ensure_drop_predicates_are_implied_by_item_defn<'a, 'tcx>(
         // repeated `contains` calls.
 
         if !assumptions_in_impl_context.contains(&predicate) {
-            let item_span = tcx.map.span(self_type_node_id);
+            let item_span = tcx.hir.span(self_type_node_id);
             struct_span_err!(tcx.sess, drop_impl_span, E0367,
                              "The requirement `{}` is added only by the Drop impl.", predicate)
                 .span_note(item_span,
@@ -448,7 +448,7 @@ fn iterate_over_potentially_unsafe_regions_in_type<'a, 'b, 'gcx, 'tcx>(
             Ok(())
         }
 
-        ty::TyBox(ity) | ty::TyArray(ity, _) | ty::TySlice(ity) => {
+        ty::TyArray(ity, _) | ty::TySlice(ity) => {
             // single-element containers, behave like their element
             iterate_over_potentially_unsafe_regions_in_type(
                 cx, context, ity, depth+1)
