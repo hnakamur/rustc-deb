@@ -1,3 +1,9 @@
+rustc (1.16.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream erlease
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 17 Mar 2017 10:33:46 +0100
+
 rustc (1.15.1+dfsg1-1~exp3) experimental; urgency=medium
 
   * Ignore atomic-lock-free tests on armhf.
