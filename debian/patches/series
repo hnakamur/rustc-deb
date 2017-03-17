@@ -9,10 +9,9 @@ u-ignoretest-armhf_04.patch
 u-ignoretest-arm64-stdcall.patch
 #u-ignoretest-i386.patch
 u-ignoretest-arm64.patch
-u-ignoretest-jemalloc.patch
 u-detect-mips-cpu.patch
 u-ignoretest-powerpc.patch
-u-destdir-support.diff
+#u-destdir-support.diff
 u-arm-on-64bit-kernel.diff
 
 # Debian-specific patches, not suitable for upstream

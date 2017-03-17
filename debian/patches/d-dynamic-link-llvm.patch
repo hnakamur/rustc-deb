@@ -9,11 +9,11 @@ Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
-Index: rustc.git/src/librustc_llvm/build.rs
+Index: rust/src/librustc_llvm/build.rs
 ===================================================================
---- rustc.git.orig/src/librustc_llvm/build.rs
-+++ rustc.git/src/librustc_llvm/build.rs
-@@ -157,55 +157,10 @@ fn main() {
+--- rust.orig/src/librustc_llvm/build.rs
++++ rust/src/librustc_llvm/build.rs
+@@ -158,55 +158,10 @@ fn main() {
  
      let (llvm_kind, llvm_link_arg) = detect_llvm_link(&llvm_config);
  
@@ -73,10 +73,10 @@ Index: rustc.git/src/librustc_llvm/build.rs
  
      // LLVM ldflags
      //
-Index: rustc.git/src/etc/mklldeps.py
+Index: rust/src/etc/mklldeps.py
 ===================================================================
---- rustc.git.orig/src/etc/mklldeps.py
-+++ rustc.git/src/etc/mklldeps.py
+--- rust.orig/src/etc/mklldeps.py
++++ rust/src/etc/mklldeps.py
 @@ -56,38 +56,13 @@ def runErr(args):
  
  f.write("\n")

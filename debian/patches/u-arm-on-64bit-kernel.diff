@@ -3,10 +3,10 @@ Author: Matthias Klose <doko@debian.org>
 Applied-Upstream: commit:0a55c8e659f0fc540b740101f7a02ab28e300aa4
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
-Index: b/configure
+Index: rust/configure
 ===================================================================
---- a/configure
-+++ b/configure
+--- rust.orig/configure
++++ rust/configure
 @@ -513,7 +513,7 @@ case $CFG_CPUTYPE in
          CFG_OSTYPE="${CFG_OSTYPE}eabihf"
          ;;
@@ -16,11 +16,11 @@ Index: b/configure
          CFG_CPUTYPE=armv7
          CFG_OSTYPE="${CFG_OSTYPE}eabihf"
          ;;
-Index: b/src/bootstrap/bootstrap.py
+Index: rust/src/bootstrap/bootstrap.py
 ===================================================================
---- a/src/bootstrap/bootstrap.py
-+++ b/src/bootstrap/bootstrap.py
-@@ -372,7 +372,7 @@ class RustBuild(object):
+--- rust.orig/src/bootstrap/bootstrap.py
++++ rust/src/bootstrap/bootstrap.py
+@@ -374,7 +374,7 @@ class RustBuild(object):
              cputype = 'i686'
          elif cputype in {'xscale', 'arm'}:
              cputype = 'arm'
