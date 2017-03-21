@@ -1,3 +1,10 @@
+rustc (1.15.1+dfsg1-1) UNRELEASED; urgency=medium
+
+  * Upload to unstable so we have something to build 1.16 with.
+  * Try to fix ignoring atomic-lock-free tests on armhf.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 22 Mar 2017 00:11:39 +0100
+
 rustc (1.15.1+dfsg1-1~exp3) experimental; urgency=medium
 
   * Ignore atomic-lock-free tests on armhf.
