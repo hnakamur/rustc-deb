@@ -7,7 +7,7 @@
 set -e
 
 upstream_version="$(dpkg-parsechangelog -SVersion | sed -e 's/\(.*\)-.*/\1/g')"
-upstream_bootstrap_arch="${upstream_bootstrap_arch:-amd64 arm64 armel armhf i386}"
+upstream_bootstrap_arch="${upstream_bootstrap_arch:-amd64 arm64 armel armhf i386 powerpc ppc64el s390x}"
 
 rm -f dl/*.sha256
 for deb_host_arch in $upstream_bootstrap_arch; do

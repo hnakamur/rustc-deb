@@ -1,3 +1,15 @@
+rustc (1.16.0+dfsg1-1~exp1ubuntu1) zesty; urgency=medium
+
+  * Merge with Debian; remaining changes:
+    - Bootstrap using the rustc version in the archive, on all architectures.
+    - Work around a GCC 4.8 ICE on AArch64.
+    - Use alternative build dependencies on cmake3 and binutils-2.26 for
+      builds on 14.04 LTS (trusty).
+    - debian/make_orig-dl_tarball.sh: Include all Ubuntu architectures.
+    - debian/rules: Ignore test results for now.
+
+ -- Matthias Klose <doko@ubuntu.com>  Fri, 17 Mar 2017 14:47:24 +0100
+
 rustc (1.16.0+dfsg1-1~exp1) experimental; urgency=medium
 
   * New upstream release

@@ -29,3 +29,5 @@ d-missing-ref-dlsym-ppc64el.patch
 # out how to apply the equivalent patch in a different file, as Makefile is a
 # generated file. For 1.15 mk/ still applies and all-no-docs still exists
 #d-disable-doc-build-in-all.diff
+
+gcc-4.8-aarch64-ice.diff
