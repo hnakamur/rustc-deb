@@ -205,6 +205,8 @@ ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 # N instances of rustc (there is also parallel logic in libtest.rs already).
 	if RUST_BACKTRACE=1 $(MAKE) VERBOSE=1 check; then \
 	  : ; \
+	elif [ $(DEB_DISTRIBUTION) = "unstable" ]; then \
+	  false; \
 	else \
 	  echo "====================================================="; \
 	  echo "WARNING: Ignoring test failures in the rust testsuite"; \
