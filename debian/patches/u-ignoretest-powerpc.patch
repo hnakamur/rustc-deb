@@ -62,3 +62,15 @@ Index: rust/src/test/compile-fail/asm-out-read-uninit.rs
  
  #![feature(asm)]
  
+Index: rust/src/test/compile-fail/asm-misplaced-option.rs
+===================================================================
+--- rust.orig/src/test/compile-fail/asm-misplaced-option.rs
++++ rust/src/test/compile-fail/asm-misplaced-option.rs
+@@ -13,6 +13,7 @@
+ // ignore-aarch64
+ // ignore-s390x
+ // ignore-emscripten
++// ignore-powerpc
+ 
+ #![feature(asm, rustc_attrs)]
+ 
