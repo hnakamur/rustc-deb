@@ -1,9 +1,9 @@
-rustc (1.16.0+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.16.0+dfsg1-1) unstable; urgency=medium
 
   * Upload to unstable so we have something to build 1.17 with.
   * Update u-ignoretest-powerpc.patch for 1.16.
 
- -- Ximin Luo <infinity0@debian.org>  Wed, 19 Apr 2017 22:43:35 +0200
+ -- Ximin Luo <infinity0@debian.org>  Wed, 19 Apr 2017 22:47:18 +0200
 
 rustc (1.16.0+dfsg1-1~exp2) experimental; urgency=medium
 
