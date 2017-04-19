@@ -106,12 +106,6 @@ Files: src/librustdoc/html/static/SourceSerifPro*
 Copyright: 2014 Adobe Systems Incorporated
 License: SIL-OPEN-FONT
 
-Files:
- src/librustdoc/html/static/jquery-*.min.js
- debian/missing-sources/jquery-*.js
-Copyright: 2005-2014 jQuery Foundation, Inc and other contributors
-License: Expat
-
 Files: src/librustdoc/html/static/main.js
 Copyright: 2014 The Rust Project Developers
 License: Expat or Apache-2.0
