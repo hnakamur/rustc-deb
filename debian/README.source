@@ -8,6 +8,12 @@ still ongoing.
 We try to describe here inner packaging details and the
 reasons behind them.
 
+Import of a new upstream version
+================================
+
+$ uscan
+$ gbp import-orig --upstream-branch=upstream/experimental --debian-branch=debian/sid ../rustc_X.YY.0+dfsg1.orig.tar.xz
+
 
 Embedded libraries
 ==================
@@ -37,5 +43,5 @@ As a summary, we plan to:
  * keep embedding jemalloc (probably forever)
  * work with upstream to fix compiler-rt linkage soon.
 
- -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 27 Mar 2015 14:27:12 +0100
+ -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 06 May 2017 13:26:08 +0200
 
