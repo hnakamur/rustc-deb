@@ -2,6 +2,7 @@ Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: rust
 Source: http://www.rust-lang.org
 Files-Excluded:
+ cargo
  src/llvm
  src/librustdoc/html/static/jquery-*.min.js
  src/rt/hoedown/src/html_blocks.c

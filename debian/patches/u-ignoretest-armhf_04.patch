@@ -11,6 +11,6 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  
 +// ignore-arm
 +
+ use std::fmt;
  use std::mem;
  
- #[repr(packed)]

@@ -44,16 +44,20 @@ LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
 
 # These are the normal build flags
 DEB_CONFIGURE_FLAGS = \
+               --build=$(DEB_BUILD_RUST_TYPE) \
                --host=$(DEB_HOST_RUST_TYPE) \
                --target=$(DEB_TARGET_RUST_TYPE) \
                --disable-manage-submodules \
-               --disable-rustbuild \
                --release-channel=$(RELEASE_CHANNEL) \
-               --prefix=/usr
+               --prefix=/usr \
+               --enable-vendor --disable-locked-deps \
+               --enable-llvm-link-shared
 
 # Use system LLVM (comment out to use vendored LLVM)
 OLD_LLVM_VERSION = 3.8
 DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.9
+RUSTBUILD = ./x.py
+RUSTBUILD_FLAGS = -v
 
 # Below we detect how we're supposed to bootstrap the stage0 compiler. See
 # README.Debian for more details of the cases described below.
@@ -117,40 +121,64 @@ endif
 %:
 	dh $@ --parallel
 
+.PHONY: build
+build:
+	dh $@ --parallel
+
 # Note: SHELL is not set by dash, but the configure script wants to use it
 override_dh_auto_configure:
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
 	! grep --color=always -i 'll...$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
 	$(PRECONFIGURE_CHECK)
+	cp debian/config.toml src/bootstrap/config.toml
+	mkdir cargo # otherwise "install" fails, it's more strict than really needed
 	SHELL=/bin/sh PATH="$$PWD/debian/bin:$$PATH" DEB_HOST_ARCH="$(DEB_HOST_ARCH)" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 
 override_dh_auto_clean:
-	set -e; \
-	if [ -f Makefile ]; then \
-	  $(MAKE) clean-all; \
-	  $(RM) Makefile config.stamp config.mk; \
-	fi
+	$(RM) -rf ./build ./tmp ./.cargo src/etc/__pycache__/ config.stamp config.mk Makefile
 	$(RM) src/rt/hoedown/src/html_blocks.c # clean up after building this ourselves
-	$(RM) src/bootstrap/bootstrap.pyc
+	$(RM) src/bootstrap/bootstrap.pyc src/bootstrap/config.toml
 
 # upstream bundles this in the source, but in Debian we rebuild everything yo
 generate-sources:
 	$(MAKE) -C src/rt/hoedown src/html_blocks.c
 
 override_dh_auto_build-arch: generate-sources
-	dh_auto_build -- all VERBOSE=1
+	$(RUSTBUILD) build $(RUSTBUILD_FLAGS)
 
 # note: this is only for buildds that want to do a separate arch:all build;
 # there is no point running this yourself "to save time" since it implicitly
 # depends on build-arch anyways.
 override_dh_auto_build-indep: generate-sources
 ifneq (,$(BUILD_DOCS))
-	dh_auto_build -- docs VERBOSE=1
+	$(RUSTBUILD) doc $(RUSTBUILD_FLAGS)
 endif
 
+override_dh_auto_test-arch:
+ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
+# Use non-parallel $(MAKE) here instead of dh_auto_test, otherwise the upstream
+# Makefile will try to run N instances of the testrunner each of which will run
+# N instances of rustc (there is also parallel logic in libtest.rs already).
+	if RUST_BACKTRACE=1 $(RUSTBUILD) test $(RUSTBUILD_FLAGS); then \
+	  : ; \
+	elif [ $(DEB_DISTRIBUTION) != "experimental" ]; then \
+	  false; \
+	else \
+	  echo "====================================================="; \
+	  echo "WARNING: Ignoring test failures in the rust testsuite"; \
+	  echo "====================================================="; \
+	fi
+endif
+
+# No tests are applicable when only building arch:all packages.
+# More specifically: when we do an arch-all build, some crates are not built.
+# This makes some arch-dependent tests fail, so don't run them here.
+override_dh_auto_test-indep:
+	true
+
 override_dh_auto_install:
-	dh_auto_install --destdir=$(DEB_DESTDIR)
+	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) dist $(RUSTBUILD_FLAGS) --install
 
 	mkdir -p $(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/
 	mv $(DEB_DESTDIR)/usr/lib/lib*.so $(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/
@@ -197,28 +225,6 @@ override_dh_installdocs:
 
 override_dh_compress:
 	dh_compress -X.woff
-
-override_dh_auto_test-arch:
-ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-# Use non-parallel $(MAKE) here instead of dh_auto_test, otherwise the upstream
-# Makefile will try to run N instances of the testrunner each of which will run
-# N instances of rustc (there is also parallel logic in libtest.rs already).
-	if RUST_BACKTRACE=1 $(MAKE) VERBOSE=1 check; then \
-	  : ; \
-	elif [ $(DEB_DISTRIBUTION) = "unstable" ]; then \
-	  false; \
-	else \
-	  echo "====================================================="; \
-	  echo "WARNING: Ignoring test failures in the rust testsuite"; \
-	  echo "====================================================="; \
-	fi
-endif
-
-# No tests are applicable when only building arch:all packages.
-# More specifically: when we do an arch-all build, some crates are not built.
-# This makes some arch-dependent tests fail, so don't run them here.
-override_dh_auto_test-indep:
-	true
 
 override_dh_makeshlibs:
 	dh_makeshlibs -V

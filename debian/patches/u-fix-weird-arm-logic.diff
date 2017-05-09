@@ -1,0 +1,24 @@
+Description: Fix weird logic around ARM CPU detection
+Author: Ximin Luo <infinity0@debian.org>
+Forwarded: TODO
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/src/bootstrap/bootstrap.py
++++ b/src/bootstrap/bootstrap.py
+@@ -465,12 +465,12 @@
+             cputype = 'i686'
+         elif cputype in {'xscale', 'arm'}:
+             cputype = 'arm'
+-        elif cputype in {'armv6l', 'armv7l', 'armv8l'}:
+-            cputype = 'arm'
+-            ostype += 'eabihf'
+-        elif cputype == 'armv7l':
++        elif cputype in {'armv7l', 'armv8l'}:
+             cputype = 'armv7'
+             ostype += 'eabihf'
++        elif cputype == 'armv6l':
++            cputype = 'arm'
++            ostype += 'eabihf'
+         elif cputype == 'aarch64':
+             cputype = 'aarch64'
+         elif cputype == 'arm64':
