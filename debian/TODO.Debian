@@ -1,3 +1,8 @@
+- add -src package
+- upload to experimental, check arch tests
+- get cross-building working
+- rm or re-fix dlstage0, update docs
+
 Long build time
 ===============
 
