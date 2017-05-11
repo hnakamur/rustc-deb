@@ -12,7 +12,7 @@ Import of a new upstream version
 ================================
 
 $ uscan
-$ gbp import-orig --upstream-branch=upstream/experimental --debian-branch=debian/sid ../rustc_X.YY.0+dfsg1.orig.tar.xz
+$ gbp import-orig --upstream-branch=upstream/experimental --debian-branch=debian/experimental ../rustc_X.YY.0+dfsg1.orig.tar.xz
 
 
 Embedded libraries
