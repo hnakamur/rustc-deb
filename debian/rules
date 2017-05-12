@@ -136,7 +136,7 @@ override_dh_auto_configure:
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 
 override_dh_auto_clean:
-	$(RM) -rf ./build ./tmp ./.cargo src/etc/__pycache__/ config.stamp config.mk Makefile
+	$(RM) -rf ./build ./tmp ./.cargo src/etc/__pycache__/ config.stamp config.mk Makefile ./cargo
 	$(RM) src/rt/hoedown/src/html_blocks.c # clean up after building this ourselves
 	$(RM) src/bootstrap/bootstrap.pyc src/bootstrap/config.toml
 
