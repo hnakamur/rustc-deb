@@ -21,3 +21,4 @@ d-dynamic-link-llvm.patch
 d-use-system-jquery.patch
 
 gcc-4.8-aarch64-ice.diff
+d-disable-cargo-vendor.patch
