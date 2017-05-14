@@ -40,6 +40,7 @@ RELEASE_CHANNEL := stable
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
 RUST_VERSION := $(shell dpkg-parsechangelog --show-field Version | sed -re 's/([^.]+)\.([^.]+)\..*/\1.\2/')
+RUST_LONG_VERSION := $(shell dpkg-parsechangelog --show-field Version | sed -re 's/([^+]+).*/\1/')
 LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
 
 # These are the normal build flags
@@ -105,6 +106,12 @@ BUILD_DOCS = 1
 ifneq (,$(findstring nodoc,$(DEB_BUILD_PROFILES)))
   DEB_CONFIGURE_FLAGS += --disable-docs
   BUILD_DOCS =
+endif
+
+BUILD_SRC = 1
+ifneq (,$(findstring pkg.rust.nosrc,$(DEB_BUILD_PROFILES)))
+  DEB_CONFIGURE_FLAGS += --disable-dist-src
+  BUILD_SRC =
 endif
 
 ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
@@ -204,7 +211,13 @@ ifneq (,$(BUILD_DOCS))
 	  sed -i -e "s,https://doc.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),$${topdir}rust-logo-32x32-blk.png," \
               -e "s,https://www.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),$${topdir}rust-logo-32x32-blk.png," "$$file"; \
 	done
-	find $(DEB_DESTDIR) \( -iname '*.html' -empty -o -name .lock -o -name '*.inc' \) -delete
+	find $(DEB_DESTDIR) \( -iname '*.html' -empty -o -name .lock -o -name '*.inc' \) -delete;
+endif
+
+ifneq (,$(BUILD_SRC))
+	# extract library source
+	mkdir -p $(DEB_DESTDIR)/usr/src;
+	tar --strip-components=5 -xzf $(CURDIR)/build/dist/rust-src-$(RUST_LONG_VERSION).tar.gz -C $(DEB_DESTDIR)/usr/src
 endif
 
 override_dh_install-arch:

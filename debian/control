@@ -54,7 +54,7 @@ Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${binary:Version}),
  gcc, libc-dev, libjs-jquery, binutils (>= 2.26)
 Recommends: rust-gdb | rust-lldb
-Suggests: rust-doc
+Suggests: rust-doc, rust-src
 Description: Rust systems programming language
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
@@ -172,3 +172,22 @@ Description: Rust systems programming language - Documentation
  .
  This package contains the Rust tutorial, language reference and
  standard library documentation.
+
+Package: libstd-rust-src
+Section: devel
+Architecture: all
+Build-Profiles: <!pkg.rust.nosrc>
+Description: Rust systems programming language - Documentation
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+ .
+ This package contains sources of the rust standard library.
