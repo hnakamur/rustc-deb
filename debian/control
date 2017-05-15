@@ -173,11 +173,10 @@ Description: Rust systems programming language - Documentation
  This package contains the Rust tutorial, language reference and
  standard library documentation.
 
-Package: libstd-rust-src
+Package: rust-src
 Section: devel
 Architecture: all
-Build-Profiles: <!pkg.rust.nosrc>
-Description: Rust systems programming language - Documentation
+Description: Rust systems programming language - source code
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
  in syntactic and semantic details.  Its design is oriented toward
@@ -190,4 +189,5 @@ Description: Rust systems programming language - Documentation
  generic programming and meta-programming, in both static and dynamic
  styles.
  .
- This package contains sources of the rust standard library.
+ This package contains sources of the Rust compiler and standard
+ libraries, useful for IDEs and code analysis tools such as Racer.
