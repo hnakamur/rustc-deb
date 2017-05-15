@@ -1,9 +1,17 @@
 rustc (1.17.0+dfsg1-1) UNRELEASED; urgency=medium
 
+  [ Sylvestre Ledru ]
   * New upstream release
-    Patches haven't been rebased yet
 
- -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 06 May 2017 13:28:19 +0200
+  [ Ximin Luo ]
+  * Adapt packaging for rustbuild, the new upstream cargo-based build system.
+
+  [ Matthijs van Otterdijk ]
+  * Add a binary package, libstd-rust-src, for the source code of the standard
+    library. Useful for IDEs like racer. (Closes: #846177)
+  * Link to local Debian web resources in the docs, instead of remote ones.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 16 May 2017 01:19:12 +0200
 
 rustc (1.16.0+dfsg1-1) unstable; urgency=medium
 
