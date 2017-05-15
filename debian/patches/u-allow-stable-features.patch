@@ -1,3 +1,7 @@
+Description: Fix compiletest to allow bootstrapping from 1.17 as well as 1.16
+Author: Matthijs van Otterdijk <matthijs@wirevirt.net>
+Forwarded: https://github.com/rust-lang/rust/pull/42020
+---
 Index: rust/src/tools/compiletest/src/main.rs
 ===================================================================
 --- rust.orig/src/tools/compiletest/src/main.rs
