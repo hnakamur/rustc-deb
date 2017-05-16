@@ -8,6 +8,8 @@ Files-Excluded:
  src/llvm
  src/rt/hoedown/src/html_blocks.c
  src/vendor/mdbook/src/theme/_FontAwesome
+ src/vendor/mdbook/src/theme/highlight.js
+ src/vendor/mdbook/src/theme/highlight.css
 
 Files: *
 Copyright: 2006-2009 Graydon Hoare

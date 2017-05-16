@@ -156,7 +156,9 @@ Package: rust-doc
 Section: doc
 Architecture: all
 Build-Profiles: <!nodoc>
-Depends: ${misc:Depends}, libjs-jquery, libjs-mathjax, fonts-open-sans, fonts-font-awesome
+Depends: ${misc:Depends},
+ libjs-jquery, libjs-highlight.js, libjs-mathjax,
+ fonts-open-sans, fonts-font-awesome
 Description: Rust systems programming language - Documentation
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
