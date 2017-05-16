@@ -7,7 +7,6 @@ u-ignoretest-armhf_02.patch
 u-ignoretest-armhf_03.patch
 u-ignoretest-armhf_04.patch
 u-ignoretest-arm64.patch
-u-detect-mips-cpu.patch
 u-fix-weird-arm-logic.diff
 u-fix-debuginfo.patch
 u-allow-stable-features.patch
