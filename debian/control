@@ -178,6 +178,7 @@ Description: Rust systems programming language - Documentation
 Package: rust-src
 Section: devel
 Architecture: all
+Depends: ${misc:Depends}
 Description: Rust systems programming language - source code
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
