@@ -34,14 +34,15 @@ LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
 
 # These are the normal build flags
 DEB_CONFIGURE_FLAGS = \
-               --build=$(DEB_BUILD_RUST_TYPE) \
-               --host=$(DEB_HOST_RUST_TYPE) \
-               --target=$(DEB_TARGET_RUST_TYPE) \
-               --disable-manage-submodules \
-               --release-channel=$(RELEASE_CHANNEL) \
-               --prefix=/usr \
-               --enable-vendor --disable-locked-deps \
-               --enable-llvm-link-shared
+			   --build=$(DEB_BUILD_RUST_TYPE) \
+			   --host=$(DEB_HOST_RUST_TYPE) \
+			   --target=$(DEB_TARGET_RUST_TYPE) \
+			   --disable-manage-submodules \
+			   --release-channel=$(RELEASE_CHANNEL) \
+			   --prefix=/usr \
+			   --enable-vendor --disable-locked-deps \
+			   --enable-llvm-link-shared \
+			   --disable-dist-src
 
 # Use system LLVM (comment out to use vendored LLVM)
 OLD_LLVM_VERSION = 3.8
@@ -125,12 +126,11 @@ override_dh_auto_configure:
 	! grep --color=always -i 'll...$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
 	$(PRECONFIGURE_CHECK)
 	cp debian/config.toml src/bootstrap/config.toml
-	mkdir cargo # otherwise "install" fails, it's more strict than really needed
 	PATH="$$PWD/debian/bin:$$PATH" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 
 override_dh_auto_clean:
-	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile ./cargo
+	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile
 	$(RM) -rf $(SRC_CLEAN)
 
 # upstream bundles this in the source, but in Debian we rebuild everything yo
@@ -212,6 +212,20 @@ override_dh_install-indep:
 	  debian/rust-gdb/usr/share/rust-gdb/*.py \
 	  debian/rust-lldb/usr/share/rust-lldb/*.py
 	$(RM) -rf $(SRC_CLEAN:%=debian/rust-src/usr/src/rust/%)
+	# TODO: can be dropped next time we do a repack
+	$(RM) -rf debian/rust-src/usr/src/rust/src/vendor/mdbook/src/theme/_FontAwesome
+	# Get rid of lintian warnings
+	find debian/rust-src/usr/src/rust \
+		\( -name .gitignore \
+		-o -name 'LICENSE*' \
+		-o -name 'LICENCE' \
+		-o -name 'license' \
+		-o -name 'COPYING*' \
+		\) -delete
+	cd debian/rust-src/usr/src/rust && chmod -x \
+		src/etc/gdb_rust_pretty_printing.py \
+		src/etc/adb_run_wrapper.sh \
+		src/compiler-rt/test/builtins/Unit/ppc/test
 
 override_dh_installchangelogs:
 	dh_installchangelogs RELEASES.md

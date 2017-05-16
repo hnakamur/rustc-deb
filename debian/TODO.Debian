@@ -1,4 +1,7 @@
+- libjs-highlight.js needs updating (9.10 vs 8 in Debian)
+- update d/copyright
 - upload to experimental, check arch tests
+
 - get cross-building working
 - rm or re-fix dlstage0, update docs
 

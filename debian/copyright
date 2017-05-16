@@ -2,10 +2,12 @@ Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: rust
 Source: http://www.rust-lang.org
 Files-Excluded:
+ *.min.js
  cargo
+ src/jemalloc/msvc/*_vc*.sln
  src/llvm
- src/librustdoc/html/static/jquery-*.min.js
  src/rt/hoedown/src/html_blocks.c
+ src/vendor/mdbook/src/theme/_FontAwesome
 
 Files: *
 Copyright: 2006-2009 Graydon Hoare

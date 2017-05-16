@@ -9,4 +9,3 @@ configure       usr/src/rust
 x.py            usr/src/rust
 man             usr/src/rust
 src             usr/src/rust
-cargo           usr/src/rust
