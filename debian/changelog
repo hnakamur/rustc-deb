@@ -7,8 +7,7 @@ rustc (1.17.0+dfsg1-1) UNRELEASED; urgency=medium
   * Adapt packaging for rustbuild, the new upstream cargo-based build system.
 
   [ Matthijs van Otterdijk ]
-  * Add a binary package, libstd-rust-src, for the source code of the standard
-    library. Useful for IDEs like racer. (Closes: #846177)
+  * Add a binary package, rust-src. (Closes: #846177)
   * Link to local Debian web resources in the docs, instead of remote ones.
 
  -- Ximin Luo <infinity0@debian.org>  Tue, 16 May 2017 01:19:12 +0200
