@@ -4,27 +4,15 @@
 include /usr/share/dpkg/pkg-info.mk
 include /usr/share/dpkg/architecture.mk
 include /usr/share/dpkg/buildflags.mk
-#RUSTFLAGS = -C link-args="$(LDFLAGS)"
-# temporary workaround for https://github.com/rust-lang/rust/issues/31529
-# this will FAIL if LDFLAGS itself contains shell-interpreted chars beyond
-# unquoted spaces (that addprefix works around the failure of)
+# TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
 RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
-
-# see https://github.com/rust-lang/rust/issues/37320
-# it should be possible to remove this in the next Debian release
-export MALLOC_CONF = lg_dirty_mult:-1
 
 # Defines DEB_*_RUST_TYPE triples
 include debian/architecture.mk
 
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
-
-# When using sudo pbuilder, this will cause mk/install.mk to run sudo,
-# but we don't need sudo as a build-dep for the package if we unexport
-# the SUDO_USER variable.
-unexport SUDO_USER
 
 # src/rt/miniz.c (incorrectly) triggers -Wmisleading-indentation with
 # gcc-6.  See bug #811573.
@@ -39,8 +27,8 @@ RELEASE_CHANNEL := stable
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
-RUST_VERSION := $(shell dpkg-parsechangelog --show-field Version | sed -re 's/([^.]+)\.([^.]+)\..*/\1.\2/')
-RUST_LONG_VERSION := $(shell dpkg-parsechangelog --show-field Version | sed -re 's/([^+]+).*/\1/')
+RUST_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -re 's/([^.]+)\.([^.]+)\..*/\1.\2/')
+RUST_LONG_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -re 's/([^+]+).*/\1/')
 LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
 
 # These are the normal build flags
@@ -131,14 +119,13 @@ SRC_CLEAN = src/rt/hoedown/src/html_blocks.c \
 build:
 	dh $@ --parallel
 
-# Note: SHELL is not set by dash, but the configure script wants to use it
 override_dh_auto_configure:
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
 	! grep --color=always -i 'll...$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
 	$(PRECONFIGURE_CHECK)
 	cp debian/config.toml src/bootstrap/config.toml
 	mkdir cargo # otherwise "install" fails, it's more strict than really needed
-	SHELL=/bin/sh PATH="$$PWD/debian/bin:$$PATH" DEB_HOST_ARCH="$(DEB_HOST_ARCH)" \
+	PATH="$$PWD/debian/bin:$$PATH" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 
 override_dh_auto_clean:
