@@ -212,8 +212,6 @@ override_dh_install-indep:
 	  debian/rust-gdb/usr/share/rust-gdb/*.py \
 	  debian/rust-lldb/usr/share/rust-lldb/*.py
 	$(RM) -rf $(SRC_CLEAN:%=debian/rust-src/usr/src/rust/%)
-	# TODO: can be dropped next time we do a repack
-	$(RM) -rf debian/rust-src/usr/src/rust/src/vendor/mdbook/src/theme/_FontAwesome
 	# Get rid of lintian warnings
 	find debian/rust-src/usr/src/rust \
 		\( -name .gitignore \
