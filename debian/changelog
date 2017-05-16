@@ -1,4 +1,4 @@
-rustc (1.17.0+dfsg2-1) UNRELEASED; urgency=medium
+rustc (1.17.0+dfsg2-1) experimental; urgency=medium
 
   [ Sylvestre Ledru ]
   * New upstream release
@@ -10,7 +10,7 @@ rustc (1.17.0+dfsg2-1) UNRELEASED; urgency=medium
   * Add a binary package, rust-src. (Closes: #846177)
   * Link to local Debian web resources in the docs, instead of remote ones.
 
- -- Ximin Luo <infinity0@debian.org>  Tue, 16 May 2017 01:19:12 +0200
+ -- Ximin Luo <infinity0@debian.org>  Tue, 16 May 2017 18:00:53 +0200
 
 rustc (1.16.0+dfsg1-1) unstable; urgency=medium
 
