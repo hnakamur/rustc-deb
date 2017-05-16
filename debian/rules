@@ -2,6 +2,7 @@
 # -*- makefile -*-
 
 include /usr/share/dpkg/pkg-info.mk
+include /usr/share/dpkg/vendor.mk
 include /usr/share/dpkg/architecture.mk
 include /usr/share/dpkg/buildflags.mk
 # TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
@@ -154,8 +155,10 @@ ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 # N instances of rustc (there is also parallel logic in libtest.rs already).
 	if RUST_BACKTRACE=1 $(RUSTBUILD) test $(RUSTBUILD_FLAGS); then \
 	  : ; \
-	elif [ $(DEB_DISTRIBUTION) != "experimental" ]; then \
+	elif [ $(DEB_VENDOR) = "Debian" -a $(DEB_DISTRIBUTION) != "experimental" ]; then \
 	  false; \
+	elif [ $(DEB_VENDOR) = "Ubuntu" -a $(DEB_HOST_ARCH) != "s390x" ]; then \
+	  false ; \
 	else \
 	  echo "====================================================="; \
 	  echo "WARNING: Ignoring test failures in the rust testsuite"; \
