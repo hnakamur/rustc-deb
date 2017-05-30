@@ -34,7 +34,7 @@ LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
 
 # These are the normal build flags. Upstream is moving to debian/config.toml
 # but at the current version not all of these flags are available in that file.
-DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src
+DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src --prefix=/usr
 
 # Use system LLVM (comment out to use vendored LLVM)
 OLD_LLVM_VERSION = 3.8
