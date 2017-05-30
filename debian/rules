@@ -28,9 +28,12 @@ RELEASE_CHANNEL := stable
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
-RUST_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -re 's/([^.]+)\.([^.]+)\..*/\1.\2/')
+SED_VERSION_SHORT := sed -re 's/([^.]+)\.([^.]+)\..*/\1.\2/'
+RUST_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | $(SED_VERSION_SHORT))
 RUST_LONG_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -re 's/([^+]+).*/\1/')
 LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
+# Sed expression that matches the "rustc" we have in our Build-Depends field
+SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc .*,/p}" debian/control
 
 # These are the normal build flags. Upstream is moving to debian/config.toml
 # but at the current version not all of these flags are available in that file.
@@ -42,11 +45,14 @@ DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.9
 RUSTBUILD = ./x.py
 RUSTBUILD_FLAGS = --config debian/config.toml -v
 
+update-version:
+	oldver=$(shell $(SED_RUSTC_BUILDDEP) | sed -ne 's/.*(<= \(.*\)).*/\1/gp' | $(SED_VERSION_SHORT)); \
+	newver=$(RUST_VERSION); \
+	if [ $$oldver != $$newver ]; then debian/update-version.sh $$oldver $$newver; fi
+
 # Below we detect how we're supposed to bootstrap the stage0 compiler. See
 # README.Debian for more details of the cases described below.
 #
-# Sed expression that matches the "rustc" we have in our Build-Depends field
-SED_RUSTC_BUILDDEP := /^Build-Depends:/,/^[^[:space:]\#]/{/\s*rustc.*,/$$action}
 PRECONFIGURE_CHECK = :
 HAVE_BINARY_TARBALL := $(shell ls -1 dl/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l)
 # allow not using the binary tarball although it exists
@@ -76,8 +82,8 @@ else
     # In this case, we'll bootstrap from the stage0 given in that tarball.
     # To ensure the uploader of the .dsc didn't make a mistake, we first check
     # that rustc isn't a Build-Depends for the current architecture.
-    ifneq (,$(shell action=p; sed -ne "$(SED_RUSTC_BUILDDEP)" debian/control))
-    ifeq (,$(shell action=p; sed -ne "$(SED_RUSTC_BUILDDEP)" debian/control | grep '!$(DEB_HOST_ARCH)'))
+    ifneq (,$(shell $(SED_RUSTC_BUILDDEP)))
+    ifeq (,$(shell $(SED_RUSTC_BUILDDEP) | grep '!$(DEB_HOST_ARCH)'))
         PRECONFIGURE_CHECK = $(error found matches for dl/*$(DEB_HOST_RUST_TYPE)*, \
           but rustc might be a Build-Depends for $(DEB_HOST_ARCH))
     endif

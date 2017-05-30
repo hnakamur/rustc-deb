@@ -13,6 +13,8 @@ Import of a new upstream version
 
 $ uscan
 $ gbp import-orig --upstream-branch=upstream/experimental --debian-branch=debian/experimental ../rustc_X.YY.0+dfsg1.orig.tar.xz
+$ dch -v X.YY.0+dfsg1-1
+$ debian/rules update-version
 
 
 Embedded libraries
