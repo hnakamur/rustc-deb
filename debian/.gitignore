@@ -1,6 +1,7 @@
 /*.debhelper.log
 /*.substvars
 /*.debhelper
+/config.toml
 /files
 /libstd-rust-*/
 /libstd-rust-dev/

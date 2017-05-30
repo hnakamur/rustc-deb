@@ -1,5 +1,0 @@
-[build]
-cargo = "/usr/bin/cargo"
-
-[install]
-prefix = "/usr"
