@@ -1,3 +1,10 @@
+rustc (1.17.0+dfsg2-2) UNRELEASED; urgency=medium
+
+  * Support and document cross-compiling of rustc itself.
+  * Document cross-compiling other rust packages such as cargo.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 31 May 2017 13:40:21 +0200
+
 rustc (1.17.0+dfsg2-1) experimental; urgency=medium
 
   [ Sylvestre Ledru ]

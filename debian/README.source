@@ -8,6 +8,7 @@ still ongoing.
 We try to describe here inner packaging details and the
 reasons behind them.
 
+
 Import of a new upstream version
 ================================
 
@@ -15,6 +16,7 @@ $ uscan
 $ gbp import-orig --upstream-branch=upstream/experimental --debian-branch=debian/experimental ../rustc_X.YY.0+dfsg1.orig.tar.xz
 $ dch -v X.YY.0+dfsg1-1
 $ debian/rules update-version
+# might also need to bump the version of the cargo Build-Depends
 
 
 Embedded libraries
@@ -46,4 +48,3 @@ As a summary, we plan to:
  * work with upstream to fix compiler-rt linkage soon.
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 06 May 2017 13:26:08 +0200
-
