@@ -1,7 +1,4 @@
 [build]
-cargo = "/usr/bin/cargo"
-rustc = "/usr/bin/rustc"
-
 submodules = false
 vendor = true
 locked-deps = false

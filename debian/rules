@@ -55,7 +55,7 @@ update-version:
 # README.Debian for more details of the cases described below.
 #
 PRECONFIGURE_CHECK = :
-HAVE_BINARY_TARBALL := $(shell ls -1 dl/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l)
+HAVE_BINARY_TARBALL := $(shell ls -1 stage0/*/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l)
 # allow not using the binary tarball although it exists
 #ifneq (,$(filter $(DEB_HOST_ARCH), amd64 arm64 armhf i386 powerpc ppc64el s390x))
 #  HAVE_BINARY_TARBALL := 0
@@ -73,19 +73,19 @@ ifeq (0,$(HAVE_BINARY_TARBALL))
     endif
     #
     # Case A-2: the builder selected the "dlstage0" build profile.
-    # In this case, the rust build scripts will download a stage0 into dl/ and use that.
+    # In this case, the rust build scripts will download a stage0 into stage0/ and use that.
     # We don't need to do anything specific in this build file, so this case is empty.
 else
     # Case B (Bootstrapping a new distro): the extracted source tree does
     # include a bootstrapping tarball for the current architecture; see the
-    # `source_orig-dl` target below on how to build this.
+    # `source_orig-stage0` target below on how to build this.
     #
     # In this case, we'll bootstrap from the stage0 given in that tarball.
     # To ensure the uploader of the .dsc didn't make a mistake, we first check
     # that rustc isn't a Build-Depends for the current architecture.
     ifneq (,$(shell $(SED_RUSTC_BUILDDEP)))
     ifeq (,$(shell $(SED_RUSTC_BUILDDEP) | grep '!$(DEB_HOST_ARCH)'))
-        PRECONFIGURE_CHECK = $(error found matches for dl/*$(DEB_HOST_RUST_TYPE)*, \
+        PRECONFIGURE_CHECK = $(error found matches for stage0/*/*$(DEB_HOST_RUST_TYPE)*, \
           but rustc might be a Build-Depends for $(DEB_HOST_ARCH))
     endif
     endif
@@ -130,6 +130,7 @@ override_dh_auto_configure: debian/config.toml
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
 	! grep --color=always -i 'll...?$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
 	$(PRECONFIGURE_CHECK)
+	if [ -d stage0 ]; then mkdir -p build && ln -sfT ../stage0 build/cache; fi
 	PATH="$$PWD/debian/bin:$$PATH" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 
@@ -258,9 +259,9 @@ override_dh_shlibdeps:
 	dh_shlibdeps -- -x$(LIBSTD_PKG)
 
 QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE = x=$$?; if [ $$x = 2 ]; then exit 0; else exit $$x; fi
-source_orig-dl:
+source_orig-stage0:
 	QUILT_PATCHES=debian/patches quilt push -aq; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
 	$(MAKE) -f debian/rules clean
-	debian/make_orig-dl_tarball.sh
+	debian/make_orig-stage0_tarball.sh
 	QUILT_PATCHES=debian/patches quilt pop -aq; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
 	rm -rf .pc
