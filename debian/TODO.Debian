@@ -6,11 +6,6 @@
       https://buildd.debian.org/status/fetch.php?pkg=rustc&arch=ppc64el&ver=1.17.0%2Bdfsg2-1&stamp=1495038619&raw=0
   - debuginfo test failures on i386, arm64
 
-- get cross-building working
-  - mostly working, blocked on https://github.com/rust-lang/rust/issues/42320
-    we could work around it by avoiding $(RUSTBUILD) --install in override_dh_auto_install
-    and doing it manually instead
-
 - rm or re-fix dlstage0, update docs
 
 Long build time

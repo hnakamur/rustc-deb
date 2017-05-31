@@ -11,6 +11,7 @@ export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
 
 # Defines DEB_*_RUST_TYPE triples
 include debian/architecture.mk
+export DEB_HOST_RUST_TYPE
 
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
