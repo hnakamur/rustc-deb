@@ -6,8 +6,6 @@
       https://buildd.debian.org/status/fetch.php?pkg=rustc&arch=ppc64el&ver=1.17.0%2Bdfsg2-1&stamp=1495038619&raw=0
   - debuginfo test failures on i386, arm64
 
-- rm or re-fix dlstage0, update docs
-
 Long build time
 ===============
 
