@@ -148,6 +148,8 @@ override_dh_auto_build-arch: generate-sources
 # depends on build-arch anyways.
 override_dh_auto_build-indep: generate-sources
 ifneq (,$(BUILD_DOCS))
+# Rust has a weird way of configuring whether to build docs or not
+	sed -i -e 's/^docs = false/docs = true/' debian/config.toml
 	$(RUSTBUILD) doc $(RUSTBUILD_FLAGS)
 endif
 

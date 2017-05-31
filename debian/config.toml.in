@@ -12,6 +12,8 @@ build = "DEB_BUILD_RUST_TYPE"
 host = ["DEB_HOST_RUST_TYPE"]
 target = ["DEB_TARGET_RUST_TYPE"]
 
+docs = false
+
 [install]
 prefix = "/usr"
 
