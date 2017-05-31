@@ -15,27 +15,6 @@ The rational is the following:
  -- Sylvestre Ledru <sylvestre@debian.org>, Fri, 13 Feb 2015 15:08:43 +0100
 
 
-Building from source
-====================
-
-The Debian rustc package will use the system rustc to bootstrap itself from.
-The system rustc has to be either the previous or the same version as the rustc
-being built; the build will fail if this is not the case.
-
-    apt-get source --compile rustc
-
-Alternatively, you may give the "pkg.rustc.dlstage0" DEB_BUILD_PROFILE to
-instead use the process defined by Rust upstream. This downloads the "official"
-stage0 compiler for the version being built from rust-lang.org. At the time of
-writing "official" means "the previous stable version".
-
-    apt-get source --compile --build-profiles=pkg.rustc.dlstage0 rustc
-
-If neither of these options are acceptable to you, (e.g. because your build
-process cannot access the network), see the below sections on "Bootstrapping"
-for more options.
-
-
 Cross-compiling
 ===============
 
@@ -63,7 +42,7 @@ You'll probably also want to add
 
     include /usr/share/rustc/architecture.mk
 
-to your debian/rules.
+to your debian/rules. This sets some useful variables like DEB_HOST_RUST_TYPE.
 
 See the cargo package for an example.
 
@@ -116,31 +95,31 @@ Porting to new architectures (on the same distro)
 =================================================
 
 As mentioned above, to cross-compile rust packages you need to install the rust
-standard library for every target architecture. However, this is not needed
-when cross-compiling rustc itself; its buildsystem will build them for you.
+standard library for each relevant foreign architecture. However, this is not
+needed when cross-compiling rustc itself; its build system will build any
+relevant foreign-architecture standard libraries automatically.
 
-By nature, cross-compiles do not run tests. These are important for rustc and
-many tests often fail on newly-supported architectures even if builds and
-cross-builds work fine. You should find some appropriate way to test your
-cross-built packages rather than blindly shipping them to users.
-
-For example, Debian experimental is an appropriate place to upload them, so
-that they can be installed and tested on Debian porter boxes, before being
-uploaded to unstable and distributed to users.
-
-Using sbuild, in a schroot
---------------------------
+Cross-build, in a schroot using sbuild
+--------------------------------------
 
 0. Set up an schroot for your native architecture, for sbuild:
-   https://wiki.debian.org/sbuild
+
+    sudo apt-get install sbuild
+    sudo sbuild-adduser $LOGNAME
+    newgrp sbuild # or log out and log back in
+    sudo sbuild-createchroot --include=eatmydata,ccache,gnupg unstable \
+      /srv/chroot/unstable-$(dpkg-architecture -qDEB_BUILD_ARCH)-sbuild \
+      http://deb.debian.org/debian
+
+   See https://wiki.debian.org/sbuild for more details.
 
 1. Build it:
 
     sudo apt-get source --download-only rustc
     sbuild --host=$new_arch rustc_*.dsc
 
-Directly on your own system
----------------------------
+Cross-build, directly on your own system
+----------------------------------------
 
 0. Install the build-dependencies of rustc (including cargo and itself):
 
@@ -151,77 +130,21 @@ Directly on your own system
 
     apt-get source --compile --host-architecture=$new_arch rustc
 
-    sudo apt-get build-dep --build-profile=nodoc rustc
-    dpkg-buildpackage -t $new_arch
+Native-build using bundled upstream binary blobs
+------------------------------------------------
 
-Directly from upstream binaries
--------------------------------
+Use the same instructions as given in "Bootstrapping" in debian/README.source
+in the source package, making sure to set the relevant architectures.
 
-Use the same instructions as given in "Bootstrapping" below, setting the
-relevant architectures.
+Responsible distribution of cross-built binaries
+------------------------------------------------
 
+By nature, cross-builds do not run tests. These are important for rustc and
+many tests often fail on newly-supported architectures even if builds and
+cross-builds work fine. You should find some appropriate way to test your
+cross-built packages rather than blindly shipping them to users.
 
-Bootstrapping
-=============
+For example, Debian experimental is an appropriate place to upload them, so
+that they can be installed and tested on Debian porter boxes, before being
+uploaded to unstable and distributed to users.
 
-To bootstrap rustc a distro that does not have it or cargo on any architecture,
-i.e. where cross-compiling is not an option, you can run `debian/rules
-source_orig-stage0`. This creates a .dsc that does not Build-Depend on rustc or
-cargo. Instead, it includes an extra orig-stage0 source tarball that contains
-the official stage0 compiler, pre-downloaded from rust-lang.org so that your
-build daemons don't need to access the network during the build.
-
-    debian/rules source_orig-stage0
-    sbuild ../rustc_*.dsc && dput ../rustc_*.dsc
-
-To only bootstrap specific architectures, run this instead:
-
-    upstream_bootstrap_arch="arm64 armel armhf" debian/rules source_orig-stage0
-
-This way, other architectures will be omitted from the orig-stage0 tarball. You
-might want to do this e.g. if these other architectures are already present in
-your distro, but the $upstream_bootstrap_arch ones are not yet present.
-
-Notes
------
-
-The approach bundles the upstream bootstrapping binaries inside the Debian
-source package. This is a nasty hack that stretches the definition of "source
-package", but has a few advantages explained below.
-
-The traditional Debian way of bootstrapping compilers - and other distros have
-similar approaches - is some variant of the following:
-
-1. A developer locally installs some upstream bootstrapping binaries.
-2. They locally build a Debian package, using these binaries as undeclared
-   build dependencies.
-3. They upload these binary packages to Debian, which can be used as declared
-   Build-Depends in the future, including by the same package.
-
-The problem with this is, Debian does not have any policy nor infrastructure
-that can try to reproduce what this developer supposedly did.
-
-Using bootstrapping binary blobs *at some point of the process* is unavoidable.
-Rather than pretending we didn't do this, it is better to record *which blobs*
-we used, so it can be audited later. If we bundle non-Debian build-dependencies
-inside the source package, then we can do a *source-only upload*, and the
-building of the binary packages can be done by the normal build infrastructure.
-
-If the build process is reproducible [1] then we can be sure that *you* (as the
-developer that prepared the source-only upload) didn't backdoor the binaries,
-nor did the build daemons even if they were compromised during the build.
-
-The bootstrapping binaries may still have been backdoored, but this is true in
-both scenarios. So our arrangement is still a strict improvement in security,
-because it reduces the set of "things that may have been backdoored". Also,
-more people use the upstream binaries than the "magical original Debian
-package", so that any backdoors have a greater chance of being detected.
-
-In the long run, this process is laying the foundations for doing Diverse
-Double-Compilation [2], where we use *many independent* bootstrapping binaries
-to reproduce bit-for-bit identical output compilers, giving confidence that
-nothing was backdoored along the way.
-
-[1] The build process for rustc is currently *not* reproducible but we're
-    working towards it. https://github.com/rust-lang/rust/issues/34902
-[2] http://www.dwheeler.com/trusting-trust/
