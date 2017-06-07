@@ -12,7 +12,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  
  
 -def get(url, path, verbose=False):
-+def get(url, path, verbose=False, use_local_hash_if_present=False):
++def get(url, path, verbose=False, use_local_hash_if_present=True):
      sha_url = url + ".sha256"
      with tempfile.NamedTemporaryFile(delete=False) as temp_file:
          temp_path = temp_file.name
@@ -43,7 +43,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
              tarball = os.path.join(rustc_cache, filename)
 -            if not os.path.exists(tarball):
 -                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
-+            get("{}/{}".format(url, filename), tarball, verbose=self.verbose, use_local_hash_if_present=True)
++            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
              unpack(tarball, self.bin_root(),
                     match="rust-std-" + self.build,
                     verbose=self.verbose)
@@ -53,7 +53,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
              tarball = os.path.join(rustc_cache, filename)
 -            if not os.path.exists(tarball):
 -                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
-+            get("{}/{}".format(url, filename), tarball, verbose=self.verbose, use_local_hash_if_present=True)
++            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
              unpack(tarball, self.bin_root(), match="rustc", verbose=self.verbose)
              self.fix_executable(self.bin_root() + "/bin/rustc")
              self.fix_executable(self.bin_root() + "/bin/rustdoc")
@@ -63,7 +63,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
              tarball = os.path.join(cargo_cache, filename)
 -            if not os.path.exists(tarball):
 -                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
-+            get("{}/{}".format(url, filename), tarball, verbose=self.verbose, use_local_hash_if_present=True)
++            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
              unpack(tarball, self.bin_root(), match="cargo", verbose=self.verbose)
              self.fix_executable(self.bin_root() + "/bin/cargo")
              with open(self.cargo_stamp(), 'w') as f:
