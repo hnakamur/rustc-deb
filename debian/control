@@ -32,9 +32,13 @@ Build-Depends: debhelper (>= 9),
                antlr4 <!nocheck> | antlr <!nocheck>,
                bison <!nocheck>,
                flex <!nocheck>,
-               gdb <!nocheck>,
+               gdb (>= 7.12) <!nocheck>,
                default-jdk-headless <!nocheck> | default-jdk <!nocheck>,
 Build-Depends-Indep: libjs-jquery <!nodoc>
+# Work around #864741. The version constraint for gdb above should already do
+# that, but this will keep things covered even in the case that they change
+# gdb-minimal to do a versioned Provides: gdb.
+Build-Conflicts: gdb-minimal <!nocheck>
 Standards-Version: 3.9.8
 Homepage: http://www.rust-lang.org/
 Vcs-Git: https://anonscm.debian.org/git/pkg-rust/rust.git
