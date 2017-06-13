@@ -1,4 +1,4 @@
-rustc (1.17.0+dfsg2-2) UNRELEASED; urgency=medium
+rustc (1.17.0+dfsg2-2) experimental; urgency=medium
 
   * Support and document cross-compiling of rustc itself.
   * Document cross-compiling other rust packages such as cargo.
@@ -6,7 +6,7 @@ rustc (1.17.0+dfsg2-2) UNRELEASED; urgency=medium
     disabling optimisation, which causes FTBFS on 1.17.0 ppc64el. See
     upstream #42476 and #42532 for details.
 
- -- Ximin Luo <infinity0@debian.org>  Wed, 31 May 2017 13:40:21 +0200
+ -- Ximin Luo <infinity0@debian.org>  Tue, 13 Jun 2017 21:13:31 +0200
 
 rustc (1.17.0+dfsg2-1) experimental; urgency=medium
 
