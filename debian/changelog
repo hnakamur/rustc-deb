@@ -1,10 +1,10 @@
-rustc (1.17.0+dfsg2-3) UNRELEASED; urgency=medium
+rustc (1.17.0+dfsg2-3) experimental; urgency=medium
 
   * Try to force the real gdb package. Some resolvers like aspcud will select
     gdb-minimal under some circumstances, but this causes the debuginfo-gdb
     tests to break.
 
- -- Ximin Luo <infinity0@debian.org>  Tue, 13 Jun 2017 23:09:51 +0200
+ -- Ximin Luo <infinity0@debian.org>  Wed, 14 Jun 2017 00:48:37 +0200
 
 rustc (1.17.0+dfsg2-2) experimental; urgency=medium
 
