@@ -101,12 +101,6 @@ ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
   DEB_CONFIGURE_FLAGS += --disable-optimize --disable-optimize-cxx --disable-optimize-llvm
 endif
 
-# Workaround for powerpc64le: no optimization
-# TODO: can remove when https://github.com/rust-lang/rust/issues/39015 is fixed
-ifneq (,$(findstring powerpc64le,$(DEB_TARGET_RUST_TYPE)))
-  DEB_CONFIGURE_FLAGS += --disable-optimize --disable-optimize-cxx --disable-optimize-llvm
-endif
-
 # Build products or non-source files in src/, that shouldn't go in rust-src
 SRC_CLEAN = src/rt/hoedown/src/html_blocks.c \
 	src/bootstrap/bootstrap.pyc \
