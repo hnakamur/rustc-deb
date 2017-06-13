@@ -1,10 +1,11 @@
 - fix arch tests
-  - build failures on
-    armhf: illegal instruction
-      https://buildd.debian.org/status/fetch.php?pkg=rustc&arch=armhf&ver=1.17.0%2Bdfsg2-1&stamp=1495073322&raw=0
-    ppc64el: LLVM ERROR: Undefined temporary symbol
-      https://buildd.debian.org/status/fetch.php?pkg=rustc&arch=ppc64el&ver=1.17.0%2Bdfsg2-1&stamp=1495038619&raw=0
-  - debuginfo test failures on i386, arm64
+  - armhf: awaiting LLVM fix, see #864311
+  - debuginfo test failures on i386, amd64, arm64:
+test [debuginfo-gdb] debuginfo-gdb/gdb-pretty-struct-and-enums-pre-gdb-7-7.rs ... FAILED
+test [debuginfo-gdb] debuginfo-gdb/pretty-huge-vec.rs ... FAILED
+test [debuginfo-gdb] debuginfo-gdb/pretty-std.rs ... FAILED
+test [debuginfo-gdb] debuginfo-gdb/pretty-uninitialized-vec.rs ... FAILED
+    however I can't reproduce them locally, in a local sbuild, or on asachi (arm64 portebox???)
 
 Long build time
 ===============
