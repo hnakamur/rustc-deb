@@ -37,7 +37,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 +    #[test] #[cfg(not(target_arch = "powerpc64"))]
      fn smoke_no_dtor() {
 -        thread_local!(static FOO: Cell<i32> = Cell::new(1));
-+        thread_local!(static FOO: Cell<i32> = ::cell::Cell::new(1));
++        thread_local!(static FOO: ::cell::Cell<i32> = ::cell::Cell::new(1));
  
          FOO.with(|f| {
              assert_eq!(f.get(), 1);
