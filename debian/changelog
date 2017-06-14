@@ -1,3 +1,9 @@
+rustc (1.17.0+dfsg2-4) UNRELEASED; urgency=medium
+
+  * Fix arch-indep and arch-dep tests.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 14 Jun 2017 03:17:35 +0200
+
 rustc (1.17.0+dfsg2-3) experimental; urgency=medium
 
   * Try to force the real gdb package. Some resolvers like aspcud will select
