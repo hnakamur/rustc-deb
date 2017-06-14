@@ -1,9 +1,9 @@
-rustc (1.17.0+dfsg2-4) UNRELEASED; urgency=medium
+rustc (1.17.0+dfsg2-4) experimental; urgency=medium
 
   * Fix arch-indep and arch-dep tests.
   * Bump the LLVM requirement to fix FTBFS on armhf.
 
- -- Ximin Luo <infinity0@debian.org>  Wed, 14 Jun 2017 03:17:35 +0200
+ -- Ximin Luo <infinity0@debian.org>  Wed, 14 Jun 2017 21:37:16 +0200
 
 rustc (1.17.0+dfsg2-3) experimental; urgency=medium
 
