@@ -1,6 +1,3 @@
-- fix arch tests
-  - armhf: awaiting LLVM fix, see #864311
-
 Long build time
 ===============
 
