@@ -1,3 +1,9 @@
+rustc (1.17.0+dfsg2-5) UNRELEASED; urgency=medium
+
+  * Ignore a failing debuginfo-gdb test on armhf.
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 15 Jun 2017 15:26:06 +0200
+
 rustc (1.17.0+dfsg2-4) experimental; urgency=medium
 
   * Fix arch-indep and arch-dep tests.
