@@ -1,6 +1,6 @@
 rustc (1.17.0+dfsg2-5) UNRELEASED; urgency=medium
 
-  * Ignore a failing debuginfo-gdb test on armhf.
+  * More work-arounds for armhf test failures.
 
  -- Ximin Luo <infinity0@debian.org>  Thu, 15 Jun 2017 15:26:06 +0200
 
