@@ -4,6 +4,8 @@ Description: Disable reference.md "Items_and_attributes_15" doctest, failing on 
  See https://gist.github.com/infinity0/2f5452d4ee9deb2f1bacb8b39c987c9c
  for thread stacktrace from 1.10.0 when it hung instead of failed; eddyb from
  #rustc suggested this might be an LLVM issue.
+ .
+ Last checked this still affects 1.17
 Author: Ximin Luo <infinity0@debian.org>
 Bug: https://github.com/rust-lang/rust/issues/40260
 ---
