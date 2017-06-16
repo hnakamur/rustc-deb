@@ -125,6 +125,8 @@ override_dh_auto_configure: debian/config.toml
 	! grep --color=always -i 'll...?$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
 	$(PRECONFIGURE_CHECK)
 	if [ -d stage0 ]; then mkdir -p build && ln -sfT ../stage0 build/cache; fi
+	# avoid having to do this manually all the time
+	if [ -n "$(shell grep "Debian .*porterbox" /etc/motd)" ]; then debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
 	PATH="$$PWD/debian/bin:$$PATH" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 
