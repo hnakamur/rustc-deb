@@ -125,8 +125,8 @@ override_dh_auto_configure: debian/config.toml
 	! grep --color=always -i 'll...?$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
 	$(PRECONFIGURE_CHECK)
 	if [ -d stage0 ]; then mkdir -p build && ln -sfT ../stage0 build/cache; fi
-	# avoid having to do this manually all the time
-	if [ "$${SCHROOT_CHROOT_NAME}" != "$${SCHROOT_CHROOT_NAME%-dchroot}" ]; then \
+	# work around #842634
+	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
 	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
 	PATH="$$PWD/debian/bin:$$PATH" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
