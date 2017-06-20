@@ -2,11 +2,9 @@ Description: Don't check for cargo-vendor when building from (Debian's) git
 Author: Matthijs van Otterdijk <matthijs@wirevirt.net>
 Forwarded: not-needed
 ---
-Index: rust/src/bootstrap/dist.rs
-===================================================================
---- rust.orig/src/bootstrap/dist.rs
-+++ rust/src/bootstrap/dist.rs
-@@ -438,7 +438,10 @@ pub fn rust_src(build: &Build) {
+--- a/src/bootstrap/dist.rs
++++ b/src/bootstrap/dist.rs
+@@ -434,7 +434,10 @@
      }
  
      // If we're building from git sources, we need to vendor a complete distribution.

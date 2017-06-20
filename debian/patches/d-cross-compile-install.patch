@@ -6,7 +6,7 @@ Bug: https://github.com/rust-lang/rust/issues/42320
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/bootstrap/step.rs
 +++ b/src/bootstrap/step.rs
-@@ -899,11 +899,18 @@
+@@ -959,11 +959,18 @@
  
  impl<'a> Rules<'a> {
      fn new(build: &'a Build) -> Rules<'a> {

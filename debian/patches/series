@@ -9,7 +9,6 @@ u-ignoretest-armhf_05.patch
 u-ignoretest-arm64.patch
 u-ignoretest-ppc64el.patch
 u-workaround-testfailure-armhf_01.patch
-u-fix-weird-arm-logic.diff
 u-fix-debuginfo.patch
 u-allow-stable-features.patch
 u-only-run-linkchecker-if-docs.patch
@@ -23,7 +22,7 @@ d-rust-gdb-paths
 d-rust-lldb-paths
 d-add-soname.patch
 d-dont-download-stage0.patch
-d-dynamic-link-llvm.patch
+#d-dynamic-link-llvm.patch
 d-use-system-jquery.patch
 d-no-web-dependencies-in-doc.patch
 d-cross-compile-install.patch

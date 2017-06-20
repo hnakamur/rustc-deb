@@ -1,6 +1,6 @@
 --- a/src/librustdoc/html/render.rs
 +++ b/src/librustdoc/html/render.rs
-@@ -656,8 +656,16 @@
+@@ -660,8 +660,16 @@
      // Add all the static files. These may already exist, but we just
      // overwrite them anyway to make sure that they're fresh and up-to-date.
  

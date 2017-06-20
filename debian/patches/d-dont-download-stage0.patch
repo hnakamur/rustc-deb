@@ -37,7 +37,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          delete_if_present(temp_path, verbose)
  
  
-@@ -175,8 +176,7 @@
+@@ -173,8 +174,7 @@
              filename = "rust-std-{}-{}.tar.gz".format(channel, self.build)
              url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
              tarball = os.path.join(rustc_cache, filename)
@@ -47,7 +47,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
              unpack(tarball, self.bin_root(),
                     match="rust-std-" + self.build,
                     verbose=self.verbose)
-@@ -184,8 +184,7 @@
+@@ -182,8 +182,7 @@
              filename = "rustc-{}-{}.tar.gz".format(channel, self.build)
              url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
              tarball = os.path.join(rustc_cache, filename)
@@ -57,10 +57,10 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
              unpack(tarball, self.bin_root(), match="rustc", verbose=self.verbose)
              self.fix_executable(self.bin_root() + "/bin/rustc")
              self.fix_executable(self.bin_root() + "/bin/rustdoc")
-@@ -198,8 +197,7 @@
-             filename = "cargo-nightly-{}.tar.gz".format(self.build)
-             url = "https://s3.amazonaws.com/rust-lang-ci/cargo-builds/" + self.stage0_cargo_rev()
-             tarball = os.path.join(cargo_cache, filename)
+@@ -204,8 +203,7 @@
+             filename = "cargo-{}-{}.tar.gz".format('0.18.0', self.build)
+             url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
+             tarball = os.path.join(rustc_cache, filename)
 -            if not os.path.exists(tarball):
 -                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
 +            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
@@ -69,7 +69,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
              with open(self.cargo_stamp(), 'w') as f:
 --- a/configure
 +++ b/configure
-@@ -611,7 +611,6 @@
+@@ -612,7 +612,6 @@
  
  step_msg "looking for build programs"
  
