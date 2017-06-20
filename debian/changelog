@@ -1,3 +1,9 @@
+rustc (1.17.0+dfsg2-6) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 21 Jun 2017 00:24:22 +0200
+
 rustc (1.17.0+dfsg2-5) experimental; urgency=medium
 
   * More work-arounds for armhf test failures.
