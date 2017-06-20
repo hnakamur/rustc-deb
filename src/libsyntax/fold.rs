@@ -140,6 +140,10 @@ pub trait Folder : Sized {
         noop_fold_foreign_mod(nm, self)
     }
 
+    fn fold_global_asm(&mut self, ga: P<GlobalAsm>) -> P<GlobalAsm> {
+        noop_fold_global_asm(ga, self)
+    }
+
     fn fold_variant(&mut self, v: Variant) -> Variant {
         noop_fold_variant(v, self)
     }
@@ -358,7 +362,7 @@ pub fn noop_fold_ty<T: Folder>(t: P<Ty>, fld: &mut T) -> P<Ty> {
     t.map(|Ty {id, node, span}| Ty {
         id: fld.new_id(id),
         node: match node {
-            TyKind::Infer | TyKind::ImplicitSelf => node,
+            TyKind::Infer | TyKind::ImplicitSelf | TyKind::Err => node,
             TyKind::Slice(ty) => TyKind::Slice(fld.fold_ty(ty)),
             TyKind::Ptr(mt) => TyKind::Ptr(fld.fold_mt(mt)),
             TyKind::Rptr(region, mt) => {
@@ -410,6 +414,11 @@ pub fn noop_fold_foreign_mod<T: Folder>(ForeignMod {abi, items}: ForeignMod,
         abi: abi,
         items: items.move_map(|x| fld.fold_foreign_item(x)),
     }
+}
+
+pub fn noop_fold_global_asm<T: Folder>(ga: P<GlobalAsm>,
+                                       _: &mut T) -> P<GlobalAsm> {
+    ga
 }
 
 pub fn noop_fold_variant<T: Folder>(v: Variant, fld: &mut T) -> Variant {
@@ -489,7 +498,8 @@ pub fn noop_fold_attribute<T: Folder>(attr: Attribute, fld: &mut T) -> Option<At
     Some(Attribute {
         id: attr.id,
         style: attr.style,
-        value: fld.fold_meta_item(attr.value),
+        path: fld.fold_path(attr.path),
+        tokens: fld.fold_tts(attr.tokens),
         is_sugared_doc: attr.is_sugared_doc,
         span: fld.new_span(attr.span),
     })
@@ -612,7 +622,7 @@ pub fn noop_fold_interpolated<T: Folder>(nt: token::Nonterminal, fld: &mut T)
         token::NtExpr(expr) => token::NtExpr(fld.fold_expr(expr)),
         token::NtTy(ty) => token::NtTy(fld.fold_ty(ty)),
         token::NtIdent(id) => token::NtIdent(Spanned::<Ident>{node: fld.fold_ident(id.node), ..id}),
-        token::NtMeta(meta_item) => token::NtMeta(fld.fold_meta_item(meta_item)),
+        token::NtMeta(meta) => token::NtMeta(fld.fold_meta_item(meta)),
         token::NtPath(path) => token::NtPath(fld.fold_path(path)),
         token::NtTT(tt) => token::NtTT(fld.fold_tt(tt)),
         token::NtArm(arm) => token::NtArm(fld.fold_arm(arm)),
@@ -626,6 +636,7 @@ pub fn noop_fold_interpolated<T: Folder>(nt: token::Nonterminal, fld: &mut T)
         token::NtWhereClause(where_clause) =>
             token::NtWhereClause(fld.fold_where_clause(where_clause)),
         token::NtArg(arg) => token::NtArg(fld.fold_arg(arg)),
+        token::NtVis(vis) => token::NtVis(fld.fold_vis(vis)),
     }
 }
 
@@ -866,6 +877,7 @@ pub fn noop_fold_item_kind<T: Folder>(i: ItemKind, folder: &mut T) -> ItemKind {
         }
         ItemKind::Mod(m) => ItemKind::Mod(folder.fold_mod(m)),
         ItemKind::ForeignMod(nm) => ItemKind::ForeignMod(folder.fold_foreign_mod(nm)),
+        ItemKind::GlobalAsm(ga) => ItemKind::GlobalAsm(folder.fold_global_asm(ga)),
         ItemKind::Ty(t, generics) => {
             ItemKind::Ty(folder.fold_ty(t), folder.fold_generics(generics))
         }
@@ -1269,6 +1281,7 @@ pub fn noop_fold_expr<T: Folder>(Expr {id, node, span, attrs}: Expr, folder: &mu
                 };
             }
             ExprKind::Try(ex) => ExprKind::Try(folder.fold_expr(ex)),
+            ExprKind::Catch(body) => ExprKind::Catch(folder.fold_block(body)),
         },
         id: folder.new_id(id),
         span: folder.new_span(span),
@@ -1370,7 +1383,7 @@ mod tests {
             matches_codepattern,
             "matches_codepattern",
             pprust::to_string(|s| fake_print_crate(s, &folded_crate)),
-            "#[a]mod zz{fn zz(zz:zz,zz:zz){zz!(zz,zz,zz);zz;zz}}".to_string());
+            "#[zz]mod zz{fn zz(zz:zz,zz:zz){zz!(zz,zz,zz);zz;zz}}".to_string());
     }
 
     // even inside macro defs....

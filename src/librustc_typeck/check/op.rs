@@ -398,12 +398,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
         let method = match trait_did {
             Some(trait_did) => {
+                let lhs_expr = Some(super::AdjustedRcvr {
+                    rcvr_expr: lhs_expr, autoderefs: 0, unsize: false
+                });
                 self.lookup_method_in_trait_adjusted(expr.span,
-                                                     Some(lhs_expr),
+                                                     lhs_expr,
                                                      opname,
                                                      trait_did,
-                                                     0,
-                                                     false,
                                                      lhs_ty,
                                                      Some(other_tys))
             }
@@ -411,7 +412,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         };
 
         match method {
-            Some(method) => {
+            Some(ok) => {
+                let method = self.register_infer_ok_obligations(ok);
+                self.select_obligations_where_possible();
+
                 let method_ty = method.ty;
 
                 // HACK(eddyb) Fully qualified path to work around a resolve bug.

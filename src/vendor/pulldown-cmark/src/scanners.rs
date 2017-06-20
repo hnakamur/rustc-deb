@@ -25,6 +25,7 @@ use utils;
 use std::borrow::Cow;
 use std::borrow::Cow::{Borrowed, Owned};
 use std::char;
+use parse::Alignment;
 
 pub use puncttable::{is_ascii_punctuation, is_punctuation};
 
@@ -290,14 +291,15 @@ pub fn scan_setext_header(data: &str) -> (usize, i32) {
     (i, level)
 }
 
-// returns number of bytes in line (including trailing newline) and column count
-// TODO: alignment
-pub fn scan_table_head(data: &str) -> (usize, i32) {
+// returns number of bytes in line (including trailing
+// newline) and column alignments
+pub fn scan_table_head(data: &str) -> (usize, Vec<Alignment>) {
     let (mut i, spaces) = calc_indent(data, 4);
     if spaces > 3 || i == data.len() {
-        return (0, 0);
+        return (0, vec![]);
     }
-    let mut cols = 0;
+    let mut cols = vec![];
+    let mut active_col = Alignment::None;
     let mut start_col = true;
     if data.as_bytes()[i] == b'|' {
         i += 1;
@@ -309,25 +311,40 @@ pub fn scan_table_head(data: &str) -> (usize, i32) {
             break;
         }
         match *c {
-            b' ' | b':' => (),
+            b' ' => (),
+            b':' => {
+                active_col =
+                    match (start_col, active_col) {
+                        (true, Alignment::None) => Alignment::Left,
+                        (false, Alignment::Left) => Alignment::Center,
+                        (false, Alignment::None) => Alignment::Right,
+                        _ => active_col,
+                    };
+                start_col = false;
+            }
             b'-' => {
-                if start_col {
-                    cols += 1;
-                    start_col = false;
-                }
+                start_col = false;
             },
             b'|' => {
                 start_col = true;
+                cols.push(active_col);
+                active_col = Alignment::None;
             },
             _ => {
-                cols = 0;
+                cols = vec![];
+                start_col = true;
                 break;
             },
         }
         i += 1;
     }
-    if cols < 2 {
-        (0, 0)
+
+    if !start_col {
+        cols.push(active_col);
+    }
+
+    if cols.len() < 2 {
+        (0, vec![])
     } else {
         (i, cols)
     }
@@ -373,8 +390,11 @@ pub fn scan_listitem(data: &str) -> (usize, u8, usize, usize) {
         b'0' ... b'9' => {
             let mut i = 1;
             i += scan_while(&data[i..], is_digit);
-            start = data[..i].parse().unwrap();
             if i >= data.len() { return (0, 0, 0, 0); }
+            start = match data[..i].parse() {
+                Ok(start) => start,
+                Err(_) => return (0, 0, 0, 0),
+            };
             c = data.as_bytes()[i];
             if !(c == b'.' || c == b')') { return (0, 0, 0, 0); }
             i + 1
@@ -458,11 +478,11 @@ pub fn scan_entity(data: &str) -> (usize, Option<Cow<'static, str>>) {
             return (end + 1, Some(Borrowed(value)));
         }
     }
-    return (0, None);
+    (0, None)
 }
 
 // note: dest returned is raw, still needs to be unescaped
-pub fn scan_link_dest<'a>(data: &'a str) -> Option<(usize, &'a str)> {
+pub fn scan_link_dest(data: &str) -> Option<(usize, &str)> {
     let size = data.len();
     let mut i = 0;
     let pointy_n = scan_ch(data, b'<');
@@ -506,7 +526,7 @@ pub fn scan_link_dest<'a>(data: &'a str) -> Option<(usize, &'a str)> {
 }
 
 // return value is: total bytes, link uri
-pub fn scan_autolink<'a>(data: &'a str) -> Option<(usize, Cow<'a, str>)> {
+pub fn scan_autolink(data: &str) -> Option<(usize, Cow<str>)> {
     let mut i = 0;
     let n = scan_ch(data, b'<');
     if n == 0 { return None; }
@@ -610,7 +630,7 @@ pub fn is_escaped(data: &str, loc: usize) -> bool {
 }
 
 // Remove backslash escapes and resolve entities
-pub fn unescape<'a>(input: &'a str) -> Cow<'a, str> {
+pub fn unescape(input: &str) -> Cow<str> {
     if input.find(|c| c == '\\' || c == '&' || c == '\r').is_none() {
         Borrowed(input)
     } else {
@@ -662,5 +682,14 @@ pub fn spaces(n: usize) -> Cow<'static, str> {
             result.push(' ');
         }
         Owned(result)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn overflow_list() {
+        assert_eq!((0, 0, 0, 0), scan_listitem("4444444444444444444444444444444444444444444444444444444444!"));
     }
 }

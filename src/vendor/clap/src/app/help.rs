@@ -11,6 +11,7 @@ use app::parser::Parser;
 use args::{AnyArg, ArgSettings, DispOrder};
 use errors::{Error, Result as ClapResult};
 use fmt::{Format, Colorizer};
+use app::usage;
 
 // Third Party
 use unicode_width::UnicodeWidthStr;
@@ -195,9 +196,7 @@ impl<'a> Help<'a> {
             if arg.longest_filter() {
                 self.longest = cmp::max(self.longest, arg.to_string().len());
             }
-            if !arg.is_set(ArgSettings::Hidden) {
-                arg_v.push(arg)
-            }
+            arg_v.push(arg)
         }
         let mut first = true;
         for arg in arg_v {
@@ -284,7 +283,13 @@ impl<'a> Help<'a> {
                 }
                 try!(color!(self, "--{}", l, good))
             }
-            try!(write!(self.writer, " "));
+
+            let sep = if arg.is_set(ArgSettings::RequireEquals) {
+                "="
+            } else {
+                " "
+            };
+            try!(write!(self.writer, "{}", sep));
         } else if let Some(l) = arg.long() {
             if arg.short().is_some() {
                 try!(write!(self.writer, ", "));
@@ -384,7 +389,8 @@ impl<'a> Help<'a> {
         debugln!("Help::write_before_after_help;");
         let mut help = String::new();
         // determine if our help fits or needs to wrap
-        debugln!("Help::write_before_after_help: Term width...{}", self.term_w);
+        debugln!("Help::write_before_after_help: Term width...{}",
+                 self.term_w);
         let too_long = str_width(h) >= self.term_w;
 
         debug!("Help::write_before_after_help: Too long...");
@@ -392,10 +398,12 @@ impl<'a> Help<'a> {
             sdebugln!("Yes");
             help.push_str(h);
             debugln!("Help::write_before_after_help: help: {}", help);
-            debugln!("Help::write_before_after_help: help width: {}", str_width(&*help));
+            debugln!("Help::write_before_after_help: help width: {}",
+                     str_width(&*help));
             // Determine how many newlines we need to insert
-            debugln!("Help::write_before_after_help: Usable space: {}", self.term_w);
-            let longest_w = find_longest!(help);            
+            debugln!("Help::write_before_after_help: Usable space: {}",
+                     self.term_w);
+            let longest_w = find_longest!(help);
             help = help.replace("{n}", "\n");
             wrap_help(&mut help, longest_w, self.term_w);
         } else {
@@ -451,7 +459,7 @@ impl<'a> Help<'a> {
             // Determine how many newlines we need to insert
             let avail_chars = self.term_w - spcs;
             debugln!("Help::help: Usable space...{}", avail_chars);
-            let longest_w = find_longest!(help);            
+            let longest_w = find_longest!(help);
             help = help.replace("{n}", "\n");
             wrap_help(&mut help, longest_w, avail_chars);
         } else {
@@ -490,14 +498,16 @@ impl<'a> Help<'a> {
     fn spec_vals(&self, a: &ArgWithDisplay) -> String {
         debugln!("Help::spec_vals: a={}", a);
         let mut spec_vals = vec![];
-        if let Some(pv) = a.default_val() {
-            debugln!("Help::spec_vals: Found default value...[{}]", pv);
-            spec_vals.push(format!(" [default: {}]",
-                                   if self.color {
-                                       self.cizer.good(pv)
-                                   } else {
-                                       Format::None(pv)
-                                   }));
+        if !a.is_set(ArgSettings::HideDefaultValue) {
+            if let Some(pv) = a.default_val() {
+                debugln!("Help::spec_vals: Found default value...[{:?}]", pv);
+                spec_vals.push(format!(" [default: {}]",
+                                       if self.color {
+                                           self.cizer.good(pv.to_string_lossy())
+                                       } else {
+                                           Format::None(pv.to_string_lossy())
+                                       }));
+            }
         }
         if let Some(ref aliases) = a.aliases() {
             debugln!("Help::spec_vals: Found aliases...{:?}", aliases);
@@ -538,7 +548,7 @@ impl<'a> Help<'a> {
     pub fn write_all_args(&mut self, parser: &Parser) -> ClapResult<()> {
         debugln!("Help::write_all_args;");
         let flags = parser.has_flags();
-        let pos = parser.has_positionals();
+        let pos = parser.positionals().filter(|arg| !arg.is_set(ArgSettings::Hidden)).count() > 0;
         let opts = parser.has_opts();
         let subcmds = parser.has_subcommands();
 
@@ -681,7 +691,7 @@ impl<'a> Help<'a> {
         try!(write!(self.writer,
                     "\n{}{}\n\n",
                     TAB,
-                    parser.create_usage_no_title(&[])));
+                    usage::create_usage_no_title(parser, &[])));
 
         let flags = parser.has_flags();
         let pos = parser.has_positionals();
@@ -878,7 +888,7 @@ impl<'a> Help<'a> {
                                 parser.meta.about.unwrap_or("unknown about")));
                 }
                 b"usage" => {
-                    try!(write!(self.writer, "{}", parser.create_usage_no_title(&[])));
+                    try!(write!(self.writer, "{}", usage::create_help_usage(parser, true)));
                 }
                 b"all-args" => {
                     try!(self.write_all_args(&parser));
@@ -938,7 +948,8 @@ fn wrap_help(help: &mut String, longest_w: usize, avail_chars: usize) {
             debugln!("Help::wrap_help:iter: idx={}, g={}", idx, g);
             if g == "\n" {
                 debugln!("Help::wrap_help:iter: Newline found...");
-                debugln!("Help::wrap_help:iter: Still space...{:?}", str_width(&help[j..idx]) < avail_chars);
+                debugln!("Help::wrap_help:iter: Still space...{:?}",
+                         str_width(&help[j..idx]) < avail_chars);
                 if str_width(&help[j..idx]) < avail_chars {
                     j = idx;
                     continue;
@@ -957,7 +968,7 @@ fn wrap_help(help: &mut String, longest_w: usize, avail_chars: usize) {
             j = prev_space;
             debugln!("Help::wrap_help:iter: prev_space={}, j={}", prev_space, j);
             debugln!("Help::wrap_help:iter: Removing...{}", j);
-            debugln!("Help::wrap_help:iter: Char at {}: {:?}", j, &help[j..j+1]);
+            debugln!("Help::wrap_help:iter: Char at {}: {:?}", j, &help[j..j + 1]);
             help.remove(j);
             help.insert(j, '\n');
             prev_space = idx;

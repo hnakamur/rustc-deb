@@ -11,6 +11,7 @@ use std::fs::{self, File};
 use std::error::Error;
 use std::io::{self, Read};
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use handlebars::Handlebars;
 
@@ -229,6 +230,7 @@ fn make_data(book: &MDBook) -> Result<serde_json::Map<String, serde_json::Value>
 
 fn build_header_links(html: String, filename: &str) -> String {
     let regex = Regex::new(r"<h(\d)>(.*?)</h\d>").unwrap();
+    let mut id_counter = HashMap::new();
 
     regex.replace_all(&html, |caps: &Captures| {
         let level = &caps[1];
@@ -254,7 +256,16 @@ fn build_header_links(html: String, filename: &str) -> String {
             }
         }).collect::<String>();
 
-        format!("<a class=\"header\" href=\"{filename}#{id}\" name=\"{id}\"><h{level}>{text}</h{level}></a>",
+        let id_count = *id_counter.get(&id).unwrap_or(&0);
+        id_counter.insert(id.clone(), id_count + 1);
+
+        let id = if id_count > 0 {
+            format!("{}-{}", id, id_count)
+        } else {
+            id
+        };
+
+        format!("<a class=\"header\" href=\"{filename}#{id}\" id=\"{id}\"><h{level}>{text}</h{level}></a>",
             level=level, id=id, text=text, filename=filename)
     }).into_owned()
 }
@@ -307,15 +318,37 @@ fn add_playpen_pre(html: String) -> String {
                 format!("<pre class=\"playpen\">{}</pre>", text)
             } else {
                 // we need to inject our own main
+                let (attrs, code) = partition_source(code);
                 format!("<pre class=\"playpen\"><code class=\"{}\"># #![allow(unused_variables)]
-# 
-#fn main() {{
+{}#fn main() {{
 {}
-#}}</code></pre>", classes, code)
+#}}</code></pre>", classes, attrs, code)
             }
         } else {
             // not language-rust, so no-op
             format!("{}", text)
         }
     }).into_owned()
+}
+
+fn partition_source(s: &str) -> (String, String) {
+    let mut after_header = false;
+    let mut before = String::new();
+    let mut after = String::new();
+
+    for line in s.lines() {
+        let trimline = line.trim();
+        let header = trimline.chars().all(|c| c.is_whitespace()) ||
+            trimline.starts_with("#![");
+        if !header || after_header {
+            after_header = true;
+            after.push_str(line);
+            after.push_str("\n");
+        } else {
+            before.push_str(line);
+            before.push_str("\n");
+        }
+    }
+
+    (before, after)
 }

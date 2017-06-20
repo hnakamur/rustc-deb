@@ -28,7 +28,7 @@ use ptr::P;
 use std_inject;
 use symbol::{Symbol, keywords};
 use syntax_pos::DUMMY_SP;
-use tokenstream::{self, TokenTree};
+use tokenstream::{self, TokenStream, TokenTree};
 
 use std::ascii;
 use std::io::{self, Write, Read};
@@ -293,6 +293,7 @@ pub fn token_to_string(tok: &Token) -> String {
             token::NtGenerics(ref e)    => generics_to_string(&e),
             token::NtWhereClause(ref e) => where_clause_to_string(&e),
             token::NtArg(ref e)         => arg_to_string(&e),
+            token::NtVis(ref e)         => vis_to_string(&e),
         }
     }
 }
@@ -327,6 +328,10 @@ pub fn tt_to_string(tt: tokenstream::TokenTree) -> String {
 
 pub fn tts_to_string(tts: &[tokenstream::TokenTree]) -> String {
     to_string(|s| s.print_tts(tts.iter().cloned().collect()))
+}
+
+pub fn tokens_to_string(tokens: TokenStream) -> String {
+    to_string(|s| s.print_tts(tokens))
 }
 
 pub fn stmt_to_string(stmt: &ast::Stmt) -> String {
@@ -367,6 +372,10 @@ pub fn path_to_string(p: &ast::Path) -> String {
 
 pub fn ident_to_string(id: ast::Ident) -> String {
     to_string(|s| s.print_ident(id))
+}
+
+pub fn vis_to_string(v: &ast::Visibility) -> String {
+    to_string(|s| s.print_visibility(v))
 }
 
 pub fn fun_to_string(decl: &ast::FnDecl,
@@ -423,13 +432,7 @@ pub fn mac_to_string(arg: &ast::Mac) -> String {
 }
 
 pub fn visibility_qualified(vis: &ast::Visibility, s: &str) -> String {
-    match *vis {
-        ast::Visibility::Public => format!("pub {}", s),
-        ast::Visibility::Crate(_) => format!("pub(crate) {}", s),
-        ast::Visibility::Restricted { ref path, .. } =>
-            format!("pub({}) {}", to_string(|s| s.print_path(path, false, 0, true)), s),
-        ast::Visibility::Inherited => s.to_string()
-    }
+    format!("{}{}", to_string(|s| s.print_visibility(vis)), s)
 }
 
 fn needs_parentheses(expr: &ast::Expr) -> bool {
@@ -750,7 +753,21 @@ pub trait PrintState<'a> {
                 ast::AttrStyle::Inner => word(self.writer(), "#![")?,
                 ast::AttrStyle::Outer => word(self.writer(), "#[")?,
             }
-            self.print_meta_item(&attr.meta())?;
+            if let Some(mi) = attr.meta() {
+                self.print_meta_item(&mi)?
+            } else {
+                for (i, segment) in attr.path.segments.iter().enumerate() {
+                    if i > 0 {
+                        word(self.writer(), "::")?
+                    }
+                    if segment.identifier.name != keywords::CrateRoot.name() &&
+                       segment.identifier.name != "$crate" {
+                        word(self.writer(), &segment.identifier.name.as_str())?;
+                    }
+                }
+                space(self.writer())?;
+                self.print_tts(attr.tokens.clone())?;
+            }
             word(self.writer(), "]")
         }
     }
@@ -785,6 +802,45 @@ pub trait PrintState<'a> {
                               |s, i| s.print_meta_list_item(&i))?;
                 self.pclose()?;
             }
+        }
+        self.end()
+    }
+
+    /// This doesn't deserve to be called "pretty" printing, but it should be
+    /// meaning-preserving. A quick hack that might help would be to look at the
+    /// spans embedded in the TTs to decide where to put spaces and newlines.
+    /// But it'd be better to parse these according to the grammar of the
+    /// appropriate macro, transcribe back into the grammar we just parsed from,
+    /// and then pretty-print the resulting AST nodes (so, e.g., we print
+    /// expression arguments as expressions). It can be done! I think.
+    fn print_tt(&mut self, tt: tokenstream::TokenTree) -> io::Result<()> {
+        match tt {
+            TokenTree::Token(_, ref tk) => {
+                word(self.writer(), &token_to_string(tk))?;
+                match *tk {
+                    parse::token::DocComment(..) => {
+                        hardbreak(self.writer())
+                    }
+                    _ => Ok(())
+                }
+            }
+            TokenTree::Delimited(_, ref delimed) => {
+                word(self.writer(), &token_to_string(&delimed.open_token()))?;
+                space(self.writer())?;
+                self.print_tts(delimed.stream())?;
+                space(self.writer())?;
+                word(self.writer(), &token_to_string(&delimed.close_token()))
+            },
+        }
+    }
+
+    fn print_tts(&mut self, tts: tokenstream::TokenStream) -> io::Result<()> {
+        self.ibox(0)?;
+        for (i, tt) in tts.into_trees().enumerate() {
+            if i != 0 {
+                space(self.writer())?;
+            }
+            self.print_tt(tt)?;
         }
         self.end()
     }
@@ -1038,6 +1094,9 @@ impl<'a> State<'a> {
             ast::TyKind::Infer => {
                 word(&mut self.s, "_")?;
             }
+            ast::TyKind::Err => {
+                word(&mut self.s, "?")?;
+            }
             ast::TyKind::ImplicitSelf => {
                 word(&mut self.s, "Self")?;
             }
@@ -1206,6 +1265,11 @@ impl<'a> State<'a> {
                 self.bopen()?;
                 self.print_foreign_mod(nmod, &item.attrs)?;
                 self.bclose(item.span)?;
+            }
+            ast::ItemKind::GlobalAsm(ref ga) => {
+                self.head(&visibility_qualified(&item.vis, "global_asm!"))?;
+                word(&mut self.s, &ga.asm.as_str())?;
+                self.end()?;
             }
             ast::ItemKind::Ty(ref ty, ref params) => {
                 self.ibox(INDENT_UNIT)?;
@@ -1403,7 +1467,11 @@ impl<'a> State<'a> {
             ast::Visibility::Crate(_) => self.word_nbsp("pub(crate)"),
             ast::Visibility::Restricted { ref path, .. } => {
                 let path = to_string(|s| s.print_path(path, false, 0, true));
-                self.word_nbsp(&format!("pub({})", path))
+                if path == "self" || path == "super" {
+                    self.word_nbsp(&format!("pub({})", path))
+                } else {
+                    self.word_nbsp(&format!("pub(in {})", path))
+                }
             }
             ast::Visibility::Inherited => Ok(())
         }
@@ -1456,45 +1524,6 @@ impl<'a> State<'a> {
 
             self.bclose(span)
         }
-    }
-
-    /// This doesn't deserve to be called "pretty" printing, but it should be
-    /// meaning-preserving. A quick hack that might help would be to look at the
-    /// spans embedded in the TTs to decide where to put spaces and newlines.
-    /// But it'd be better to parse these according to the grammar of the
-    /// appropriate macro, transcribe back into the grammar we just parsed from,
-    /// and then pretty-print the resulting AST nodes (so, e.g., we print
-    /// expression arguments as expressions). It can be done! I think.
-    pub fn print_tt(&mut self, tt: tokenstream::TokenTree) -> io::Result<()> {
-        match tt {
-            TokenTree::Token(_, ref tk) => {
-                word(&mut self.s, &token_to_string(tk))?;
-                match *tk {
-                    parse::token::DocComment(..) => {
-                        hardbreak(&mut self.s)
-                    }
-                    _ => Ok(())
-                }
-            }
-            TokenTree::Delimited(_, ref delimed) => {
-                word(&mut self.s, &token_to_string(&delimed.open_token()))?;
-                space(&mut self.s)?;
-                self.print_tts(delimed.stream())?;
-                space(&mut self.s)?;
-                word(&mut self.s, &token_to_string(&delimed.close_token()))
-            },
-        }
-    }
-
-    pub fn print_tts(&mut self, tts: tokenstream::TokenStream) -> io::Result<()> {
-        self.ibox(0)?;
-        for (i, tt) in tts.into_trees().enumerate() {
-            if i != 0 {
-                space(&mut self.s)?;
-            }
-            self.print_tt(tt)?;
-        }
-        self.end()
     }
 
     pub fn print_variant(&mut self, v: &ast::Variant) -> io::Result<()> {
@@ -2278,6 +2307,11 @@ impl<'a> State<'a> {
             ast::ExprKind::Try(ref e) => {
                 self.print_expr(e)?;
                 word(&mut self.s, "?")?
+            }
+            ast::ExprKind::Catch(ref blk) => {
+                self.head("do catch")?;
+                space(&mut self.s)?;
+                self.print_block_with_attrs(&blk, attrs)?
             }
         }
         self.ann.post(self, NodeExpr(expr))?;

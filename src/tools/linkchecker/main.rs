@@ -122,6 +122,12 @@ fn check(cache: &mut Cache,
         return None;
     }
 
+    // ignore handlebars files as they use {{}} to build links, we only
+    // want to test the generated files
+    if file.extension().and_then(|s| s.to_str()) == Some("hbs") {
+        return None;
+    }
+
     // Unfortunately we're not 100% full of valid links today to we need a few
     // whitelists to get this past `make check` today.
     // FIXME(#32129)
@@ -136,7 +142,14 @@ fn check(cache: &mut Cache,
     if file.ends_with("btree_set/struct.BTreeSet.html") ||
        file.ends_with("collections/struct.BTreeSet.html") ||
        file.ends_with("collections/btree_map/struct.BTreeMap.html") ||
-       file.ends_with("collections/hash_map/struct.HashMap.html") {
+       file.ends_with("collections/hash_map/struct.HashMap.html") ||
+       file.ends_with("collections/hash_set/struct.HashSet.html") {
+        return None;
+    }
+
+    // mdbook uses the HTML <base> tag to handle links for subdirectories, which
+    // linkchecker doesn't support
+    if file.to_str().unwrap().contains("unstable-book") {
         return None;
     }
 

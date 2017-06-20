@@ -9,10 +9,15 @@
 // except according to those terms.
 
 use dep_graph::{DepGraph, DepNode, DepTrackingMap, DepTrackingMapConfig};
-use hir::def_id::{CrateNum, DefId};
-use middle::const_val::ConstVal;
+use hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
+use hir;
+use middle::const_val;
+use middle::privacy::AccessLevels;
 use mir;
-use ty::{self, Ty, TyCtxt};
+use session::CompileResult;
+use ty::{self, CrateInherentImpls, Ty, TyCtxt};
+use ty::subst::Substs;
+use util::nodemap::NodeSet;
 
 use rustc_data_structures::indexed_vec::IndexVec;
 use std::cell::{RefCell, RefMut};
@@ -22,6 +27,16 @@ use syntax_pos::{Span, DUMMY_SP};
 trait Key {
     fn map_crate(&self) -> CrateNum;
     fn default_span(&self, tcx: TyCtxt) -> Span;
+}
+
+impl<'tcx> Key for ty::InstanceDef<'tcx> {
+    fn map_crate(&self) -> CrateNum {
+        LOCAL_CRATE
+    }
+
+    fn default_span(&self, tcx: TyCtxt) -> Span {
+        tcx.def_span(self.def_id())
+    }
 }
 
 impl Key for CrateNum {
@@ -60,6 +75,15 @@ impl Key for (CrateNum, DefId) {
     }
 }
 
+impl<'tcx> Key for (DefId, &'tcx Substs<'tcx>) {
+    fn map_crate(&self) -> CrateNum {
+        self.0.krate
+    }
+    fn default_span(&self, tcx: TyCtxt) -> Span {
+        self.0.default_span(tcx)
+    }
+}
+
 trait Value<'tcx>: Sized {
     fn from_cycle_error<'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> Self;
 }
@@ -83,9 +107,16 @@ impl<'tcx> Value<'tcx> for Ty<'tcx> {
     }
 }
 
-pub struct CycleError<'a> {
+
+impl<'tcx> Value<'tcx> for ty::DtorckConstraint<'tcx> {
+    fn from_cycle_error<'a>(_: TyCtxt<'a, 'tcx, 'tcx>) -> Self {
+        Self::empty()
+    }
+}
+
+pub struct CycleError<'a, 'tcx: 'a> {
     span: Span,
-    cycle: RefMut<'a, [(Span, Query)]>
+    cycle: RefMut<'a, [(Span, Query<'tcx>)]>,
 }
 
 impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
@@ -110,8 +141,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         err.emit();
     }
 
-    fn cycle_check<F, R>(self, span: Span, query: Query, compute: F)
-                         -> Result<R, CycleError<'a>>
+    fn cycle_check<F, R>(self, span: Span, query: Query<'gcx>, compute: F)
+                         -> Result<R, CycleError<'a, 'gcx>>
         where F: FnOnce() -> R
     {
         {
@@ -166,9 +197,47 @@ impl<'tcx> QueryDescription for queries::coherent_trait<'tcx> {
     }
 }
 
-impl<'tcx> QueryDescription for queries::coherent_inherent_impls<'tcx> {
+impl<'tcx> QueryDescription for queries::crate_inherent_impls<'tcx> {
+    fn describe(_: TyCtxt, k: CrateNum) -> String {
+        format!("all inherent impls defined in crate `{:?}`", k)
+    }
+}
+
+impl<'tcx> QueryDescription for queries::crate_inherent_impls_overlap_check<'tcx> {
     fn describe(_: TyCtxt, _: CrateNum) -> String {
-        format!("coherence checking all inherent impls")
+        format!("check for overlap between inherent impls defined in this crate")
+    }
+}
+
+impl<'tcx> QueryDescription for queries::mir_shims<'tcx> {
+    fn describe(tcx: TyCtxt, def: ty::InstanceDef<'tcx>) -> String {
+        format!("generating MIR shim for `{}`",
+                tcx.item_path_str(def.def_id()))
+    }
+}
+
+impl<'tcx> QueryDescription for queries::privacy_access_levels<'tcx> {
+    fn describe(_: TyCtxt, _: CrateNum) -> String {
+        format!("privacy access levels")
+    }
+}
+
+impl<'tcx> QueryDescription for queries::typeck_item_bodies<'tcx> {
+    fn describe(_: TyCtxt, _: CrateNum) -> String {
+        format!("type-checking all item bodies")
+    }
+}
+
+impl<'tcx> QueryDescription for queries::reachable_set<'tcx> {
+    fn describe(_: TyCtxt, _: CrateNum) -> String {
+        format!("reachability")
+    }
+}
+
+impl<'tcx> QueryDescription for queries::const_eval<'tcx> {
+    fn describe(tcx: TyCtxt, (def_id, _): (DefId, &'tcx Substs<'tcx>)) -> String {
+        format!("const-evaluating `{}`",
+                tcx.item_path_str(def_id))
     }
 }
 
@@ -178,7 +247,7 @@ macro_rules! define_maps {
        pub $name:ident: $node:ident($K:ty) -> $V:ty),*) => {
         pub struct Maps<$tcx> {
             providers: IndexVec<CrateNum, Providers<$tcx>>,
-            query_stack: RefCell<Vec<(Span, Query)>>,
+            query_stack: RefCell<Vec<(Span, Query<$tcx>)>>,
             $($(#[$attr])* pub $name: RefCell<DepTrackingMap<queries::$name<$tcx>>>),*
         }
 
@@ -196,11 +265,11 @@ macro_rules! define_maps {
 
         #[allow(bad_style)]
         #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-        pub enum Query {
+        pub enum Query<$tcx> {
             $($(#[$attr])* $name($K)),*
         }
 
-        impl Query {
+        impl<$tcx> Query<$tcx> {
             pub fn describe(&self, tcx: TyCtxt) -> String {
                 match *self {
                     $(Query::$name(key) => queries::$name::describe(tcx, key)),*
@@ -233,7 +302,7 @@ macro_rules! define_maps {
                                   mut span: Span,
                                   key: $K,
                                   f: F)
-                                  -> Result<R, CycleError<'a>>
+                                  -> Result<R, CycleError<'a, $tcx>>
                 where F: FnOnce(&$V) -> R
             {
                 if let Some(result) = tcx.maps.$name.borrow().get(&key) {
@@ -256,7 +325,7 @@ macro_rules! define_maps {
             }
 
             pub fn try_get(tcx: TyCtxt<'a, $tcx, 'lcx>, span: Span, key: $K)
-                           -> Result<$V, CycleError<'a>> {
+                           -> Result<$V, CycleError<'a, $tcx>> {
                 Self::try_get_with(tcx, span, key, Clone::clone)
             }
 
@@ -334,7 +403,11 @@ define_maps! { <'tcx>
     pub trait_def: ItemSignature(DefId) -> &'tcx ty::TraitDef,
     pub adt_def: ItemSignature(DefId) -> &'tcx ty::AdtDef,
     pub adt_destructor: AdtDestructor(DefId) -> Option<ty::Destructor>,
-    pub adt_sized_constraint: SizedConstraint(DefId) -> Ty<'tcx>,
+    pub adt_sized_constraint: SizedConstraint(DefId) -> &'tcx [Ty<'tcx>],
+    pub adt_dtorck_constraint: DtorckConstraint(DefId) -> ty::DtorckConstraint<'tcx>,
+
+    /// True if this is a foreign item (i.e., linked via `extern { ... }`).
+    pub is_foreign_item: IsForeignItem(DefId) -> bool,
 
     /// Maps from def-id of a type or region parameter to its
     /// (inferred) variance.
@@ -347,11 +420,12 @@ define_maps! { <'tcx>
     pub associated_item: AssociatedItems(DefId) -> ty::AssociatedItem,
 
     pub impl_trait_ref: ItemSignature(DefId) -> Option<ty::TraitRef<'tcx>>,
+    pub impl_polarity: ItemSignature(DefId) -> hir::ImplPolarity,
 
     /// Maps a DefId of a type to a list of its inherent impls.
     /// Contains implementations of methods that are inherent to a type.
     /// Methods in these implementations don't need to be exported.
-    pub inherent_impls: InherentImpls(DefId) -> Vec<DefId>,
+    pub inherent_impls: InherentImpls(DefId) -> Rc<Vec<DefId>>,
 
     /// Maps from the def-id of a function/method or const/static
     /// to its MIR. Mutation is done at an item granularity to
@@ -376,24 +450,60 @@ define_maps! { <'tcx>
     pub closure_type: ItemSignature(DefId) -> ty::PolyFnSig<'tcx>,
 
     /// Caches CoerceUnsized kinds for impls on custom types.
-    pub custom_coerce_unsized_kind: ItemSignature(DefId)
-        -> ty::adjustment::CustomCoerceUnsized,
+    pub coerce_unsized_info: ItemSignature(DefId)
+        -> ty::adjustment::CoerceUnsizedInfo,
+
+    pub typeck_item_bodies: typeck_item_bodies_dep_node(CrateNum) -> CompileResult,
 
     pub typeck_tables: TypeckTables(DefId) -> &'tcx ty::TypeckTables<'tcx>,
 
     pub coherent_trait: coherent_trait_dep_node((CrateNum, DefId)) -> (),
 
-    pub coherent_inherent_impls: coherent_inherent_impls_dep_node(CrateNum) -> (),
+    pub borrowck: BorrowCheck(DefId) -> (),
 
-    /// Results of evaluating monomorphic constants embedded in
-    /// other items, such as enum variant explicit discriminants.
-    pub monomorphic_const_eval: MonomorphicConstEval(DefId) -> Result<ConstVal<'tcx>, ()>
+    /// Gets a complete map from all types to their inherent impls.
+    /// Not meant to be used directly outside of coherence.
+    /// (Defined only for LOCAL_CRATE)
+    pub crate_inherent_impls: crate_inherent_impls_dep_node(CrateNum) -> CrateInherentImpls,
+
+    /// Checks all types in the krate for overlap in their inherent impls. Reports errors.
+    /// Not meant to be used directly outside of coherence.
+    /// (Defined only for LOCAL_CRATE)
+    pub crate_inherent_impls_overlap_check: crate_inherent_impls_dep_node(CrateNum) -> (),
+
+    /// Results of evaluating const items or constants embedded in
+    /// other items (such as enum variant explicit discriminants).
+    pub const_eval: const_eval_dep_node((DefId, &'tcx Substs<'tcx>))
+        -> const_val::EvalResult<'tcx>,
+
+    /// Performs the privacy check and computes "access levels".
+    pub privacy_access_levels: PrivacyAccessLevels(CrateNum) -> Rc<AccessLevels>,
+
+    pub reachable_set: reachability_dep_node(CrateNum) -> Rc<NodeSet>,
+
+    pub mir_shims: mir_shim_dep_node(ty::InstanceDef<'tcx>) -> &'tcx RefCell<mir::Mir<'tcx>>
 }
 
 fn coherent_trait_dep_node((_, def_id): (CrateNum, DefId)) -> DepNode<DefId> {
     DepNode::CoherenceCheckTrait(def_id)
 }
 
-fn coherent_inherent_impls_dep_node(_: CrateNum) -> DepNode<DefId> {
+fn crate_inherent_impls_dep_node(_: CrateNum) -> DepNode<DefId> {
     DepNode::Coherence
+}
+
+fn reachability_dep_node(_: CrateNum) -> DepNode<DefId> {
+    DepNode::Reachability
+}
+
+fn mir_shim_dep_node(instance: ty::InstanceDef) -> DepNode<DefId> {
+    instance.dep_node()
+}
+
+fn typeck_item_bodies_dep_node(_: CrateNum) -> DepNode<DefId> {
+    DepNode::TypeckBodiesKrate
+}
+
+fn const_eval_dep_node((def_id, _): (DefId, &Substs)) -> DepNode<DefId> {
+    DepNode::ConstEval(def_id)
 }

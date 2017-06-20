@@ -26,7 +26,7 @@ use llvm::debuginfo::{DIType, DIFile, DIScope, DIDescriptor,
                       DICompositeType, DILexicalBlock, DIFlags};
 
 use rustc::hir::def::CtorKind;
-use rustc::hir::def_id::DefId;
+use rustc::hir::def_id::{DefId, LOCAL_CRATE};
 use rustc::ty::fold::TypeVisitor;
 use rustc::ty::subst::Substs;
 use rustc::ty::util::TypeIdHasher;
@@ -35,7 +35,8 @@ use rustc_data_structures::ToHex;
 use {type_of, machine, monomorphize};
 use common::{self, CrateContext};
 use type_::Type;
-use rustc::ty::{self, AdtKind, Ty, layout};
+use rustc::ty::{self, AdtKind, Ty};
+use rustc::ty::layout::{self, LayoutTyper};
 use session::config;
 use util::nodemap::FxHashMap;
 use util::common::path2cstr;
@@ -783,7 +784,8 @@ pub fn compile_unit_metadata(scc: &SharedCrateContext,
     };
 
     debug!("compile_unit_metadata: {:?}", compile_unit_name);
-    let producer = format!("rustc version {}",
+    // FIXME(#41252) Remove "clang LLVM" if we can get GDB and LLVM to play nice.
+    let producer = format!("clang LLVM (rustc version {})",
                            (option_env!("CFG_VERSION")).expect("CFG_VERSION"));
 
     let compile_unit_name = compile_unit_name.as_ptr();
@@ -808,7 +810,7 @@ pub fn compile_unit_metadata(scc: &SharedCrateContext,
     };
 
     fn fallback_path(scc: &SharedCrateContext) -> CString {
-        CString::new(scc.link_meta().crate_name.to_string()).unwrap()
+        CString::new(scc.tcx().crate_name(LOCAL_CRATE).to_string()).unwrap()
     }
 }
 
@@ -900,7 +902,7 @@ impl<'tcx> StructMemberDescriptionFactory<'tcx> {
         let offsets = match *layout {
             layout::Univariant { ref variant, .. } => &variant.offsets,
             layout::Vector { element, count } => {
-                let element_size = element.size(&cx.tcx().data_layout).bytes();
+                let element_size = element.size(cx).bytes();
                 tmp = (0..count).
                   map(|i| layout::Size::from_bytes(i*element_size))
                   .collect::<Vec<layout::Size>>();
@@ -1564,7 +1566,7 @@ fn prepare_enum_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
         enum_llvm_type,
         EnumMDF(EnumMemberDescriptionFactory {
             enum_type: enum_type,
-            type_rep: type_rep,
+            type_rep: type_rep.layout,
             discriminant_type_metadata: discriminant_type_metadata,
             containing_scope: containing_scope,
             file_metadata: file_metadata,
@@ -1772,7 +1774,7 @@ pub fn create_global_var_metadata(cx: &CrateContext,
     let var_name = CString::new(var_name).unwrap();
     let linkage_name = CString::new(linkage_name).unwrap();
 
-    let global_align = type_of::align_of(cx, variable_type);
+    let global_align = cx.align_of(variable_type);
 
     unsafe {
         llvm::LLVMRustDIBuilderCreateStaticVariable(DIB(cx),

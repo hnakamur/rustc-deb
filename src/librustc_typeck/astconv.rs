@@ -12,7 +12,7 @@
 //! representation.  The main routine here is `ast_ty_to_ty()`: each use
 //! is parameterized by an instance of `AstConv`.
 
-use rustc_const_eval::eval_length;
+use rustc::middle::const_val::eval_length;
 use rustc_data_structures::accumulate_vec::AccumulateVec;
 use hir;
 use hir::def::Def;
@@ -109,7 +109,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
         let tcx = self.tcx();
         let r = match tcx.named_region_map.defs.get(&lifetime.id) {
             Some(&rl::Region::Static) => {
-                tcx.mk_region(ty::ReStatic)
+                tcx.types.re_static
             }
 
             Some(&rl::Region::LateBound(debruijn, id)) => {
@@ -171,7 +171,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
                     .emit();
 
                 return Substs::for_item(tcx, def_id, |_, _| {
-                    tcx.mk_region(ty::ReStatic)
+                    tcx.types.re_static
                 }, |_, _| {
                     tcx.types.err
                 });
@@ -254,7 +254,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
             if let Some(lifetime) = lifetimes.get(i) {
                 self.ast_region_to_region(lifetime, Some(def))
             } else {
-                tcx.mk_region(ty::ReStatic)
+                tcx.types.re_static
             }
         }, |def, substs| {
             let i = def.index as usize;
@@ -715,7 +715,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
                         span_err!(tcx.sess, span, E0228,
                                   "the lifetime bound for this object type cannot be deduced \
                                    from context; please supply an explicit bound");
-                        tcx.mk_region(ty::ReStatic)
+                        tcx.types.re_static
                     })
                 }
             })
@@ -1208,7 +1208,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
                 self.associated_path_def_to_ty(ast_ty.id, ast_ty.span, ty, def, segment).0
             }
             hir::TyArray(ref ty, length) => {
-                if let Ok(length) = eval_length(tcx.global_tcx(), length, "array length") {
+                if let Ok(length) = eval_length(tcx, length, "array length") {
                     tcx.mk_array(self.ast_ty_to_ty(&ty), length)
                 } else {
                     self.tcx().types.err
@@ -1228,6 +1228,9 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
                 // the type of local variables. Both of these cases are
                 // handled specially and will not descend into this routine.
                 self.ty_infer(ast_ty.span)
+            }
+            hir::TyErr => {
+                tcx.types.err
             }
         };
 
@@ -1354,7 +1357,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
         // If any of the derived region bounds are 'static, that is always
         // the best choice.
         if derived_region_bounds.iter().any(|&r| ty::ReStatic == *r) {
-            return Some(tcx.mk_region(ty::ReStatic));
+            return Some(tcx.types.re_static);
         }
 
         // Determine whether there is exactly one unique region in the set

@@ -450,6 +450,9 @@ impl<'a> State<'a> {
             hir::TyInfer => {
                 word(&mut self.s, "_")?;
             }
+            hir::TyErr => {
+                word(&mut self.s, "?")?;
+            }
         }
         self.end()
     }
@@ -629,6 +632,11 @@ impl<'a> State<'a> {
                 self.bopen()?;
                 self.print_foreign_mod(nmod, &item.attrs)?;
                 self.bclose(item.span)?;
+            }
+            hir::ItemGlobalAsm(ref ga) => {
+                self.head(&visibility_qualified(&item.vis, "global asm"))?;
+                word(&mut self.s, &ga.asm.as_str())?;
+                self.end()?
             }
             hir::ItemTy(ref ty, ref params) => {
                 self.ibox(indent_unit)?;
@@ -1036,7 +1044,7 @@ impl<'a> State<'a> {
                         word(&mut self.s, " else if ")?;
                         self.print_expr(&i)?;
                         space(&mut self.s)?;
-                        self.print_block(&then)?;
+                        self.print_expr(&then)?;
                         self.print_else(e.as_ref().map(|e| &**e))
                     }
                     // "final else"
@@ -1058,13 +1066,13 @@ impl<'a> State<'a> {
 
     pub fn print_if(&mut self,
                     test: &hir::Expr,
-                    blk: &hir::Block,
+                    blk: &hir::Expr,
                     elseopt: Option<&hir::Expr>)
                     -> io::Result<()> {
         self.head("if")?;
         self.print_expr(test)?;
         space(&mut self.s)?;
-        self.print_block(blk)?;
+        self.print_expr(blk)?;
         self.print_else(elseopt)
     }
 

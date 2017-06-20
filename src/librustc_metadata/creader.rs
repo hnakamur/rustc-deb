@@ -99,7 +99,7 @@ fn register_native_lib(sess: &Session,
     }
     let is_osx = sess.target.target.options.is_like_osx;
     if lib.kind == cstore::NativeFramework && !is_osx {
-        let msg = "native frameworks are only available on OSX targets";
+        let msg = "native frameworks are only available on macOS targets";
         match span {
             Some(span) => span_err!(sess, span, E0455, "{}", msg),
             None => sess.err(msg),
@@ -326,6 +326,7 @@ impl<'a> CrateLoader<'a> {
             cnum_map: RefCell::new(cnum_map),
             cnum: cnum,
             codemap_import_info: RefCell::new(vec![]),
+            attribute_cache: RefCell::new([Vec::new(), Vec::new()]),
             dep_kind: Cell::new(dep_kind),
             source: cstore::CrateSource {
                 dylib: dylib,
@@ -600,7 +601,7 @@ impl<'a> CrateLoader<'a> {
             Err(err) => self.sess.span_fatal(span, &err),
         };
 
-        let sym = self.sess.generate_derive_registrar_symbol(&root.hash,
+        let sym = self.sess.generate_derive_registrar_symbol(root.disambiguator,
                                                              root.macro_derive_registrar.unwrap());
         let registrar = unsafe {
             let sym = match lib.symbol(&sym) {
@@ -654,7 +655,7 @@ impl<'a> CrateLoader<'a> {
     /// Look for a plugin registrar. Returns library path, crate
     /// SVH and DefIndex of the registrar function.
     pub fn find_plugin_registrar(&mut self, span: Span, name: &str)
-                                 -> Option<(PathBuf, Svh, DefIndex)> {
+                                 -> Option<(PathBuf, Symbol, DefIndex)> {
         let ekrate = self.read_extension_crate(span, &ExternCrateInfo {
              name: Symbol::intern(name),
              ident: Symbol::intern(name),
@@ -669,13 +670,13 @@ impl<'a> CrateLoader<'a> {
                                   name,
                                   config::host_triple(),
                                   self.sess.opts.target_triple);
-            span_fatal!(self.sess, span, E0456, "{}", &message[..]);
+            span_fatal!(self.sess, span, E0456, "{}", &message);
         }
 
         let root = ekrate.metadata.get_root();
         match (ekrate.dylib.as_ref(), root.plugin_registrar_fn) {
             (Some(dylib), Some(reg)) => {
-                Some((dylib.to_path_buf(), root.hash, reg))
+                Some((dylib.to_path_buf(), root.disambiguator, reg))
             }
             (None, Some(_)) => {
                 span_err!(self.sess, span, E0457,
@@ -974,9 +975,11 @@ impl<'a> CrateLoader<'a> {
 
 impl<'a> CrateLoader<'a> {
     pub fn preprocess(&mut self, krate: &ast::Crate) {
-        for attr in krate.attrs.iter().filter(|m| m.name() == "link_args") {
-            if let Some(linkarg) = attr.value_str() {
-                self.cstore.add_used_link_args(&linkarg.as_str());
+        for attr in &krate.attrs {
+            if attr.path == "link_args" {
+                if let Some(linkarg) = attr.value_str() {
+                    self.cstore.add_used_link_args(&linkarg.as_str());
+                }
             }
         }
     }
@@ -1056,7 +1059,7 @@ impl<'a> middle::cstore::CrateLoader for CrateLoader<'a> {
         self.inject_allocator_crate();
         self.inject_panic_runtime(krate);
 
-        if log_enabled!(log::INFO) {
+        if log_enabled!(log::LogLevel::Info) {
             dump_crates(&self.cstore);
         }
 

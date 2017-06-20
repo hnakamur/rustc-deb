@@ -9,12 +9,13 @@
 // except according to those terms.
 
 
+use back::symbol_names;
 use llvm;
 use llvm::{SetUnnamedAddr};
 use llvm::{ValueRef, True};
-use rustc_const_eval::ConstEvalErr;
 use rustc::hir::def_id::DefId;
 use rustc::hir::map as hir_map;
+use rustc::middle::const_val::ConstEvalErr;
 use {debuginfo, machine};
 use base;
 use trans_item::TransItem;
@@ -24,7 +25,6 @@ use monomorphize::Instance;
 use type_::Type;
 use type_of;
 use rustc::ty;
-use rustc::ty::subst::Substs;
 
 use rustc::hir;
 
@@ -80,12 +80,12 @@ pub fn addr_of(ccx: &CrateContext,
 }
 
 pub fn get_static(ccx: &CrateContext, def_id: DefId) -> ValueRef {
-    let instance = Instance::mono(ccx.shared(), def_id);
+    let instance = Instance::mono(ccx.tcx(), def_id);
     if let Some(&g) = ccx.instances().borrow().get(&instance) {
         return g;
     }
 
-    let ty = common::def_ty(ccx.shared(), def_id, Substs::empty());
+    let ty = common::instance_ty(ccx.shared(), &instance);
     let g = if let Some(id) = ccx.tcx().hir.as_local_node_id(def_id) {
 
         let llty = type_of::type_of(ccx, ty);
@@ -93,20 +93,19 @@ pub fn get_static(ccx: &CrateContext, def_id: DefId) -> ValueRef {
             hir_map::NodeItem(&hir::Item {
                 ref attrs, span, node: hir::ItemStatic(..), ..
             }) => {
-                let sym = ccx.symbol_map()
-                             .get(TransItem::Static(id))
-                             .expect("Local statics should always be in the SymbolMap");
+                let sym = ccx.symbol_cache()
+                             .get(TransItem::Static(id));
 
                 let defined_in_current_codegen_unit = ccx.codegen_unit()
                                                          .items()
                                                          .contains_key(&TransItem::Static(id));
                 assert!(!defined_in_current_codegen_unit);
 
-                if declare::get_declared_value(ccx, sym).is_some() {
+                if declare::get_declared_value(ccx, &sym[..]).is_some() {
                     span_bug!(span, "trans: Conflicting symbol names for static?");
                 }
 
-                let g = declare::define_global(ccx, sym, llty).unwrap();
+                let g = declare::define_global(ccx, &sym[..], llty).unwrap();
 
                 (g, attrs)
             }
@@ -114,7 +113,7 @@ pub fn get_static(ccx: &CrateContext, def_id: DefId) -> ValueRef {
             hir_map::NodeForeignItem(&hir::ForeignItem {
                 ref attrs, span, node: hir::ForeignItemStatic(..), ..
             }) => {
-                let sym = instance.symbol_name(ccx.shared());
+                let sym = symbol_names::symbol_name(instance, ccx.tcx());
                 let g = if let Some(name) =
                         attr::first_attr_value_str_by_name(&attrs, "linkage") {
                     // If this is a static with a linkage specified, then we need to handle
@@ -174,7 +173,7 @@ pub fn get_static(ccx: &CrateContext, def_id: DefId) -> ValueRef {
 
         g
     } else {
-        let sym = instance.symbol_name(ccx.shared());
+        let sym = symbol_names::symbol_name(instance, ccx.tcx());
 
         // FIXME(nagisa): perhaps the map of externs could be offloaded to llvm somehow?
         // FIXME(nagisa): investigate whether it can be changed into define_global
@@ -235,7 +234,8 @@ pub fn trans_static<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
             v
         };
 
-        let ty = common::def_ty(ccx.shared(), def_id, Substs::empty());
+        let instance = Instance::mono(ccx.tcx(), def_id);
+        let ty = common::instance_ty(ccx.shared(), &instance);
         let llty = type_of::type_of(ccx, ty);
         let g = if val_llty == llty {
             g
@@ -254,14 +254,13 @@ pub fn trans_static<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
             ccx.statics_to_rauw().borrow_mut().push((g, new_g));
             new_g
         };
-        llvm::LLVMSetAlignment(g, type_of::align_of(ccx, ty));
+        llvm::LLVMSetAlignment(g, ccx.align_of(ty));
         llvm::LLVMSetInitializer(g, v);
 
         // As an optimization, all shared statics which do not have interior
         // mutability are placed into read-only memory.
         if m != hir::MutMutable {
-            let tcontents = ty.type_contents(ccx.tcx());
-            if !tcontents.interior_unsafe() {
+            if ccx.shared().type_is_freeze(ty) {
                 llvm::LLVMSetGlobalConstant(g, llvm::True);
             }
         }
@@ -274,6 +273,12 @@ pub fn trans_static<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         }
 
         base::set_link_section(ccx, g, attrs);
+
+        if attr::contains_name(attrs, "used") {
+            // This static will be stored in the llvm.used variable which is an array of i8*
+            let cast = llvm::LLVMConstPointerCast(g, Type::i8p(ccx).to_ref());
+            ccx.used_statics().borrow_mut().push(cast);
+        }
 
         Ok(g)
     }

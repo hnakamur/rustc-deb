@@ -4,13 +4,14 @@ use std::fmt::{Display, Formatter, Result};
 use std::rc::Rc;
 use std::result::Result as StdResult;
 use std::ffi::{OsStr, OsString};
+use std::mem;
 
 // Third Party
 use vec_map::{self, VecMap};
 
 // Internal
 use Arg;
-use args::{ArgSettings, Base, Valued, ArgKind, AnyArg, DispOrder};
+use args::{ArgSettings, Base, Valued, AnyArg, DispOrder};
 
 #[allow(missing_debug_implementations)]
 #[doc(hidden)]
@@ -32,28 +33,29 @@ impl<'n, 'e> PosBuilder<'n, 'e> {
         }
     }
 
-    pub fn from_arg(a: &Arg<'n, 'e>, idx: u64, reqs: &mut Vec<&'n str>) -> Self {
-        // Create the Positional Argument Builder with each HashSet = None to only
-        // allocate
-        // those that require it
+    pub fn from_arg_ref(a: &Arg<'n, 'e>, idx: u64) -> Self {
         let mut pb = PosBuilder {
             b: Base::from(a),
             v: Valued::from(a),
             index: idx,
         };
-        if a.max_vals.is_some() || a.min_vals.is_some() ||
-           (a.num_vals.is_some() && a.num_vals.unwrap() > 1) {
+        if a.v.max_vals.is_some() || a.v.min_vals.is_some() ||
+           (a.v.num_vals.is_some() && a.v.num_vals.unwrap() > 1) {
             pb.b.settings.set(ArgSettings::Multiple);
         }
-        // If the arg is required, add all it's requirements to master required list
-        if a.is_set(ArgSettings::Required) {
-            if let Some(ref areqs) = a.requires {
-                for name in areqs.iter().filter(|&&(val,_)|val.is_none()).map(|&(_, name)| name) {
-                    reqs.push(name);
-                }
-            }
-        }
         pb
+    }
+
+    pub fn from_arg(mut a: Arg<'n, 'e>, idx: u64) -> Self {
+        if a.v.max_vals.is_some() || a.v.min_vals.is_some() ||
+           (a.v.num_vals.is_some() && a.v.num_vals.unwrap() > 1) {
+            a.b.settings.set(ArgSettings::Multiple);
+        }
+        PosBuilder {
+            b: mem::replace(&mut a.b, Base::default()),
+            v: mem::replace(&mut a.v, Valued::default()),
+            index: idx,
+        }
     }
 
     pub fn multiple_str(&self) -> &str {
@@ -98,10 +100,10 @@ impl<'n, 'e> Display for PosBuilder<'n, 'e> {
 
 impl<'n, 'e> AnyArg<'n, 'e> for PosBuilder<'n, 'e> {
     fn name(&self) -> &'n str { self.b.name }
-    fn id(&self) -> usize { self.b.id }
-    fn kind(&self) -> ArgKind { ArgKind::Pos }
     fn overrides(&self) -> Option<&[&'e str]> { self.b.overrides.as_ref().map(|o| &o[..]) }
-    fn requires(&self) -> Option<&[(Option<&'e str>, &'n str)]> { self.b.requires.as_ref().map(|o| &o[..]) }
+    fn requires(&self) -> Option<&[(Option<&'e str>, &'n str)]> {
+        self.b.requires.as_ref().map(|o| &o[..])
+    }
     fn blacklist(&self) -> Option<&[&'e str]> { self.b.blacklist.as_ref().map(|o| &o[..]) }
     fn required_unless(&self) -> Option<&[&'e str]> { self.b.r_unless.as_ref().map(|o| &o[..]) }
     fn val_names(&self) -> Option<&VecMap<&'e str>> { self.v.val_names.as_ref() }
@@ -124,14 +126,22 @@ impl<'n, 'e> AnyArg<'n, 'e> for PosBuilder<'n, 'e> {
     fn val_delim(&self) -> Option<char> { self.v.val_delim }
     fn takes_value(&self) -> bool { true }
     fn help(&self) -> Option<&'e str> { self.b.help }
-    fn default_vals_ifs(&self) -> Option<vec_map::Values<(&'n str, Option<&'e str>, &'e str)>> { self.v.default_vals_ifs.as_ref().map(|vm| vm.values()) }
-    fn default_val(&self) -> Option<&'n str> { self.v.default_val }
+    fn default_vals_ifs(&self) -> Option<vec_map::Values<(&'n str, Option<&'e OsStr>, &'e OsStr)>> {
+        self.v.default_vals_ifs.as_ref().map(|vm| vm.values())
+    }
+    fn default_val(&self) -> Option<&'e OsStr> { self.v.default_val }
     fn longest_filter(&self) -> bool { true }
     fn aliases(&self) -> Option<Vec<&'e str>> { None }
 }
 
 impl<'n, 'e> DispOrder for PosBuilder<'n, 'e> {
     fn disp_ord(&self) -> usize { self.index as usize }
+}
+
+impl<'n, 'e> PartialEq for PosBuilder<'n, 'e> {
+    fn eq(&self, other: &PosBuilder<'n, 'e>) -> bool {
+        self.b == other.b
+    }
 }
 
 #[cfg(test)]

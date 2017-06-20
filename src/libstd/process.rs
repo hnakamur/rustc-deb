@@ -73,6 +73,15 @@ use sys_common::{AsInner, AsInnerMut, FromInner, IntoInner};
 /// spawning process and can itself be constructed using a builder-style
 /// interface.
 ///
+/// There is no implementation of [`Drop`] for child processes,
+/// so if you do not ensure the `Child` has exited then it will continue to
+/// run, even after the `Child` handle to the child process has gone out of
+/// scope.
+///
+/// Calling [`wait`](#method.wait) (or other functions that wrap around it) will make
+/// the parent process wait until the child has actually exited before
+/// continuing.
+///
 /// # Examples
 ///
 /// ```should_panic
@@ -88,17 +97,6 @@ use sys_common::{AsInner, AsInnerMut, FromInner, IntoInner};
 ///
 /// assert!(ecode.success());
 /// ```
-///
-/// # Note
-///
-/// Take note that there is no implementation of [`Drop`] for child processes,
-/// so if you do not ensure the `Child` has exited then it will continue to
-/// run, even after the `Child` handle to the child process has gone out of
-/// scope.
-///
-/// Calling [`wait`][`wait`] (or other functions that wrap around it) will make
-/// the parent process wait until the child has actually exited before
-/// continuing.
 ///
 /// [`Command`]: struct.Command.html
 /// [`Drop`]: ../../core/ops/trait.Drop.html
@@ -233,8 +231,9 @@ impl fmt::Debug for ChildStdout {
     }
 }
 
-/// A handle to a child process's stderr. This struct is used in the [`stderr`]
-/// field on [`Child`].
+/// A handle to a child process's stderr.
+///
+/// This struct is used in the [`stderr`] field on [`Child`].
 ///
 /// [`Child`]: struct.Child.html
 /// [`stderr`]: struct.Child.html#structfield.stderr
@@ -343,6 +342,23 @@ impl Command {
 
     /// Add an argument to pass to the program.
     ///
+    /// Only one argument can be passed per use. So instead of:
+    ///
+    /// ```ignore
+    /// .arg("-C /path/to/repo")
+    /// ```
+    ///
+    /// usage would be:
+    ///
+    /// ```ignore
+    /// .arg("-C")
+    /// .arg("/path/to/repo")
+    /// ```
+    ///
+    /// To pass multiple arguments see [`args`].
+    ///
+    /// [`args`]: #method.args
+    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -363,6 +379,10 @@ impl Command {
     }
 
     /// Add multiple arguments to pass to the program.
+    ///
+    /// To pass a single argument see [`arg`].
+    ///
+    /// [`arg`]: #method.arg
     ///
     /// # Examples
     ///
@@ -416,7 +436,10 @@ impl Command {
     /// # Examples
     ///
     /// Basic usage:
+    ///
     /// ```no_run
+    /// #![feature(command_envs)]
+    ///
     /// use std::process::{Command, Stdio};
     /// use std::env;
     /// use std::collections::HashMap;
@@ -880,8 +903,6 @@ impl Child {
     /// Basic usage:
     ///
     /// ```no_run
-    /// #![feature(process_try_wait)]
-    ///
     /// use std::process::Command;
     ///
     /// let mut child = Command::new("ls").spawn().unwrap();
@@ -896,7 +917,7 @@ impl Child {
     ///     Err(e) => println!("error attempting to wait: {}", e),
     /// }
     /// ```
-    #[unstable(feature = "process_try_wait", issue = "38903")]
+    #[stable(feature = "process_try_wait", since = "1.18.0")]
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         Ok(self.handle.try_wait()?.map(ExitStatus))
     }
@@ -1032,6 +1053,41 @@ pub fn exit(code: i32) -> ! {
 /// will be run. If a clean shutdown is needed it is recommended to only call
 /// this function at a known point where there are no more destructors left
 /// to run.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::process;
+///
+/// fn main() {
+///     println!("aborting");
+///
+///     process::abort();
+///
+///     // execution never gets here
+/// }
+/// ```
+///
+/// The [`abort`] function terminates the process, so the destructor will not
+/// get run on the example below:
+///
+/// ```no_run
+/// use std::process;
+///
+/// struct HasDrop;
+///
+/// impl Drop for HasDrop {
+///     fn drop(&mut self) {
+///         println!("This will never be printed!");
+///     }
+/// }
+///
+/// fn main() {
+///     let _x = HasDrop;
+///     process::abort();
+///     // the destructor implemented for HasDrop will never get run
+/// }
+/// ```
 #[stable(feature = "process_abort", since = "1.17.0")]
 pub fn abort() -> ! {
     unsafe { ::sys::abort_internal() };

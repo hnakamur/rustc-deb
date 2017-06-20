@@ -1,4 +1,4 @@
-use dox::mem;
+use dox::{mem, Option};
 
 pub type c_char = i8;
 pub type c_long = i64;
@@ -28,7 +28,7 @@ pub type suseconds_t = ::c_long;
 pub type off_t = i64;
 pub type useconds_t = ::c_uint;
 pub type socklen_t = u32;
-pub type sa_family_t = u8;
+pub type sa_family_t = u16;
 pub type pthread_t = ::c_uint;
 pub type pthread_key_t = ::c_uint;
 pub type blksize_t = u32;
@@ -441,7 +441,13 @@ pub const SA_NOCLDSTOP: ::c_int = 0x00020000;
 pub const SS_ONSTACK: ::c_int = 1;
 pub const SS_DISABLE: ::c_int = 2;
 
+pub const FIOCLEX: ::c_int = 0x20006601;
+pub const FIONCLEX: ::c_int = 0x20006602;
+pub const FIONREAD: ::c_int = 0x4004667f;
 pub const FIONBIO: ::c_int = 0x8004667e;
+pub const FIOASYNC: ::c_int = 0x8004667d;
+pub const FIOSETOWN: ::c_int = 0x8004667c;
+pub const FIOGETOWN: ::c_int = 0x4004667b;
 
 pub const SIGCHLD: ::c_int = 18;
 pub const SIGBUS: ::c_int = 10;
@@ -485,6 +491,8 @@ pub const TMP_MAX: ::c_uint = 17576;
 pub const O_RDONLY: ::c_int = 0;
 pub const O_WRONLY: ::c_int = 1;
 pub const O_RDWR: ::c_int = 2;
+pub const O_SEARCH: ::c_int = 0x200000;
+pub const O_EXEC: ::c_int = 0x400000;
 pub const O_APPEND: ::c_int = 8;
 pub const O_CREAT: ::c_int = 256;
 pub const O_EXCL: ::c_int = 1024;
@@ -1052,33 +1060,10 @@ extern {
     pub fn getpriority(which: ::c_int, who: ::c_int) -> ::c_int;
     pub fn setpriority(which: ::c_int, who: ::c_int, prio: ::c_int) -> ::c_int;
 
-    pub fn openat(dirfd: ::c_int, pathname: *const ::c_char,
-                  flags: ::c_int, ...) -> ::c_int;
-    pub fn faccessat(dirfd: ::c_int, pathname: *const ::c_char,
-                     mode: ::c_int, flags: ::c_int) -> ::c_int;
-    pub fn fchmodat(dirfd: ::c_int, pathname: *const ::c_char,
-                    mode: ::mode_t, flags: ::c_int) -> ::c_int;
-    pub fn fchownat(dirfd: ::c_int, pathname: *const ::c_char,
-                    owner: ::uid_t, group: ::gid_t,
-                    flags: ::c_int) -> ::c_int;
-    pub fn fstatat(dirfd: ::c_int, pathname: *const ::c_char,
-                   buf: *mut stat, flags: ::c_int) -> ::c_int;
-    pub fn linkat(olddirfd: ::c_int, oldpath: *const ::c_char,
-                  newdirfd: ::c_int, newpath: *const ::c_char,
-                  flags: ::c_int) -> ::c_int;
-    pub fn mkdirat(dirfd: ::c_int, pathname: *const ::c_char,
-                   mode: ::mode_t) -> ::c_int;
+    pub fn fdopendir(fd: ::c_int) -> *mut ::DIR;
+
     pub fn mknodat(dirfd: ::c_int, pathname: *const ::c_char,
                    mode: ::mode_t, dev: dev_t) -> ::c_int;
-    pub fn readlinkat(dirfd: ::c_int, pathname: *const ::c_char,
-                      buf: *mut ::c_char, bufsiz: ::size_t) -> ::ssize_t;
-    pub fn renameat(olddirfd: ::c_int, oldpath: *const ::c_char,
-                    newdirfd: ::c_int, newpath: *const ::c_char)
-                    -> ::c_int;
-    pub fn symlinkat(target: *const ::c_char, newdirfd: ::c_int,
-                     linkpath: *const ::c_char) -> ::c_int;
-    pub fn unlinkat(dirfd: ::c_int, pathname: *const ::c_char,
-                    flags: ::c_int) -> ::c_int;
     pub fn mkfifoat(dirfd: ::c_int, pathname: *const ::c_char,
                     mode: ::mode_t) -> ::c_int;
     pub fn sethostname(name: *const ::c_char, len: ::size_t) -> ::c_int;
@@ -1094,4 +1079,48 @@ extern {
                                    abstime: *const ::timespec) -> ::c_int;
     pub fn waitid(idtype: idtype_t, id: id_t, infop: *mut ::siginfo_t,
                   options: ::c_int) -> ::c_int;
+
+    pub fn glob(pattern: *const ::c_char,
+                flags: ::c_int,
+                errfunc: Option<extern fn(epath: *const ::c_char,
+                                          errno: ::c_int) -> ::c_int>,
+                pglob: *mut ::glob_t) -> ::c_int;
+
+    pub fn globfree(pglob: *mut ::glob_t);
+
+    pub fn posix_madvise(addr: *mut ::c_void, len: ::size_t, advice: ::c_int)
+                         -> ::c_int;
+
+    pub fn shm_unlink(name: *const ::c_char) -> ::c_int;
+
+    pub fn seekdir(dirp: *mut ::DIR, loc: ::c_long);
+
+    pub fn telldir(dirp: *mut ::DIR) -> ::c_long;
+    pub fn madvise(addr: *mut ::c_void, len: ::size_t, advice: ::c_int)
+                  -> ::c_int;
+
+    pub fn msync(addr: *mut ::c_void, len: ::size_t, flags: ::c_int) -> ::c_int;
+
+    pub fn recvfrom(socket: ::c_int, buf: *mut ::c_void, len: ::size_t,
+                    flags: ::c_int, addr: *mut ::sockaddr,
+                    addrlen: *mut ::socklen_t) -> ::ssize_t;
+    pub fn mkstemps(template: *mut ::c_char, suffixlen: ::c_int) -> ::c_int;
+    pub fn futimes(fd: ::c_int, times: *const ::timeval) -> ::c_int;
+    pub fn nl_langinfo(item: ::nl_item) -> *mut ::c_char;
+
+    pub fn bind(socket: ::c_int, address: *const ::sockaddr,
+                address_len: ::socklen_t) -> ::c_int;
+
+    pub fn writev(fd: ::c_int,
+                  iov: *const ::iovec,
+                  iovcnt: ::c_int) -> ::ssize_t;
+    pub fn readv(fd: ::c_int,
+                 iov: *const ::iovec,
+                 iovcnt: ::c_int) -> ::ssize_t;
+
+    pub fn sendmsg(fd: ::c_int,
+                   msg: *const ::msghdr,
+                   flags: ::c_int) -> ::ssize_t;
+    pub fn recvmsg(fd: ::c_int, msg: *mut ::msghdr, flags: ::c_int)
+                   -> ::ssize_t;
 }

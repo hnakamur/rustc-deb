@@ -15,11 +15,12 @@
 // makes all other generics or inline functions that it references
 // reachable as well.
 
-use dep_graph::DepNode;
 use hir::map as hir_map;
 use hir::def::Def;
-use hir::def_id::DefId;
+use hir::def_id::{DefId, CrateNum};
+use std::rc::Rc;
 use ty::{self, TyCtxt};
+use ty::maps::Providers;
 use middle::privacy;
 use session::config;
 use util::nodemap::{NodeSet, FxHashSet};
@@ -27,7 +28,9 @@ use util::nodemap::{NodeSet, FxHashSet};
 use syntax::abi::Abi;
 use syntax::ast;
 use syntax::attr;
+use syntax::codemap::DUMMY_SP;
 use hir;
+use hir::def_id::LOCAL_CRATE;
 use hir::intravisit::{Visitor, NestedVisitorMap};
 use hir::itemlikevisit::ItemLikeVisitor;
 use hir::intravisit;
@@ -265,7 +268,8 @@ impl<'a, 'tcx> ReachableContext<'a, 'tcx> {
                     hir::ItemMod(..) | hir::ItemForeignMod(..) |
                     hir::ItemImpl(..) | hir::ItemTrait(..) |
                     hir::ItemStruct(..) | hir::ItemEnum(..) |
-                    hir::ItemUnion(..) | hir::ItemDefaultImpl(..) => {}
+                    hir::ItemUnion(..) | hir::ItemDefaultImpl(..) |
+                    hir::ItemGlobalAsm(..) => {}
                 }
             }
             hir_map::NodeTraitItem(trait_method) => {
@@ -359,10 +363,14 @@ impl<'a, 'tcx: 'a> ItemLikeVisitor<'tcx> for CollectPrivateImplItemsVisitor<'a, 
     }
 }
 
-pub fn find_reachable<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                access_levels: &privacy::AccessLevels)
-                                -> NodeSet {
-    let _task = tcx.dep_graph.in_task(DepNode::Reachability);
+pub fn find_reachable<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> Rc<NodeSet> {
+    ty::queries::reachable_set::get(tcx, DUMMY_SP, LOCAL_CRATE)
+}
+
+fn reachable_set<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, crate_num: CrateNum) -> Rc<NodeSet> {
+    debug_assert!(crate_num == LOCAL_CRATE);
+
+    let access_levels = &ty::queries::privacy_access_levels::get(tcx, DUMMY_SP, LOCAL_CRATE);
 
     let any_library = tcx.sess.crate_types.borrow().iter().any(|ty| {
         *ty == config::CrateTypeRlib || *ty == config::CrateTypeDylib ||
@@ -404,5 +412,12 @@ pub fn find_reachable<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     reachable_context.propagate();
 
     // Return the set of reachable symbols.
-    reachable_context.reachable_symbols
+    Rc::new(reachable_context.reachable_symbols)
+}
+
+pub fn provide(providers: &mut Providers) {
+    *providers = Providers {
+        reachable_set,
+        ..*providers
+    };
 }
