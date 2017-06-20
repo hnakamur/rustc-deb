@@ -17,7 +17,6 @@ use hair::cx::to_ref::ToRef;
 use rustc::hir::map;
 use rustc::hir::def::{Def, CtorKind};
 use rustc::middle::const_val::ConstVal;
-use rustc_const_eval::{ConstContext, fatal_const_eval_err};
 use rustc::ty::{self, AdtKind, VariantDef, Ty};
 use rustc::ty::cast::CastKind as TyCastKind;
 use rustc::hir;
@@ -592,12 +591,13 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
 
         // Now comes the rote stuff:
         hir::ExprRepeat(ref v, count) => {
-            let tcx = cx.tcx.global_tcx();
             let c = &cx.tcx.hir.body(count).value;
-            let count = match ConstContext::new(tcx, count).eval(c) {
+            let def_id = cx.tcx.hir.body_owner_def_id(count);
+            let substs = Substs::empty();
+            let count = match ty::queries::const_eval::get(cx.tcx, c.span, (def_id, substs)) {
                 Ok(ConstVal::Integral(ConstInt::Usize(u))) => u,
                 Ok(other) => bug!("constant evaluation of repeat count yielded {:?}", other),
-                Err(s) => fatal_const_eval_err(tcx, &s, c.span, "expression")
+                Err(s) => cx.fatal_const_eval_err(&s, c.span, "expression")
             };
 
             ExprKind::Repeat {
@@ -606,22 +606,25 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
             }
         }
         hir::ExprRet(ref v) => ExprKind::Return { value: v.to_ref() },
-        hir::ExprBreak(label, ref value) => {
-            match label.loop_id.into() {
-                Ok(loop_id) => ExprKind::Break {
-                    label: cx.tcx.region_maps.node_extent(loop_id),
+        hir::ExprBreak(dest, ref value) => {
+            match dest.target_id {
+                hir::ScopeTarget::Block(target_id) |
+                hir::ScopeTarget::Loop(hir::LoopIdResult::Ok(target_id)) => ExprKind::Break {
+                    label: cx.tcx.region_maps.node_extent(target_id),
                     value: value.to_ref(),
                 },
-                Err(err) => bug!("invalid loop id for break: {}", err)
+                hir::ScopeTarget::Loop(hir::LoopIdResult::Err(err)) =>
+                    bug!("invalid loop id for break: {}", err)
             }
-
         }
-        hir::ExprAgain(label) => {
-            match label.loop_id.into() {
-                Ok(loop_id) => ExprKind::Continue {
+        hir::ExprAgain(dest) => {
+            match dest.target_id {
+                hir::ScopeTarget::Block(_) => bug!("cannot continue to blocks"),
+                hir::ScopeTarget::Loop(hir::LoopIdResult::Ok(loop_id)) => ExprKind::Continue {
                     label: cx.tcx.region_maps.node_extent(loop_id),
                 },
-                Err(err) => bug!("invalid loop id for continue: {}", err)
+                hir::ScopeTarget::Loop(hir::LoopIdResult::Err(err)) =>
+                    bug!("invalid loop id for continue: {}", err)
             }
         }
         hir::ExprMatch(ref discr, ref arms, _) => {
@@ -633,7 +636,7 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
         hir::ExprIf(ref cond, ref then, ref otherwise) => {
             ExprKind::If {
                 condition: cond.to_ref(),
-                then: block::to_expr_ref(cx, then),
+                then: then.to_ref(),
                 otherwise: otherwise.to_ref(),
             }
         }
@@ -711,9 +714,8 @@ fn method_callee<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
         ty: callee.ty,
         span: expr.span,
         kind: ExprKind::Literal {
-            literal: Literal::Item {
-                def_id: callee.def_id,
-                substs: callee.substs,
+            literal: Literal::Value {
+                value: ConstVal::Function(callee.def_id, callee.substs),
             },
         },
     }
@@ -740,14 +742,24 @@ fn convert_path_expr<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                                      -> ExprKind<'tcx> {
     let substs = cx.tables().node_id_item_substs(expr.id)
         .unwrap_or_else(|| cx.tcx.intern_substs(&[]));
-    let def_id = match def {
+    match def {
         // A regular function, constructor function or a constant.
         Def::Fn(def_id) |
         Def::Method(def_id) |
         Def::StructCtor(def_id, CtorKind::Fn) |
-        Def::VariantCtor(def_id, CtorKind::Fn) |
+        Def::VariantCtor(def_id, CtorKind::Fn) => ExprKind::Literal {
+            literal: Literal::Value {
+                value: ConstVal::Function(def_id, substs),
+            },
+        },
+
         Def::Const(def_id) |
-        Def::AssociatedConst(def_id) => def_id,
+        Def::AssociatedConst(def_id) => ExprKind::Literal {
+            literal: Literal::Item {
+                def_id: def_id,
+                substs: substs,
+            },
+        },
 
         Def::StructCtor(def_id, CtorKind::Const) |
         Def::VariantCtor(def_id, CtorKind::Const) => {
@@ -755,7 +767,7 @@ fn convert_path_expr<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                 // A unit struct/variant which is used as a value.
                 // We return a completely different ExprKind here to account for this special case.
                 ty::TyAdt(adt_def, substs) => {
-                    return ExprKind::Adt {
+                    ExprKind::Adt {
                         adt_def: adt_def,
                         variant_index: adt_def.variant_index_with_id(def_id),
                         substs: substs,
@@ -767,17 +779,11 @@ fn convert_path_expr<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
             }
         }
 
-        Def::Static(node_id, _) => return ExprKind::StaticRef { id: node_id },
+        Def::Static(node_id, _) => ExprKind::StaticRef { id: node_id },
 
-        Def::Local(..) | Def::Upvar(..) => return convert_var(cx, expr, def),
+        Def::Local(..) | Def::Upvar(..) => convert_var(cx, expr, def),
 
         _ => span_bug!(expr.span, "def `{:?}` not yet implemented", def),
-    };
-    ExprKind::Literal {
-        literal: Literal::Item {
-            def_id: def_id,
-            substs: substs,
-        },
     }
 }
 

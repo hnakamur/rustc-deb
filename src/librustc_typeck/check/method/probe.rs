@@ -479,14 +479,9 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
     }
 
     fn assemble_inherent_impl_candidates_for_type(&mut self, def_id: DefId) {
-        // Read the inherent implementation candidates for this type from the
-        // metadata if necessary.
-        self.tcx.populate_inherent_implementations_for_type_if_necessary(self.span, def_id);
-
-        if let Some(impl_infos) = self.tcx.maps.inherent_impls.borrow().get(&def_id) {
-            for &impl_def_id in impl_infos.iter() {
-                self.assemble_inherent_impl_probe(impl_def_id);
-            }
+        let impl_def_ids = ty::queries::inherent_impls::get(self.tcx, self.span, def_id);
+        for &impl_def_id in impl_def_ids.iter() {
+            self.assemble_inherent_impl_probe(impl_def_id);
         }
     }
 
@@ -581,6 +576,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
                         }
                     }
                     ty::Predicate::Equate(..) |
+                    ty::Predicate::Subtype(..) |
                     ty::Predicate::Projection(..) |
                     ty::Predicate::RegionOutlives(..) |
                     ty::Predicate::WellFormed(..) |
@@ -1067,7 +1063,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
 
         // In general, during probing we erase regions. See
         // `impl_self_ty()` for an explanation.
-        let region = tcx.mk_region(ty::ReErased);
+        let region = tcx.types.re_erased;
 
         // Search through mutabilities in order to find one where pick works:
         [hir::MutImmutable, hir::MutMutable]
@@ -1153,19 +1149,16 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
 
         self.probe(|_| {
             // First check that the self type can be related.
-            match self.sub_types(false,
-                                 &ObligationCause::dummy(),
-                                 self_ty,
-                                 probe.xform_self_ty) {
-                Ok(InferOk { obligations, value: () }) => {
-                    // FIXME(#32730) propagate obligations
-                    assert!(obligations.is_empty())
-                }
+            let sub_obligations = match self.sub_types(false,
+                                                       &ObligationCause::dummy(),
+                                                       self_ty,
+                                                       probe.xform_self_ty) {
+                Ok(InferOk { obligations, value: () }) => obligations,
                 Err(_) => {
                     debug!("--> cannot relate self-types");
                     return false;
                 }
-            }
+            };
 
             // If so, impls may carry other conditions (e.g., where
             // clauses) that must be considered. Make sure that those
@@ -1204,6 +1197,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             // Evaluate those obligations to see if they might possibly hold.
             let mut all_true = true;
             for o in obligations.iter()
+                .chain(sub_obligations.iter())
                 .chain(norm_obligations.iter())
                 .chain(ref_obligations.iter()) {
                 if !selcx.evaluate_obligation(o) {
@@ -1331,7 +1325,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
                 } else {
                     // In general, during probe we erase regions. See
                     // `impl_self_ty()` for an explanation.
-                    self.tcx.mk_region(ty::ReErased)
+                    self.tcx.types.re_erased
                 }
             }, |def, cur_substs| {
                 let i = def.index as usize;
@@ -1351,7 +1345,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
 
         let substs = Substs::for_item(self.tcx,
                                       impl_def_id,
-                                      |_, _| self.tcx.mk_region(ty::ReErased),
+                                      |_, _| self.tcx.types.re_erased,
                                       |_, _| self.next_ty_var(
                                         TypeVariableOrigin::SubstitutionPlaceholder(
                                             self.tcx.def_span(impl_def_id))));

@@ -53,9 +53,9 @@ use std::env;
 use std::ffi::{OsString, OsStr};
 use std::fs;
 use std::path::{PathBuf, Path};
-use std::process::{Command, Stdio};
+use std::process::{Command, Stdio, Child};
 use std::io::{self, BufReader, BufRead, Read, Write};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 #[cfg(windows)]
 mod registry;
@@ -356,8 +356,8 @@ impl Config {
 
     /// Configures whether the compiler will emit position independent code.
     ///
-    /// This option defaults to `false` for `i686` and `windows-gnu` targets and to `true` for all
-    /// other targets.
+    /// This option defaults to `false` for `windows-gnu` targets and
+    /// to `true` for all other targets.
     pub fn pic(&mut self, pic: bool) -> &mut Config {
         self.pic = Some(pic);
         self
@@ -502,7 +502,7 @@ impl Config {
             .to_string_lossy()
             .into_owned();
 
-        run(&mut cmd, &name)
+        run_output(&mut cmd, &name)
     }
 
     /// Get the compiler that's in use for this configuration.
@@ -825,11 +825,21 @@ impl Config {
         }
         let host = self.get_host();
         let target = self.get_target();
-        let (env, msvc, gnu, default) = if self.cpp {
-            ("CXX", "cl.exe", "g++", "c++")
+        let (env, msvc, gnu) = if self.cpp {
+            ("CXX", "cl.exe", "g++")
         } else {
-            ("CC", "cl.exe", "gcc", "cc")
+            ("CC", "cl.exe", "gcc")
         };
+
+        let default = if host.contains("solaris") {
+            // In this case, c++/cc unlikely to exist or be correct.
+            gnu
+        } else if self.cpp {
+            "c++"
+        } else {
+            "cc"
+        };
+
         self.env_tool(env)
             .map(|(tool, args)| {
                 let mut t = Tool::new(PathBuf::from(tool));
@@ -887,6 +897,7 @@ impl Config {
                         "powerpc64le-unknown-linux-gnu" => Some("powerpc64le-linux-gnu"),
                         "s390x-unknown-linux-gnu" => Some("s390x-linux-gnu"),
                         "sparc64-unknown-netbsd" => Some("sparc64--netbsd"),
+                        "sparcv9-sun-solaris" => Some("sparcv9-sun-solaris"),
                         "thumbv6m-none-eabi" => Some("arm-none-eabi"),
                         "thumbv7em-none-eabi" => Some("arm-none-eabi"),
                         "thumbv7em-none-eabihf" => Some("arm-none-eabi"),
@@ -1076,30 +1087,49 @@ impl Tool {
     }
 }
 
-fn run(cmd: &mut Command, program: &str) -> Vec<u8> {
+fn run(cmd: &mut Command, program: &str) {
+    let (mut child, print) = spawn(cmd, program);
+    let status = child.wait().expect("failed to wait on child process");
+    print.join().unwrap();
+    println!("{:?}", status);
+    if !status.success() {
+        fail(&format!("command did not execute successfully, got: {}", status));
+    }
+}
+
+fn run_output(cmd: &mut Command, program: &str) -> Vec<u8> {
+    cmd.stdout(Stdio::piped());
+    let (mut child, print) = spawn(cmd, program);
+    let mut stdout = vec![];
+    child.stdout.take().unwrap().read_to_end(&mut stdout).unwrap();
+    let status = child.wait().expect("failed to wait on child process");
+    print.join().unwrap();
+    println!("{:?}", status);
+    if !status.success() {
+        fail(&format!("command did not execute successfully, got: {}", status));
+    }
+    return stdout
+}
+
+fn spawn(cmd: &mut Command, program: &str) -> (Child, JoinHandle<()>) {
     println!("running: {:?}", cmd);
+
     // Capture the standard error coming from these programs, and write it out
     // with cargo:warning= prefixes. Note that this is a bit wonky to avoid
     // requiring the output to be UTF-8, we instead just ship bytes from one
     // location to another.
-    let (spawn_result, stdout) = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+    match cmd.stderr(Stdio::piped()).spawn() {
         Ok(mut child) => {
             let stderr = BufReader::new(child.stderr.take().unwrap());
-            thread::spawn(move || {
+            let print = thread::spawn(move || {
                 for line in stderr.split(b'\n').filter_map(|l| l.ok()) {
                     print!("cargo:warning=");
                     std::io::stdout().write_all(&line).unwrap();
                     println!("");
                 }
             });
-            let mut stdout = vec![];
-            child.stdout.take().unwrap().read_to_end(&mut stdout).unwrap();
-            (child.wait(), stdout)
+            (child, print)
         }
-        Err(e) => (Err(e), vec![]),
-    };
-    let status = match spawn_result {
-        Ok(status) => status,
         Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
             let extra = if cfg!(windows) {
                 " (see https://github.com/alexcrichton/gcc-rs#compile-time-requirements \
@@ -1114,12 +1144,7 @@ fn run(cmd: &mut Command, program: &str) -> Vec<u8> {
                           extra));
         }
         Err(e) => fail(&format!("failed to execute command: {}", e)),
-    };
-    println!("{:?}", status);
-    if !status.success() {
-        fail(&format!("command did not execute successfully, got: {}", status));
     }
-    stdout
 }
 
 fn fail(s: &str) -> ! {

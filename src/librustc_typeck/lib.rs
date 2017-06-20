@@ -77,8 +77,8 @@ This API is completely unstable and subject to change.
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(conservative_impl_trait)]
-#![cfg_attr(stage0,feature(field_init_shorthand))]
 #![feature(loop_break_value)]
+#![feature(never_type)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
@@ -94,7 +94,6 @@ extern crate fmt_macros;
 extern crate rustc_platform_intrinsics as intrinsics;
 extern crate rustc_back;
 extern crate rustc_const_math;
-extern crate rustc_const_eval;
 extern crate rustc_data_structures;
 extern crate rustc_errors as errors;
 
@@ -105,13 +104,12 @@ pub use rustc::middle;
 pub use rustc::session;
 pub use rustc::util;
 
-use dep_graph::DepNode;
 use hir::map as hir_map;
 use rustc::infer::InferOk;
 use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::maps::Providers;
-use rustc::traits::{ObligationCause, ObligationCauseCode, Reveal};
+use rustc::traits::{FulfillmentContext, ObligationCause, ObligationCauseCode, Reveal};
 use session::config;
 use util::common::time;
 
@@ -155,15 +153,22 @@ fn require_same_types<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                 expected: Ty<'tcx>,
                                 actual: Ty<'tcx>)
                                 -> bool {
-    tcx.infer_ctxt((), Reveal::UserFacing).enter(|infcx| {
+    tcx.infer_ctxt((), Reveal::UserFacing).enter(|ref infcx| {
+        let mut fulfill_cx = FulfillmentContext::new();
         match infcx.eq_types(false, &cause, expected, actual) {
             Ok(InferOk { obligations, .. }) => {
-                // FIXME(#32730) propagate obligations
-                assert!(obligations.is_empty());
-                true
+                fulfill_cx.register_predicate_obligations(infcx, obligations);
             }
             Err(err) => {
                 infcx.report_mismatched_types(cause, expected, actual, err).emit();
+                return false;
+            }
+        }
+
+        match fulfill_cx.select_all_or_error(infcx) {
+            Ok(()) => true,
+            Err(errors) => {
+                infcx.report_fulfillment_errors(&errors);
                 false
             }
         }
@@ -274,7 +279,6 @@ fn check_start_fn_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 }
 
 fn check_for_entry_fn<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    let _task = tcx.dep_graph.in_task(DepNode::CheckEntryFn);
     if let Some((id, sp)) = *tcx.sess.entry_fn.borrow() {
         match tcx.sess.entry_type.get() {
             Some(config::EntryMain) => check_main_fn_ty(tcx, id, sp),

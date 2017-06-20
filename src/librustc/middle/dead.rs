@@ -12,7 +12,6 @@
 // closely. The idea is that all reachable symbols are live, codes called
 // from live codes are live, and everything else is dead.
 
-use dep_graph::DepNode;
 use hir::map as hir_map;
 use hir::{self, PatKind};
 use hir::intravisit::{self, Visitor, NestedVisitorMap};
@@ -21,12 +20,13 @@ use hir::itemlikevisit::ItemLikeVisitor;
 use middle::privacy;
 use ty::{self, TyCtxt};
 use hir::def::Def;
-use hir::def_id::{DefId};
+use hir::def_id::{DefId, LOCAL_CRATE};
 use lint;
 use util::nodemap::FxHashSet;
 
 use syntax::{ast, codemap};
 use syntax::attr;
+use syntax::codemap::DUMMY_SP;
 use syntax_pos;
 
 // Any local node that may call something in its body block should be
@@ -161,7 +161,7 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
                     hir::ItemStruct(..) | hir::ItemUnion(..) => {
                         let def_id = self.tcx.hir.local_def_id(item.id);
                         let def = self.tcx.lookup_adt_def(def_id);
-                        self.struct_has_extern_repr = def.repr.c;
+                        self.struct_has_extern_repr = def.repr.c();
 
                         intravisit::walk_item(self, &item);
                     }
@@ -592,9 +592,8 @@ impl<'a, 'tcx> Visitor<'tcx> for DeadVisitor<'a, 'tcx> {
     }
 }
 
-pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                             access_levels: &privacy::AccessLevels) {
-    let _task = tcx.dep_graph.in_task(DepNode::DeadCheck);
+pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
+    let access_levels = &ty::queries::privacy_access_levels::get(tcx, DUMMY_SP, LOCAL_CRATE);
     let krate = tcx.hir.krate();
     let live_symbols = find_live(tcx, access_levels, krate);
     let mut visitor = DeadVisitor { tcx: tcx, live_symbols: live_symbols };

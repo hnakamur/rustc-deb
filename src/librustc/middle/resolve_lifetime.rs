@@ -15,7 +15,6 @@
 //! used between functions, and they operate in a purely top-down
 //! way. Therefore we break lifetime name resolution into a separate pass.
 
-use dep_graph::DepNode;
 use hir::map::Map;
 use session::Session;
 use hir::def::Def;
@@ -259,7 +258,6 @@ const ROOT_SCOPE: ScopeRef<'static> = &Scope::Root;
 pub fn krate(sess: &Session,
              hir_map: &Map)
              -> Result<NamedRegionMap, usize> {
-    let _task = hir_map.dep_graph.in_task(DepNode::ResolveLifetimes);
     let krate = hir_map.krate();
     let mut map = NamedRegionMap {
         defs: NodeMap(),
@@ -314,7 +312,8 @@ impl<'a, 'tcx> Visitor<'tcx> for LifetimeContext<'a, 'tcx> {
             hir::ItemUse(..) |
             hir::ItemMod(..) |
             hir::ItemDefaultImpl(..) |
-            hir::ItemForeignMod(..) => {
+            hir::ItemForeignMod(..) |
+            hir::ItemGlobalAsm(..) => {
                 // These sorts of items have no lifetime parameters at all.
                 intravisit::walk_item(self, item);
             }
@@ -434,7 +433,7 @@ impl<'a, 'tcx> Visitor<'tcx> for LifetimeContext<'a, 'tcx> {
             self.resolve_elided_lifetimes(slice::ref_slice(lifetime_ref));
             return;
         }
-        if lifetime_ref.name == keywords::StaticLifetime.name() {
+        if lifetime_ref.is_static() {
             self.insert_lifetime(lifetime_ref, Region::Static);
             return;
         }
@@ -1434,7 +1433,7 @@ impl<'a, 'tcx> LifetimeContext<'a, 'tcx> {
             let lifetime_i = &lifetimes[i];
 
             for lifetime in lifetimes {
-                if lifetime.lifetime.name == keywords::StaticLifetime.name() {
+                if lifetime.lifetime.is_static() {
                     let lifetime = lifetime.lifetime;
                     let mut err = struct_span_err!(self.sess, lifetime.span, E0262,
                                   "invalid lifetime parameter name: `{}`", lifetime.name);
@@ -1464,7 +1463,16 @@ impl<'a, 'tcx> LifetimeContext<'a, 'tcx> {
             self.check_lifetime_def_for_shadowing(old_scope, &lifetime_i.lifetime);
 
             for bound in &lifetime_i.bounds {
-                self.resolve_lifetime_ref(bound);
+                if !bound.is_static() {
+                    self.resolve_lifetime_ref(bound);
+                } else {
+                    self.insert_lifetime(bound, Region::Static);
+                    self.sess.struct_span_warn(lifetime_i.lifetime.span.to(bound.span),
+                        &format!("unnecessary lifetime parameter `{}`", lifetime_i.lifetime.name))
+                        .help(&format!("you can use the `'static` lifetime directly, in place \
+                                        of `{}`", lifetime_i.lifetime.name))
+                        .emit();
+                }
             }
         }
     }

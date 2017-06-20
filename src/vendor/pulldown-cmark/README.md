@@ -1,5 +1,7 @@
 # pulldown-cmark
 
+[Documentation](https://docs.rs/pulldown-cmark/)
+
 This library is a pull parser for [CommonMark](http://commonmark.org/), written
 in [Rust](http://www.rust-lang.org/). It comes with a simple command-line tool,
 useful for rendering to HTML, and is also designed to be easy to use from as
@@ -91,6 +93,20 @@ representation that requires no allocation or copying, but allocated
 strings are available when they're needed. Thus, when rendering text to
 HTML, most text is copied just once, from the source document to the
 HTML buffer.
+
+## Building only the pulldown-cmark library
+
+By default, the binary is built as well. If you don't want/need it, then build like this:
+
+```bash
+> cargo build --no-default-features
+```
+
+Or put in your `Cargo.toml` file:
+
+```toml
+pulldown-cmark = { version = "0.0.11", default-features = false }
+```
 
 ## Authors
 

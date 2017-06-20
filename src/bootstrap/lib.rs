@@ -151,6 +151,7 @@ pub struct Build {
     out: PathBuf,
     rust_info: channel::GitInfo,
     cargo_info: channel::GitInfo,
+    rls_info: channel::GitInfo,
     local_rebuild: bool,
 
     // Probed tools at runtime
@@ -181,7 +182,7 @@ struct Crate {
 ///
 /// These entries currently correspond to the various output directories of the
 /// build system, with each mod generating output in a different directory.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     /// This cargo is going to build the standard library, placing output in the
     /// "stageN-std" directory.
@@ -234,6 +235,7 @@ impl Build {
         };
         let rust_info = channel::GitInfo::new(&src);
         let cargo_info = channel::GitInfo::new(&src.join("cargo"));
+        let rls_info = channel::GitInfo::new(&src.join("rls"));
         let src_is_git = src.join(".git").exists();
 
         Build {
@@ -246,6 +248,7 @@ impl Build {
 
             rust_info: rust_info,
             cargo_info: cargo_info,
+            rls_info: rls_info,
             local_rebuild: local_rebuild,
             cc: HashMap::new(),
             cxx: HashMap::new(),
@@ -496,12 +499,33 @@ impl Build {
         // For other crates, however, we know that we've already got a standard
         // library up and running, so we can use the normal compiler to compile
         // build scripts in that situation.
-        if let Mode::Libstd = mode {
+        if mode == Mode::Libstd {
             cargo.env("RUSTC_SNAPSHOT", &self.rustc)
                  .env("RUSTC_SNAPSHOT_LIBDIR", self.rustc_snapshot_libdir());
         } else {
             cargo.env("RUSTC_SNAPSHOT", self.compiler_path(compiler))
                  .env("RUSTC_SNAPSHOT_LIBDIR", self.rustc_libdir(compiler));
+        }
+
+        // There are two invariants we try must maintain:
+        // * stable crates cannot depend on unstable crates (general Rust rule),
+        // * crates that end up in the sysroot must be unstable (rustbuild rule).
+        //
+        // In order to do enforce the latter, we pass the env var
+        // `RUSTBUILD_UNSTABLE` down the line for any crates which will end up
+        // in the sysroot. We read this in bootstrap/bin/rustc.rs and if it is
+        // set, then we pass the `rustbuild` feature to rustc when building the
+        // the crate.
+        //
+        // In turn, crates that can be used here should recognise the `rustbuild`
+        // feature and opt-in to `rustc_private`.
+        //
+        // We can't always pass `rustbuild` because crates which are outside of
+        // the comipiler, libs, and tests are stable and we don't want to make
+        // their deps unstable (since this would break the first invariant
+        // above).
+        if mode != Mode::Tool {
+            cargo.env("RUSTBUILD_UNSTABLE", "1");
         }
 
         // Ignore incremental modes except for stage0, since we're
@@ -529,7 +553,7 @@ impl Build {
                  .env(format!("CFLAGS_{}", target), self.cflags(target).join(" "));
         }
 
-        if self.config.channel == "nightly" && compiler.is_final_stage(self) {
+        if self.config.extended && compiler.is_final_stage(self) {
             cargo.env("RUSTC_SAVE_ANALYSIS", "api".to_string());
         }
 
@@ -851,7 +875,7 @@ impl Build {
                            .filter(|s| !s.starts_with("-O") && !s.starts_with("/O"))
                            .collect::<Vec<_>>();
 
-        // If we're compiling on OSX then we add a few unconditional flags
+        // If we're compiling on macOS then we add a few unconditional flags
         // indicating that we want libc++ (more filled out than libstdc++) and
         // we want to compile for 10.7. This way we can ensure that
         // LLVM/jemalloc/etc are all properly compiled.
@@ -1001,7 +1025,7 @@ impl Build {
 
     /// Returns the value of `package_vers` above for Cargo
     fn cargo_package_vers(&self) -> String {
-        self.package_vers(&self.cargo_release_num())
+        self.package_vers(&self.release_num("cargo"))
     }
 
     /// Returns the `version` string associated with this compiler for Rust
@@ -1013,10 +1037,11 @@ impl Build {
         self.rust_info.version(self, channel::CFG_RELEASE_NUM)
     }
 
-    /// Returns the `a.b.c` version that Cargo is at.
-    fn cargo_release_num(&self) -> String {
+    /// Returns the `a.b.c` version that the given package is at.
+    fn release_num(&self, package: &str) -> String {
         let mut toml = String::new();
-        t!(t!(File::open(self.src.join("cargo/Cargo.toml"))).read_to_string(&mut toml));
+        let toml_file_name = self.src.join(&format!("{}/Cargo.toml", package));
+        t!(t!(File::open(toml_file_name)).read_to_string(&mut toml));
         for line in toml.lines() {
             let prefix = "version = \"";
             let suffix = "\"";
@@ -1025,7 +1050,7 @@ impl Build {
             }
         }
 
-        panic!("failed to find version in cargo's Cargo.toml")
+        panic!("failed to find version in {}'s Cargo.toml", package)
     }
 
     /// Returns whether unstable features should be enabled for the compiler

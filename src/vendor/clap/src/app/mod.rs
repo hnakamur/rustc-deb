@@ -4,9 +4,10 @@ mod macros;
 pub mod parser;
 mod meta;
 mod help;
+mod validator;
+mod usage;
 
 // Std
-use std::borrow::Borrow;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -24,8 +25,7 @@ use yaml_rust::Yaml;
 // Internal
 use app::help::Help;
 use app::parser::Parser;
-use args::{ArgKind, AnyArg, Arg, ArgGroup, ArgMatcher, ArgMatches, ArgSettings};
-use errors::Error;
+use args::{AnyArg, Arg, ArgGroup, ArgMatcher, ArgMatches, ArgSettings};
 use errors::Result as ClapResult;
 pub use self::settings::AppSettings;
 use completions::Shell;
@@ -215,6 +215,33 @@ impl<'a, 'b> App<'a, 'b> {
         self
     }
 
+    /// Sets the program's name. This will be displayed when displaying help information.
+    ///
+    /// **Pro-top:** This function is particularly useful when configuring a program via
+    /// [`App::from_yaml`] in conjunction with the [`crate_name!`] macro to derive the program's
+    /// name from its `Cargo.toml`.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// # #[macro_use]
+    /// # extern crate clap;
+    /// # use clap::App;
+    /// # fn main() {
+    /// let yml = load_yaml!("app.yml");
+    /// let app = App::from_yaml(yml)
+    ///     .name(crate_name!());
+    ///
+    /// // continued logic goes here, such as `app.get_matches()` etc.
+    /// # }
+    /// ```
+    ///
+    /// [`App::from_yaml`]: ./struct.App.html#method.from_yaml
+    /// [`crate_name!`]: ./macro.crate_name.html
+    pub fn name<S: Into<String>>(mut self, name: S) -> Self {
+        self.p.meta.name = name.into();
+        self
+    }
+
     /// Adds additional help information to be displayed in addition to auto-generated help. This
     /// information is displayed **after** the auto-generated help information. This is often used
     /// to describe how to use the arguments, or caveats to be noted.
@@ -388,6 +415,44 @@ impl<'a, 'b> App<'a, 'b> {
     /// [`short`]: ./struct.Arg.html#method.short
     pub fn version_short<S: AsRef<str>>(mut self, s: S) -> Self {
         self.p.version_short(s.as_ref());
+        self
+    }
+
+    /// Sets the help text for the auto-generated `help` argument.
+    ///
+    /// By default `clap` sets this to `"Prints help information"`, but if you're using a
+    /// different convention for your help messages and would prefer a different phrasing you can
+    /// override it.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use clap::{App, Arg};
+    /// App::new("myprog")
+    ///     .help_message("Print help information") // Perhaps you want imperative help messages
+    ///
+    /// # ;
+    /// ```
+    pub fn help_message<S: Into<&'a str>>(mut self, s: S) -> Self {
+        self.p.help_message = Some(s.into());
+        self
+    }
+
+    /// Sets the help text for the auto-generated `version` argument.
+    ///
+    /// By default `clap` sets this to `"Prints version information"`, but if you're using a
+    /// different convention for your help messages and would prefer a different phrasing then you
+    /// can change it.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # use clap::{App, Arg};
+    /// App::new("myprog")
+    ///     .version_message("Print version information") // Perhaps you want imperative help messages
+    /// # ;
+    /// ```
+    pub fn version_message<S: Into<&'a str>>(mut self, s: S) -> Self {
+        self.p.version_message = Some(s.into());
         self
     }
 
@@ -640,8 +705,8 @@ impl<'a, 'b> App<'a, 'b> {
     /// # ;
     /// ```
     /// [argument]: ./struct.Arg.html
-    pub fn arg<A: Borrow<Arg<'a, 'b>> + 'a>(mut self, a: A) -> Self {
-        self.p.add_arg(a.borrow());
+    pub fn arg<A: Into<Arg<'a, 'b>>>(mut self, a: A) -> Self {
+        self.p.add_arg(a.into());
         self
     }
 
@@ -661,7 +726,7 @@ impl<'a, 'b> App<'a, 'b> {
     /// [arguments]: ./struct.Arg.html
     pub fn args(mut self, args: &[Arg<'a, 'b>]) -> Self {
         for arg in args {
-            self.p.add_arg(arg);
+            self.p.add_arg_ref(arg);
         }
         self
     }
@@ -684,7 +749,7 @@ impl<'a, 'b> App<'a, 'b> {
     /// [`Arg`]: ./struct.Arg.html
     /// [`Arg::from_usage`]: ./struct.Arg.html#method.from_usage
     pub fn arg_from_usage(mut self, usage: &'a str) -> Self {
-        self.p.add_arg(&Arg::from_usage(usage));
+        self.p.add_arg(Arg::from_usage(usage));
         self
     }
 
@@ -716,7 +781,7 @@ impl<'a, 'b> App<'a, 'b> {
             if l.is_empty() {
                 continue;
             }
-            self.p.add_arg(&Arg::from_usage(l));
+            self.p.add_arg(Arg::from_usage(l));
         }
         self
     }
@@ -1268,7 +1333,21 @@ impl<'a, 'b> App<'a, 'b> {
     {
         self.get_matches_from_safe_borrow(itr).unwrap_or_else(|e| {
             // Otherwise, write to stderr and exit
-            self.maybe_wait_for_exit(e);
+            if e.use_stderr() {
+                wlnerr!("{}", e.message);
+                if self.p.is_set(AppSettings::WaitOnError) {
+                    wlnerr!("\nPress [ENTER] / [RETURN] to continue...");
+                    let mut s = String::new();
+                    let i = io::stdin();
+                    i.lock().read_line(&mut s).unwrap();
+                }
+                drop(self);
+                drop(e);
+                process::exit(1);
+            }
+
+            drop(self);
+            e.exit()
         })
     }
 
@@ -1373,28 +1452,11 @@ impl<'a, 'b> App<'a, 'b> {
 
         if self.p.is_set(AppSettings::PropagateGlobalValuesDown) {
             for a in &self.p.global_args {
-                matcher.propagate(a.name);
+                matcher.propagate(a.b.name);
             }
         }
 
         Ok(matcher.into())
-    }
-
-    // Re-implements ClapError::exit except it checks if we should wait for input before exiting
-    // since ClapError doesn't have that info and the error message must be printed before exiting
-    fn maybe_wait_for_exit(&self, e: Error) -> ! {
-        if e.use_stderr() {
-            wlnerr!("{}", e.message);
-            if self.p.is_set(AppSettings::WaitOnError) {
-                wlnerr!("\nPress [ENTER] / [RETURN] to continue...");
-                let mut s = String::new();
-                let i = io::stdin();
-                i.lock().read_line(&mut s).unwrap();
-            }
-            process::exit(1);
-        }
-
-        e.exit()
     }
 }
 
@@ -1425,6 +1487,7 @@ impl<'a> From<&'a Yaml> for App<'a, 'a> {
         }
 
         yaml_str!(a, yaml, version);
+        yaml_str!(a, yaml, author);
         yaml_str!(a, yaml, bin_name);
         yaml_str!(a, yaml, about);
         yaml_str!(a, yaml, before_help);
@@ -1434,6 +1497,8 @@ impl<'a> From<&'a Yaml> for App<'a, 'a> {
         yaml_str!(a, yaml, help);
         yaml_str!(a, yaml, help_short);
         yaml_str!(a, yaml, version_short);
+        yaml_str!(a, yaml, help_message);
+        yaml_str!(a, yaml, version_message);
         yaml_str!(a, yaml, alias);
         yaml_str!(a, yaml, visible_alias);
 
@@ -1535,15 +1600,13 @@ impl<'n, 'e> AnyArg<'n, 'e> for App<'n, 'e> {
     fn name(&self) -> &'n str {
         unreachable!("App struct does not support AnyArg::name, this is a bug!")
     }
-    fn id(&self) -> usize { self.p.id }
-    fn kind(&self) -> ArgKind { ArgKind::Subcmd }
     fn overrides(&self) -> Option<&[&'e str]> { None }
     fn requires(&self) -> Option<&[(Option<&'e str>, &'n str)]> { None }
     fn blacklist(&self) -> Option<&[&'e str]> { None }
     fn required_unless(&self) -> Option<&[&'e str]> { None }
     fn val_names(&self) -> Option<&VecMap<&'e str>> { None }
     fn is_set(&self, _: ArgSettings) -> bool { false }
-    fn val_terminator(&self) -> Option<&'e str> {None}
+    fn val_terminator(&self) -> Option<&'e str> { None }
     fn set(&mut self, _: ArgSettings) {
         unreachable!("App struct does not support AnyArg::set, this is a bug!")
     }
@@ -1559,8 +1622,10 @@ impl<'n, 'e> AnyArg<'n, 'e> for App<'n, 'e> {
     fn val_delim(&self) -> Option<char> { None }
     fn takes_value(&self) -> bool { true }
     fn help(&self) -> Option<&'e str> { self.p.meta.about }
-    fn default_val(&self) -> Option<&'n str> { None }
-    fn default_vals_ifs(&self) -> Option<vec_map::Values<(&'n str, Option<&'e str>, &'e str)>> {None}
+    fn default_val(&self) -> Option<&'e OsStr> { None }
+    fn default_vals_ifs(&self) -> Option<vec_map::Values<(&'n str, Option<&'e OsStr>, &'e OsStr)>> {
+        None
+    }
     fn longest_filter(&self) -> bool { true }
     fn aliases(&self) -> Option<Vec<&'e str>> {
         if let Some(ref aliases) = self.p.meta.aliases {

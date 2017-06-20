@@ -29,11 +29,11 @@
 //! (non-mutating) use of `SRC`. These restrictions are conservative and may be relaxed in the
 //! future.
 
-use def_use::DefUseAnalysis;
 use rustc::mir::{Constant, Local, LocalKind, Location, Lvalue, Mir, Operand, Rvalue, StatementKind};
 use rustc::mir::transform::{MirPass, MirSource, Pass};
 use rustc::mir::visit::MutVisitor;
 use rustc::ty::TyCtxt;
+use util::def_use::DefUseAnalysis;
 use transform::qualify_consts;
 
 pub struct CopyPropagation;
@@ -318,7 +318,7 @@ impl<'tcx> MutVisitor<'tcx> for ConstantPropagationVisitor<'tcx> {
             _ => return,
         }
 
-        *operand = Operand::Constant(self.constant.clone());
+        *operand = Operand::Constant(box self.constant.clone());
         self.uses_replaced += 1
     }
 }

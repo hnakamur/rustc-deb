@@ -324,8 +324,14 @@ impl CString {
         &self.inner
     }
 
+    /// Extracts a `CStr` slice containing the entire string.
+    #[unstable(feature = "as_c_str", issue = "40380")]
+    pub fn as_c_str(&self) -> &CStr {
+        &*self
+    }
+
     /// Converts this `CString` into a boxed `CStr`.
-    #[unstable(feature = "into_boxed_c_str", issue = "0")]
+    #[unstable(feature = "into_boxed_c_str", issue = "40380")]
     pub fn into_boxed_c_str(self) -> Box<CStr> {
         unsafe { mem::transmute(self.into_inner()) }
     }
@@ -356,7 +362,7 @@ impl ops::Deref for CString {
     type Target = CStr;
 
     fn deref(&self) -> &CStr {
-        unsafe { mem::transmute(self.as_bytes_with_nul()) }
+        unsafe { CStr::from_bytes_with_nul_unchecked(self.as_bytes_with_nul()) }
     }
 }
 
@@ -412,6 +418,20 @@ impl<'a> From<&'a CStr> for Box<CStr> {
     fn from(s: &'a CStr) -> Box<CStr> {
         let boxed: Box<[u8]> = Box::from(s.to_bytes_with_nul());
         unsafe { mem::transmute(boxed) }
+    }
+}
+
+#[stable(feature = "c_string_from_box", since = "1.17.0")]
+impl From<Box<CStr>> for CString {
+    fn from(s: Box<CStr>) -> CString {
+        s.into_c_string()
+    }
+}
+
+#[stable(feature = "box_from_c_string", since = "1.17.0")]
+impl Into<Box<CStr>> for CString {
+    fn into(self) -> Box<CStr> {
+        self.into_boxed_c_str()
     }
 }
 
@@ -569,7 +589,8 @@ impl CStr {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub unsafe fn from_ptr<'a>(ptr: *const c_char) -> &'a CStr {
         let len = libc::strlen(ptr);
-        mem::transmute(slice::from_raw_parts(ptr, len as usize + 1))
+        let ptr = ptr as *const u8;
+        CStr::from_bytes_with_nul_unchecked(slice::from_raw_parts(ptr, len as usize + 1))
     }
 
     /// Creates a C string wrapper from a byte slice.
@@ -727,6 +748,12 @@ impl CStr {
     #[stable(feature = "cstr_to_str", since = "1.4.0")]
     pub fn to_string_lossy(&self) -> Cow<str> {
         String::from_utf8_lossy(self.to_bytes())
+    }
+
+    /// Converts a `Box<CStr>` into a `CString` without copying or allocating.
+    #[unstable(feature = "into_boxed_c_str", issue = "40380")]
+    pub fn into_c_string(self: Box<CStr>) -> CString {
+        unsafe { mem::transmute(self) }
     }
 }
 
@@ -922,12 +949,11 @@ mod tests {
     fn into_boxed() {
         let orig: &[u8] = b"Hello, world!\0";
         let cstr = CStr::from_bytes_with_nul(orig).unwrap();
-        let cstring = cstr.to_owned();
-        let box1: Box<CStr> = Box::from(cstr);
-        let box2 = cstring.into_boxed_c_str();
-        assert_eq!(cstr, &*box1);
-        assert_eq!(box1, box2);
-        assert_eq!(&*box2, cstr);
+        let boxed: Box<CStr> = Box::from(cstr);
+        let cstring = cstr.to_owned().into_boxed_c_str().into_c_string();
+        assert_eq!(cstr, &*boxed);
+        assert_eq!(&*boxed, &*cstring);
+        assert_eq!(&*cstring, cstr);
     }
 
     #[test]

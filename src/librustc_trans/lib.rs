@@ -40,6 +40,7 @@
 #![feature(conservative_impl_trait)]
 
 use rustc::dep_graph::WorkProduct;
+use syntax_pos::symbol::Symbol;
 
 extern crate flate;
 extern crate libc;
@@ -50,7 +51,6 @@ extern crate rustc_incremental;
 pub extern crate rustc_llvm as llvm;
 extern crate rustc_platform_intrinsics as intrinsics;
 extern crate rustc_const_math;
-extern crate rustc_const_eval;
 #[macro_use]
 #[no_link]
 extern crate rustc_bitflags;
@@ -67,7 +67,6 @@ pub use rustc::lint;
 pub use rustc::util;
 
 pub use base::trans_crate;
-pub use disr::Disr;
 
 pub mod back {
     pub use rustc::hir::svh;
@@ -112,14 +111,12 @@ mod cabi_x86;
 mod cabi_x86_64;
 mod cabi_x86_win64;
 mod callee;
-mod cleanup;
 mod collector;
 mod common;
 mod consts;
 mod context;
 mod debuginfo;
 mod declare;
-mod disr;
 mod glue;
 mod intrinsic;
 mod machine;
@@ -127,6 +124,7 @@ mod meth;
 mod mir;
 mod monomorphize;
 mod partitioning;
+mod symbol_cache;
 mod symbol_map;
 mod symbol_names_test;
 mod trans_item;
@@ -166,10 +164,11 @@ unsafe impl Send for ModuleTranslation { }
 unsafe impl Sync for ModuleTranslation { }
 
 pub struct CrateTranslation {
+    pub crate_name: Symbol,
     pub modules: Vec<ModuleTranslation>,
     pub metadata_module: ModuleTranslation,
     pub link: middle::cstore::LinkMeta,
-    pub metadata: Vec<u8>,
+    pub metadata: middle::cstore::EncodedMetadata,
     pub exported_symbols: back::symbol_export::ExportedSymbols,
     pub no_builtins: bool,
     pub windows_subsystem: Option<String>,

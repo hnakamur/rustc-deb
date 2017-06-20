@@ -37,6 +37,9 @@ pub enum ObjectSafetyViolation {
 
     /// Method has something illegal
     Method(ast::Name, MethodViolationCode),
+
+    /// Associated const
+    AssociatedConst(ast::Name),
 }
 
 impl ObjectSafetyViolation {
@@ -46,7 +49,7 @@ impl ObjectSafetyViolation {
                 "the trait cannot require that `Self : Sized`".into(),
             ObjectSafetyViolation::SupertraitSelf =>
                 "the trait cannot use `Self` as a type parameter \
-                 in the supertrait listing".into(),
+                 in the supertraits or where-clauses".into(),
             ObjectSafetyViolation::Method(name, MethodViolationCode::StaticMethod) =>
                 format!("method `{}` has no receiver", name).into(),
             ObjectSafetyViolation::Method(name, MethodViolationCode::ReferencesSelf) =>
@@ -54,6 +57,8 @@ impl ObjectSafetyViolation {
                          in its arguments or return type", name).into(),
             ObjectSafetyViolation::Method(name, MethodViolationCode::Generic) =>
                 format!("method `{}` has generic type parameters", name).into(),
+            ObjectSafetyViolation::AssociatedConst(name) =>
+                format!("the trait cannot contain associated consts like `{}`", name).into(),
         }
     }
 }
@@ -141,6 +146,10 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             violations.push(ObjectSafetyViolation::SupertraitSelf);
         }
 
+        violations.extend(self.associated_items(trait_def_id)
+            .filter(|item| item.kind == ty::AssociatedKind::Const)
+            .map(|item| ObjectSafetyViolation::AssociatedConst(item.name)));
+
         debug!("object_safety_violations_for_trait(trait_def_id={:?}) = {:?}",
                trait_def_id,
                violations);
@@ -178,6 +187,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                     ty::Predicate::TypeOutlives(..) |
                     ty::Predicate::RegionOutlives(..) |
                     ty::Predicate::ClosureKind(..) |
+                    ty::Predicate::Subtype(..) |
                     ty::Predicate::Equate(..) => {
                         false
                     }
@@ -209,6 +219,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                     ty::Predicate::Projection(..) |
                     ty::Predicate::Trait(..) |
                     ty::Predicate::Equate(..) |
+                    ty::Predicate::Subtype(..) |
                     ty::Predicate::RegionOutlives(..) |
                     ty::Predicate::WellFormed(..) |
                     ty::Predicate::ObjectSafe(..) |

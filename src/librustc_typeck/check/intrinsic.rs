@@ -36,7 +36,7 @@ fn equate_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let def_id = tcx.hir.local_def_id(it.id);
 
     let substs = Substs::for_item(tcx, def_id,
-                                  |_, _| tcx.mk_region(ty::ReErased),
+                                  |_, _| tcx.types.re_erased,
                                   |def, _| tcx.mk_param_from_def(def));
 
     let fty = tcx.mk_fn_def(def_id, substs, ty::Binder(tcx.mk_fn_sig(
@@ -124,7 +124,6 @@ pub fn check_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             "rustc_peek" => (1, vec![param(0)], param(0)),
             "init" => (1, Vec::new(), param(0)),
             "uninit" => (1, Vec::new(), param(0)),
-            "forget" => (1, vec![ param(0) ], tcx.mk_nil()),
             "transmute" => (2, vec![ param(0) ], param(1)),
             "move_val_init" => {
                 (1,
@@ -272,6 +271,8 @@ pub fn check_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 tcx.intern_tup(&[param(0), tcx.types.bool], false)),
 
             "unchecked_div" | "unchecked_rem" =>
+                (1, vec![param(0), param(0)], param(0)),
+            "unchecked_shl" | "unchecked_shr" =>
                 (1, vec![param(0), param(0)], param(0)),
 
             "overflowing_add" | "overflowing_sub" | "overflowing_mul" =>

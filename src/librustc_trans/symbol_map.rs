@@ -34,8 +34,9 @@ impl<'tcx> SymbolMap<'tcx> {
         where I: Iterator<Item=TransItem<'tcx>>
     {
         // Check for duplicate symbol names
+        let tcx = scx.tcx();
         let mut symbols: Vec<_> = trans_items.map(|trans_item| {
-            (trans_item, trans_item.compute_symbol_name(scx))
+            (trans_item, trans_item.compute_symbol_name(tcx))
         }).collect();
 
         (&mut symbols[..]).sort_by(|&(_, ref sym1), &(_, ref sym2)|{
@@ -97,10 +98,12 @@ impl<'tcx> SymbolMap<'tcx> {
                               trans_item: TransItem<'tcx>) -> Option<Span> {
             match trans_item {
                 TransItem::Fn(Instance { def, .. }) => {
-                    tcx.hir.as_local_node_id(def)
+                    tcx.hir.as_local_node_id(def.def_id())
                 }
-                TransItem::Static(node_id) => Some(node_id),
-                TransItem::DropGlue(_) => None,
+                TransItem::Static(node_id) |
+                TransItem::GlobalAsm(node_id) => {
+                    Some(node_id)
+                }
             }.map(|node_id| {
                 tcx.hir.span(node_id)
             })
@@ -122,7 +125,7 @@ impl<'tcx> SymbolMap<'tcx> {
         if let Some(sym) = self.get(trans_item) {
             Cow::from(sym)
         } else {
-            Cow::from(trans_item.compute_symbol_name(scx))
+            Cow::from(trans_item.compute_symbol_name(scx.tcx()))
         }
     }
 }

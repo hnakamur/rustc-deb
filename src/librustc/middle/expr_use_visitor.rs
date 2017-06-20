@@ -288,6 +288,8 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
     }
 
     pub fn consume_body(&mut self, body: &hir::Body) {
+        debug!("consume_body(body={:?})", body);
+
         for arg in &body.arguments {
             let arg_ty = return_if_err!(self.mc.infcx.node_ty(arg.pat.id));
 
@@ -414,9 +416,9 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 self.consume_exprs(exprs);
             }
 
-            hir::ExprIf(ref cond_expr, ref then_blk, ref opt_else_expr) => {
+            hir::ExprIf(ref cond_expr, ref then_expr, ref opt_else_expr) => {
                 self.consume_expr(&cond_expr);
-                self.walk_block(&then_blk);
+                self.walk_expr(&then_expr);
                 if let Some(ref else_expr) = *opt_else_expr {
                     self.consume_expr(&else_expr);
                 }
@@ -424,7 +426,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
 
             hir::ExprMatch(ref discr, ref arms, _) => {
                 let discr_cmt = return_if_err!(self.mc.cat_expr(&discr));
-                let r = self.tcx().mk_region(ty::ReEmpty);
+                let r = self.tcx().types.re_empty;
                 self.borrow_expr(&discr, r, ty::ImmBorrow, MatchDiscriminant);
 
                 // treatment of the discriminant is handled while walking the arms.

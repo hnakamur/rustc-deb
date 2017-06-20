@@ -357,7 +357,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
                     // a regular goto.
                     let ty = location.ty(&callee_mir, tcx).subst(tcx, callsite.substs);
                     let ty = ty.to_ty(tcx);
-                    if tcx.type_needs_drop_given_env(ty, &param_env) {
+                    if ty.needs_drop(tcx, &param_env) {
                         cost += CALL_PENALTY;
                         if let Some(unwind) = unwind {
                             work_list.push(unwind);
@@ -461,11 +461,8 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
                 for loc in callee_mir.vars_and_temps_iter() {
                     let mut local = callee_mir.local_decls[loc].clone();
 
-                    if let Some(ref mut source_info) = local.source_info {
-                        source_info.scope = scope_map[source_info.scope];
-
-                        source_info.span = callsite.location.span;
-                    }
+                    local.source_info.scope = scope_map[local.source_info.scope];
+                    local.source_info.span = callsite.location.span;
 
                     let idx = caller_mir.local_decls.push(local);
                     local_map.push(idx);
@@ -500,13 +497,13 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
                 let dest = if dest_needs_borrow(&destination.0) {
                     debug!("Creating temp for return destination");
                     let dest = Rvalue::Ref(
-                        self.tcx.mk_region(ty::ReErased),
+                        self.tcx.types.re_erased,
                         BorrowKind::Mut,
                         destination.0);
 
                     let ty = dest.ty(caller_mir, self.tcx);
 
-                    let temp = LocalDecl::new_temp(ty);
+                    let temp = LocalDecl::new_temp(ty, callsite.location.span);
 
                     let tmp = caller_mir.local_decls.push(temp);
                     let tmp = Lvalue::Local(tmp);
@@ -585,12 +582,12 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
     fn cast_box_free_arg(&self, arg: Lvalue<'tcx>, ptr_ty: Ty<'tcx>,
                          callsite: &CallSite<'tcx>, caller_mir: &mut Mir<'tcx>) -> Operand<'tcx> {
         let arg = Rvalue::Ref(
-            self.tcx.mk_region(ty::ReErased),
+            self.tcx.types.re_erased,
             BorrowKind::Mut,
             arg.deref());
 
         let ty = arg.ty(caller_mir, self.tcx);
-        let ref_tmp = LocalDecl::new_temp(ty);
+        let ref_tmp = LocalDecl::new_temp(ty, callsite.location.span);
         let ref_tmp = caller_mir.local_decls.push(ref_tmp);
         let ref_tmp = Lvalue::Local(ref_tmp);
 
@@ -611,7 +608,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
 
         let raw_ptr = Rvalue::Cast(CastKind::Misc, Operand::Consume(ref_tmp), ptr_ty);
 
-        let cast_tmp = LocalDecl::new_temp(ptr_ty);
+        let cast_tmp = LocalDecl::new_temp(ptr_ty, callsite.location.span);
         let cast_tmp = caller_mir.local_decls.push(cast_tmp);
         let cast_tmp = Lvalue::Local(cast_tmp);
 
@@ -645,7 +642,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
 
             let ty = arg.ty(caller_mir, tcx);
 
-            let arg_tmp = LocalDecl::new_temp(ty);
+            let arg_tmp = LocalDecl::new_temp(ty, callsite.location.span);
             let arg_tmp = caller_mir.local_decls.push(arg_tmp);
             let arg_tmp = Lvalue::Local(arg_tmp);
 

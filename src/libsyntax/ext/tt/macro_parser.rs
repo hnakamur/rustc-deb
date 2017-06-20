@@ -79,7 +79,7 @@ pub use self::ParseResult::*;
 use self::TokenTreeOrTokenTreeVec::*;
 
 use ast::Ident;
-use syntax_pos::{self, BytePos, mk_sp, Span};
+use syntax_pos::{self, BytePos, Span};
 use codemap::Spanned;
 use errors::FatalError;
 use ext::tt::quoted::{self, TokenTree};
@@ -267,11 +267,12 @@ pub fn parse_failure_msg(tok: Token) -> String {
 
 /// Perform a token equality check, ignoring syntax context (that is, an unhygienic comparison)
 fn token_name_eq(t1 : &Token, t2 : &Token) -> bool {
-    match (t1,t2) {
-        (&token::Ident(id1),&token::Ident(id2))
-        | (&token::Lifetime(id1),&token::Lifetime(id2)) =>
-            id1.name == id2.name,
-        _ => *t1 == *t2
+    if let (Some(id1), Some(id2)) = (t1.ident(), t2.ident()) {
+        id1.name == id2.name
+    } else if let (&token::Lifetime(id1), &token::Lifetime(id2)) = (t1, t2) {
+        id1.name == id2.name
+    } else {
+        *t1 == *t2
     }
 }
 
@@ -285,7 +286,7 @@ fn inner_parse_loop(sess: &ParseSess,
                     eof_eis: &mut SmallVector<Box<MatcherPos>>,
                     bb_eis: &mut SmallVector<Box<MatcherPos>>,
                     token: &Token,
-                    span: &syntax_pos::Span)
+                    span: syntax_pos::Span)
                     -> ParseResult<()> {
     while let Some(mut ei) = cur_eis.pop() {
         // When unzipped trees end, remove them
@@ -323,8 +324,7 @@ fn inner_parse_loop(sess: &ParseSess,
                     for idx in ei.match_lo..ei.match_hi {
                         let sub = ei.matches[idx].clone();
                         new_pos.matches[idx]
-                            .push(Rc::new(MatchedSeq(sub, mk_sp(ei.sp_lo,
-                                                                span.hi))));
+                            .push(Rc::new(MatchedSeq(sub, Span { lo: ei.sp_lo, ..span })));
                     }
 
                     new_pos.match_cur = ei.match_hi;
@@ -426,7 +426,7 @@ pub fn parse(sess: &ParseSess, tts: TokenStream, ms: &[TokenTree], directory: Op
         assert!(next_eis.is_empty());
 
         match inner_parse_loop(sess, &mut cur_eis, &mut next_eis, &mut eof_eis, &mut bb_eis,
-                               &parser.token, &parser.span) {
+                               &parser.token, parser.span) {
             Success(_) => {},
             Failure(sp, tok) => return Failure(sp, tok),
             Error(sp, msg) => return Error(sp, msg),
@@ -488,12 +488,12 @@ pub fn parse(sess: &ParseSess, tts: TokenStream, ms: &[TokenTree], directory: Op
 fn parse_nt<'a>(p: &mut Parser<'a>, sp: Span, name: &str) -> Nonterminal {
     match name {
         "tt" => {
-            return token::NtTT(panictry!(p.parse_token_tree()));
+            return token::NtTT(p.parse_token_tree());
         }
         _ => {}
     }
     // check at the beginning and the parser checks after each bump
-    p.check_unknown_macro_variable();
+    p.process_potential_macro_variable();
     match name {
         "item" => match panictry!(p.parse_item()) {
             Some(i) => token::NtItem(i),
@@ -512,7 +512,7 @@ fn parse_nt<'a>(p: &mut Parser<'a>, sp: Span, name: &str) -> Nonterminal {
         },
         "pat" => token::NtPat(panictry!(p.parse_pat())),
         "expr" => token::NtExpr(panictry!(p.parse_expr())),
-        "ty" => token::NtTy(panictry!(p.parse_ty_no_plus())),
+        "ty" => token::NtTy(panictry!(p.parse_ty())),
         // this could be handled like a token, since it is one
         "ident" => match p.token {
             token::Ident(sn) => {
@@ -530,6 +530,7 @@ fn parse_nt<'a>(p: &mut Parser<'a>, sp: Span, name: &str) -> Nonterminal {
             token::NtPath(panictry!(p.parse_path(PathStyle::Type)))
         },
         "meta" => token::NtMeta(panictry!(p.parse_meta_item())),
+        "vis" => token::NtVis(panictry!(p.parse_visibility(true))),
         // this is not supposed to happen, since it has been checked
         // when compiling the macro.
         _ => p.span_bug(sp, "invalid fragment specifier")

@@ -1,10 +1,417 @@
+Version 1.18.0 (2017-06-08)
+===========================
+
+Language
+--------
+
+- [Stabilize pub(restricted)][40556] `pub` can now accept a module path to
+  make the item visible to just that module tree. Also accepts the keyword
+  `crate` to make something public to the whole crate but not users of the
+  library. Example: `pub(crate) mod utils;`. [RFC 1422].
+- [Stabilize `#![windows_subsystem]` attribute][40870] conservative exposure of the
+  `/SUBSYSTEM` linker flag on Windows platforms. [RFC 1665].
+- [Refactor of trait object type parsing][40043] Now `ty` in macros can accept
+  types like `Write + Send`, trailing `+` are now supported in trait objects,
+  and better error reporting for trait objects starting with `?Sized`.
+- [0e+10 is now a valid floating point literal][40589]
+- [Now warns if you bind a lifetime parameter to 'static][40734]
+- [Tuples, Enum variant fields, and structs with no `repr` attribute or with
+  `#[repr(Rust)]` are reordered to minimize padding and produce a smaller
+  representation in some cases.][40377]
+
+Compiler
+--------
+
+- [rustc can now emit mir with `--emit mir`][39891]
+- [Improved LLVM IR for trivial functions][40367]
+- [Added explanation for E0090(Wrong number of lifetimes are supplied)][40723]
+- [rustc compilation is now 15%-20% faster][41469] Thanks to optimisation
+  opportunities found through profiling
+- [Improved backtrace formatting when panicking][38165]
+
+Libraries
+---------
+
+- [Specialized `Vec::from_iter` being passed `vec::IntoIter`][40731] if the
+  iterator hasn't been advanced the original `Vec` is reassembled with no actual
+  iteration or reallocation.
+- [Simplified HashMap Bucket interface][40561] provides performance
+  improvements for iterating and cloning.
+- [Specialize Vec::from_elem to use calloc][40409]
+- [Fixed Race condition in fs::create_dir_all][39799]
+- [No longer caching stdio on Windows][40516]
+- [Optimized insertion sort in slice][40807] insertion sort in some cases
+  2.50%~ faster and in one case now 12.50% faster.
+- [Optimized `AtomicBool::fetch_nand`][41143]
+
+Stabilized APIs
+---------------
+
+- [`Child::try_wait`]
+- [`HashMap::retain`]
+- [`HashSet::retain`]
+- [`PeekMut::pop`]
+- [`TcpStream::peek`]
+- [`UdpSocket::peek`]
+- [`UdpSocket::peek_from`]
+
+Cargo
+-----
+
+- [Added partial Pijul support][cargo/3842] Pijul is a version control system in Rust.
+  You can now create new cargo projects with Pijul using `cargo new --vcs pijul`
+- [Now always emits build script warnings for crates that fail to build][cargo/3847]
+- [Added Android build support][cargo/3885]
+- [Added `--bins` and `--tests` flags][cargo/3901] now you can build all programs
+  of a certain type, for example `cargo build --bins` will build all
+  binaries.
+- [Added support for haiku][cargo/3952]
+
+Misc
+----
+
+- [rustdoc can now use pulldown-cmark with the `--enable-commonmark` flag][40338]
+- [Added rust-winbg script for better debugging on Windows][39983]
+- [Rust now uses the official cross compiler for NetBSD][40612]
+- [rustdoc now accepts `#` at the start of files][40828]
+- [Fixed jemalloc support for musl][41168]
+
+Compatibility Notes
+-------------------
+
+- [Changes to how the `0` flag works in format!][40241] Padding zeroes are now
+  always placed after the sign if it exists and before the digits. With the `#`
+  flag the zeroes are placed after the prefix and before the digits.
+- [Due to the struct field optimisation][40377], using `transmute` on structs
+  that have no `repr` attribute or `#[repr(Rust)]` will no longer work. This has
+  always been undefined behavior, but is now more likely to break in practice.
+- [The refactor of trait object type parsing][40043] fixed a bug where `+` was
+  receiving the wrong priority parsing things like `&for<'a> Tr<'a> + Send` as
+  `&(for<'a> Tr<'a> + Send)` instead of `(&for<'a> Tr<'a>) + Send`
+- [Overlapping inherent `impl`s are now a hard error][40728]
+- [`PartialOrd` and `Ord` must agree on the ordering.][41270]
+- [`rustc main.rs -o out --emit=asm,llvm-ir`][41085] Now will output
+  `out.asm` and `out.ll` instead of only one of the filetypes.
+- [ calling a function that returns `Self` will no longer work][41805] when
+  the size of `Self` cannot be statically determined.
+- [rustc now builds with a "pthreads" flavour of MinGW for Windows GNU][40805]
+  this has caused a few regressions namely:
+
+  - Changed the link order of local static/dynamic libraries (respecting the
+    order on given rather than having the compiler reorder).
+  - Changed how MinGW is linked, native code linked to dynamic libraries
+    may require manually linking to the gcc support library (for the native
+    code itself)
+
+[38165]: https://github.com/rust-lang/rust/pull/38165
+[39799]: https://github.com/rust-lang/rust/pull/39799
+[39891]: https://github.com/rust-lang/rust/pull/39891
+[39983]: https://github.com/rust-lang/rust/pull/39983
+[40043]: https://github.com/rust-lang/rust/pull/40043
+[40241]: https://github.com/rust-lang/rust/pull/40241
+[40338]: https://github.com/rust-lang/rust/pull/40338
+[40367]: https://github.com/rust-lang/rust/pull/40367
+[40377]: https://github.com/rust-lang/rust/pull/40377
+[40409]: https://github.com/rust-lang/rust/pull/40409
+[40516]: https://github.com/rust-lang/rust/pull/40516
+[40556]: https://github.com/rust-lang/rust/pull/40556
+[40561]: https://github.com/rust-lang/rust/pull/40561
+[40589]: https://github.com/rust-lang/rust/pull/40589
+[40612]: https://github.com/rust-lang/rust/pull/40612
+[40723]: https://github.com/rust-lang/rust/pull/40723
+[40728]: https://github.com/rust-lang/rust/pull/40728
+[40731]: https://github.com/rust-lang/rust/pull/40731
+[40734]: https://github.com/rust-lang/rust/pull/40734
+[40805]: https://github.com/rust-lang/rust/pull/40805
+[40807]: https://github.com/rust-lang/rust/pull/40807
+[40828]: https://github.com/rust-lang/rust/pull/40828
+[40870]: https://github.com/rust-lang/rust/pull/40870
+[41085]: https://github.com/rust-lang/rust/pull/41085
+[41143]: https://github.com/rust-lang/rust/pull/41143
+[41168]: https://github.com/rust-lang/rust/pull/41168
+[41270]: https://github.com/rust-lang/rust/issues/41270
+[41469]: https://github.com/rust-lang/rust/pull/41469
+[41805]: https://github.com/rust-lang/rust/issues/41805
+[RFC 1422]: https://github.com/rust-lang/rfcs/blob/master/text/1422-pub-restricted.md
+[RFC 1665]: https://github.com/rust-lang/rfcs/blob/master/text/1665-windows-subsystem.md
+[`Child::try_wait`]: https://doc.rust-lang.org/std/process/struct.Child.html#method.try_wait
+[`HashMap::retain`]: https://doc.rust-lang.org/std/collections/struct.HashMap.html#method.retain
+[`HashSet::retain`]: https://doc.rust-lang.org/std/collections/struct.HashSet.html#method.retain
+[`PeekMut::pop`]: https://doc.rust-lang.org/std/collections/binary_heap/struct.PeekMut.html#method.pop
+[`TcpStream::peek`]: https://doc.rust-lang.org/std/net/struct.TcpStream.html#method.peek
+[`UdpSocket::peek_from`]: https://doc.rust-lang.org/std/net/struct.UdpSocket.html#method.peek_from
+[`UdpSocket::peek`]: https://doc.rust-lang.org/std/net/struct.UdpSocket.html#method.peek
+[cargo/3842]: https://github.com/rust-lang/cargo/pull/3842
+[cargo/3847]: https://github.com/rust-lang/cargo/pull/3847
+[cargo/3885]: https://github.com/rust-lang/cargo/pull/3885
+[cargo/3901]: https://github.com/rust-lang/cargo/pull/3901
+[cargo/3952]: https://github.com/rust-lang/cargo/pull/3952
+
+
+Version 1.17.0 (2017-04-27)
+===========================
+
+Language
+--------
+
+* [The lifetime of statics and consts defaults to `'static`][39265]. [RFC 1623]
+* [Fields of structs may be initialized without duplicating the field/variable
+  names][39761]. [RFC 1682]
+* [`Self` may be included in the `where` clause of `impls`][38864]. [RFC 1647]
+* [When coercing to an unsized type lifetimes must be equal][40319]. That is,
+  there is no subtyping between `T` and `U` when `T: Unsize<U>`. For example,
+  coercing `&mut [&'a X; N]` to `&mut [&'b X]` requires `'a` be equal to
+  `'b`. Soundness fix.
+* [Values passed to the indexing operator, `[]`, automatically coerce][40166]
+* [Static variables may contain references to other statics][40027]
+
+Compiler
+--------
+
+* [Exit quickly on only `--emit dep-info`][40336]
+* [Make `-C relocation-model` more correctly determine whether the linker
+  creates a position-independent executable][40245]
+* [Add `-C overflow-checks` to directly control whether integer overflow
+  panics][40037]
+* [The rustc type checker now checks items on demand instead of in a single
+  in-order pass][40008]. This is mostly an internal refactoring in support of
+  future work, including incremental type checking, but also resolves [RFC
+  1647], allowing `Self` to appear in `impl` `where` clauses.
+* [Optimize vtable loads][39995]
+* [Turn off vectorization for Emscripten targets][39990]
+* [Provide suggestions for unknown macros imported with `use`][39953]
+* [Fix ICEs in path resolution][39939]
+* [Strip exception handling code on Emscripten when `panic=abort`][39193]
+* [Add clearer error message using `&str + &str`][39116]
+
+Stabilized APIs
+---------------
+
+* [`Arc::into_raw`]
+* [`Arc::from_raw`]
+* [`Arc::ptr_eq`]
+* [`Rc::into_raw`]
+* [`Rc::from_raw`]
+* [`Rc::ptr_eq`]
+* [`Ordering::then`]
+* [`Ordering::then_with`]
+* [`BTreeMap::range`]
+* [`BTreeMap::range_mut`]
+* [`collections::Bound`]
+* [`process::abort`]
+* [`ptr::read_unaligned`]
+* [`ptr::write_unaligned`]
+* [`Result::expect_err`]
+* [`Cell::swap`]
+* [`Cell::replace`]
+* [`Cell::into_inner`]
+* [`Cell::take`]
+
+Libraries
+---------
+
+* [`BTreeMap` and `BTreeSet` can iterate over ranges][27787]
+* [`Cell` can store non-`Copy` types][39793]. [RFC 1651]
+* [`String` implements `FromIterator<&char>`][40028]
+* `Box` [implements][40009] a number of new conversions:
+  `From<Box<str>> for String`,
+  `From<Box<[T]>> for Vec<T>`,
+  `From<Box<CStr>> for CString`,
+  `From<Box<OsStr>> for OsString`,
+  `From<Box<Path>> for PathBuf`,
+  `Into<Box<str>> for String`,
+  `Into<Box<[T]>> for Vec<T>`,
+  `Into<Box<CStr>> for CString`,
+  `Into<Box<OsStr>> for OsString`,
+  `Into<Box<Path>> for PathBuf`,
+  `Default for Box<str>`,
+  `Default for Box<CStr>`,
+  `Default for Box<OsStr>`,
+  `From<&CStr> for Box<CStr>`,
+  `From<&OsStr> for Box<OsStr>`,
+  `From<&Path> for Box<Path>`
+* [`ffi::FromBytesWithNulError` implements `Error` and `Display`][39960]
+* [Specialize `PartialOrd<A> for [A] where A: Ord`][39642]
+* [Slightly optimize `slice::sort`][39538]
+* [Add `ToString` trait specialization for `Cow<'a, str>` and `String`][39440]
+* [`Box<[T]>` implements `From<&[T]> where T: Copy`,
+  `Box<str>` implements `From<&str>`][39438]
+* [`IpAddr` implements `From` for various arrays. `SocketAddr` implements
+  `From<(I, u16)> where I: Into<IpAddr>`][39372]
+* [`format!` estimates the needed capacity before writing a string][39356]
+* [Support unprivileged symlink creation in Windows][38921]
+* [`PathBuf` implements `Default`][38764]
+* [Implement `PartialEq<[A]>` for `VecDeque<A>`][38661]
+* [`HashMap` resizes adaptively][38368] to guard against DOS attacks
+  and poor hash functions.
+
+Cargo
+-----
+
+* [Add `cargo check --all`][cargo/3731]
+* [Add an option to ignore SSL revocation checking][cargo/3699]
+* [Add `cargo run --package`][cargo/3691]
+* [Add `required_features`][cargo/3667]
+* [Assume `build.rs` is a build script][cargo/3664]
+* [Find workspace via `workspace_root` link in containing member][cargo/3562]
+
+Misc
+----
+
+* [Documentation is rendered with mdbook instead of the obsolete, in-tree
+  `rustbook`][39633]
+* [The "Unstable Book" documents nightly-only features][ubook]
+* [Improve the style of the sidebar in rustdoc output][40265]
+* [Configure build correctly on 64-bit CPU's with the armhf ABI][40261]
+* [Fix MSP430 breakage due to `i128`][40257]
+* [Preliminary Solaris/SPARCv9 support][39903]
+* [`rustc` is linked statically on Windows MSVC targets][39837], allowing it to
+  run without installing the MSVC runtime.
+* [`rustdoc --test` includes file names in test names][39788]
+* This release includes builds of `std` for `sparc64-unknown-linux-gnu`,
+  `aarch64-unknown-linux-fuchsia`, and `x86_64-unknown-linux-fuchsia`.
+* [Initial support for `aarch64-unknown-freebsd`][39491]
+* [Initial support for `i686-unknown-netbsd`][39426]
+* [This release no longer includes the old makefile build system][39431]. Rust
+  is built with a custom build system, written in Rust, and with Cargo.
+* [Add Debug implementations for libcollection structs][39002]
+* [`TypeId` implements `PartialOrd` and `Ord`][38981]
+* [`--test-threads=0` produces an error][38945]
+* [`rustup` installs documentation by default][40526]
+* [The Rust source includes NatVis visualizations][39843]. These can be used by
+  WinDbg and Visual Studio to improve the debugging experience.
+
+Compatibility Notes
+-------------------
+
+* [Rust 1.17 does not correctly detect the MSVC 2017 linker][38584]. As a
+  workaround, either use MSVC 2015 or run vcvars.bat.
+* [When coercing to an unsized type lifetimes must be equal][40319]. That is,
+  disallow subtyping between `T` and `U` when `T: Unsize<U>`, e.g. coercing
+  `&mut [&'a X; N]` to `&mut [&'b X]` requires `'a` be equal to `'b`. Soundness
+  fix.
+* [`format!` and `Display::to_string` panic if an underlying formatting
+  implementation returns an error][40117]. Previously the error was silently
+  ignored. It is incorrect for `write_fmt` to return an error when writing
+  to a string.
+* [In-tree crates are verified to be unstable][39851]. Previously, some minor
+  crates were marked stable and could be accessed from the stable toolchain.
+* [Rust git source no longer includes vendored crates][39728]. Those that need
+  to build with vendored crates should build from release tarballs.
+* [Fix inert attributes from `proc_macro_derives`][39572]
+* [During crate resolution, rustc prefers a crate in the sysroot if two crates
+  are otherwise identical][39518]. Unlikely to be encountered outside the Rust
+  build system.
+* [Fixed bugs around how type inference interacts with dead-code][39485]. The
+  existing code generally ignores the type of dead-code unless a type-hint is
+  provided; this can cause surprising inference interactions particularly around
+  defaulting. The new code uniformly ignores the result type of dead-code.
+* [Tuple-struct constructors with private fields are no longer visible][38932]
+* [Lifetime parameters that do not appear in the arguments are now considered
+  early-bound][38897], resolving a soundness bug (#[32330]). The
+  `hr_lifetime_in_assoc_type` future-compatibility lint has been in effect since
+  April of 2016.
+* [rustdoc: fix doctests with non-feature crate attributes][38161]
+* [Make transmuting from fn item types to pointer-sized types a hard
+  error][34198]
+
+[27787]: https://github.com/rust-lang/rust/issues/27787
+[32330]: https://github.com/rust-lang/rust/issues/32330
+[34198]: https://github.com/rust-lang/rust/pull/34198
+[38161]: https://github.com/rust-lang/rust/pull/38161
+[38368]: https://github.com/rust-lang/rust/pull/38368
+[38584]: https://github.com/rust-lang/rust/issues/38584
+[38661]: https://github.com/rust-lang/rust/pull/38661
+[38764]: https://github.com/rust-lang/rust/pull/38764
+[38864]: https://github.com/rust-lang/rust/issues/38864
+[38897]: https://github.com/rust-lang/rust/pull/38897
+[38921]: https://github.com/rust-lang/rust/pull/38921
+[38932]: https://github.com/rust-lang/rust/pull/38932
+[38945]: https://github.com/rust-lang/rust/pull/38945
+[38981]: https://github.com/rust-lang/rust/pull/38981
+[39002]: https://github.com/rust-lang/rust/pull/39002
+[39116]: https://github.com/rust-lang/rust/pull/39116
+[39193]: https://github.com/rust-lang/rust/pull/39193
+[39265]: https://github.com/rust-lang/rust/pull/39265
+[39356]: https://github.com/rust-lang/rust/pull/39356
+[39372]: https://github.com/rust-lang/rust/pull/39372
+[39426]: https://github.com/rust-lang/rust/pull/39426
+[39431]: https://github.com/rust-lang/rust/pull/39431
+[39438]: https://github.com/rust-lang/rust/pull/39438
+[39440]: https://github.com/rust-lang/rust/pull/39440
+[39485]: https://github.com/rust-lang/rust/pull/39485
+[39491]: https://github.com/rust-lang/rust/pull/39491
+[39518]: https://github.com/rust-lang/rust/pull/39518
+[39538]: https://github.com/rust-lang/rust/pull/39538
+[39572]: https://github.com/rust-lang/rust/pull/39572
+[39633]: https://github.com/rust-lang/rust/pull/39633
+[39642]: https://github.com/rust-lang/rust/pull/39642
+[39728]: https://github.com/rust-lang/rust/pull/39728
+[39761]: https://github.com/rust-lang/rust/pull/39761
+[39788]: https://github.com/rust-lang/rust/pull/39788
+[39793]: https://github.com/rust-lang/rust/pull/39793
+[39837]: https://github.com/rust-lang/rust/pull/39837
+[39843]: https://github.com/rust-lang/rust/pull/39843
+[39851]: https://github.com/rust-lang/rust/pull/39851
+[39903]: https://github.com/rust-lang/rust/pull/39903
+[39939]: https://github.com/rust-lang/rust/pull/39939
+[39953]: https://github.com/rust-lang/rust/pull/39953
+[39960]: https://github.com/rust-lang/rust/pull/39960
+[39990]: https://github.com/rust-lang/rust/pull/39990
+[39995]: https://github.com/rust-lang/rust/pull/39995
+[40008]: https://github.com/rust-lang/rust/pull/40008
+[40009]: https://github.com/rust-lang/rust/pull/40009
+[40027]: https://github.com/rust-lang/rust/pull/40027
+[40028]: https://github.com/rust-lang/rust/pull/40028
+[40037]: https://github.com/rust-lang/rust/pull/40037
+[40117]: https://github.com/rust-lang/rust/pull/40117
+[40166]: https://github.com/rust-lang/rust/pull/40166
+[40245]: https://github.com/rust-lang/rust/pull/40245
+[40257]: https://github.com/rust-lang/rust/pull/40257
+[40261]: https://github.com/rust-lang/rust/pull/40261
+[40265]: https://github.com/rust-lang/rust/pull/40265
+[40319]: https://github.com/rust-lang/rust/pull/40319
+[40336]: https://github.com/rust-lang/rust/pull/40336
+[40526]: https://github.com/rust-lang/rust/pull/40526
+[RFC 1623]: https://github.com/rust-lang/rfcs/blob/master/text/1623-static.md
+[RFC 1647]: https://github.com/rust-lang/rfcs/blob/master/text/1647-allow-self-in-where-clauses.md
+[RFC 1651]: https://github.com/rust-lang/rfcs/blob/master/text/1651-movecell.md
+[RFC 1682]: https://github.com/rust-lang/rfcs/blob/master/text/1682-field-init-shorthand.md
+[`Arc::from_raw`]: https://doc.rust-lang.org/std/sync/struct.Arc.html#method.from_raw
+[`Arc::into_raw`]: https://doc.rust-lang.org/std/sync/struct.Arc.html#method.into_raw
+[`Arc::ptr_eq`]: https://doc.rust-lang.org/std/sync/struct.Arc.html#method.ptr_eq
+[`BTreeMap::range_mut`]: https://doc.rust-lang.org/std/collections/btree_map/struct.BTreeMap.html#method.range_mut
+[`BTreeMap::range`]: https://doc.rust-lang.org/std/collections/btree_map/struct.BTreeMap.html#method.range
+[`Cell::into_inner`]: https://doc.rust-lang.org/std/cell/struct.Cell.html#method.into_inner
+[`Cell::replace`]: https://doc.rust-lang.org/std/cell/struct.Cell.html#method.replace
+[`Cell::swap`]: https://doc.rust-lang.org/std/cell/struct.Cell.html#method.swap
+[`Cell::take`]: https://doc.rust-lang.org/std/cell/struct.Cell.html#method.take
+[`Ordering::then_with`]: https://doc.rust-lang.org/std/cmp/enum.Ordering.html#method.then_with
+[`Ordering::then`]: https://doc.rust-lang.org/std/cmp/enum.Ordering.html#method.then
+[`Rc::from_raw`]: https://doc.rust-lang.org/std/rc/struct.Rc.html#method.from_raw
+[`Rc::into_raw`]: https://doc.rust-lang.org/std/rc/struct.Rc.html#method.into_raw
+[`Rc::ptr_eq`]: https://doc.rust-lang.org/std/rc/struct.Rc.html#method.ptr_eq
+[`Result::expect_err`]: https://doc.rust-lang.org/std/result/enum.Result.html#method.expect_err
+[`collections::Bound`]: https://doc.rust-lang.org/std/collections/enum.Bound.html
+[`process::abort`]: https://doc.rust-lang.org/std/process/fn.abort.html
+[`ptr::read_unaligned`]: https://doc.rust-lang.org/std/ptr/fn.read_unaligned.html
+[`ptr::write_unaligned`]: https://doc.rust-lang.org/std/ptr/fn.write_unaligned.html
+[cargo/3562]: https://github.com/rust-lang/cargo/pull/3562
+[cargo/3664]: https://github.com/rust-lang/cargo/pull/3664
+[cargo/3667]: https://github.com/rust-lang/cargo/pull/3667
+[cargo/3691]: https://github.com/rust-lang/cargo/pull/3691
+[cargo/3699]: https://github.com/rust-lang/cargo/pull/3699
+[cargo/3731]: https://github.com/rust-lang/cargo/pull/3731
+[mdbook]: https://crates.io/crates/mdbook
+[ubook]: https://doc.rust-lang.org/unstable-book/
+
+
 Version 1.16.0 (2017-03-16)
 ===========================
 
 Language
 --------
 
-* Lifetimes in statics and consts default to `'static`. [RFC 1623]
 * [The compiler's `dead_code` lint now accounts for type aliases][38051].
 * [Uninhabitable enums (those without any variants) no longer permit wildcard
   match patterns][38069]
@@ -5056,7 +5463,7 @@ Version 0.1  (2012-01-20)
 
    * Compiler works with the following configurations:
       * Linux: x86 and x86_64 hosts and targets
-      * MacOS: x86 and x86_64 hosts and targets
+      * macOS: x86 and x86_64 hosts and targets
       * Windows: x86 hosts and targets
 
    * Cross compilation / multi-target configuration supported.

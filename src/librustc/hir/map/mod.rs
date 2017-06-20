@@ -17,7 +17,7 @@ pub use self::definitions::{Definitions, DefKey, DefPath, DefPathData,
 
 use dep_graph::{DepGraph, DepNode};
 
-use hir::def_id::{CRATE_DEF_INDEX, DefId, DefIndex};
+use hir::def_id::{CRATE_DEF_INDEX, DefId, DefIndex, DefIndexAddressSpace};
 
 use syntax::abi::Abi;
 use syntax::ast::{self, Name, NodeId, CRATE_NODE_ID};
@@ -36,6 +36,10 @@ pub mod blocks;
 mod collector;
 mod def_collector;
 pub mod definitions;
+mod hir_id_validator;
+
+pub const ITEM_LIKE_SPACE: DefIndexAddressSpace = DefIndexAddressSpace::Low;
+pub const REGULAR_SPACE: DefIndexAddressSpace = DefIndexAddressSpace::High;
 
 #[derive(Copy, Clone, Debug)]
 pub enum Node<'hir> {
@@ -346,10 +350,6 @@ impl<'hir> Map<'hir> {
         }
     }
 
-    pub fn num_local_def_ids(&self) -> usize {
-        self.definitions.len()
-    }
-
     pub fn definitions(&self) -> &Definitions {
         &self.definitions
     }
@@ -440,6 +440,27 @@ impl<'hir> Map<'hir> {
 
     pub fn body_owner_def_id(&self, id: BodyId) -> DefId {
         self.local_def_id(self.body_owner(id))
+    }
+
+    /// Given a body owner's id, returns the `BodyId` associated with it.
+    pub fn body_owned_by(&self, id: NodeId) -> BodyId {
+        if let Some(entry) = self.find_entry(id) {
+            if let Some(body_id) = entry.associated_body() {
+                // For item-like things and closures, the associated
+                // body has its own distinct id, and that is returned
+                // by `associated_body`.
+                body_id
+            } else {
+                // For some expressions, the expression is its own body.
+                if let EntryExpr(_, expr) = entry {
+                    BodyId { node_id: expr.id }
+                } else {
+                    span_bug!(self.span(id), "id `{}` has no associated body", id);
+                }
+            }
+        } else {
+            bug!("no entry for id `{}`", id)
+        }
     }
 
     pub fn ty_param_owner(&self, id: NodeId) -> NodeId {
@@ -948,7 +969,7 @@ pub fn map_crate<'hir>(forest: &'hir mut Forest,
     intravisit::walk_crate(&mut collector, &forest.krate);
     let map = collector.map;
 
-    if log_enabled!(::log::DEBUG) {
+    if log_enabled!(::log::LogLevel::Debug) {
         // This only makes sense for ordered stores; note the
         // enumerate to count the number of entries.
         let (entries_less_1, _) = map.iter().filter(|&x| {
@@ -964,13 +985,17 @@ pub fn map_crate<'hir>(forest: &'hir mut Forest,
               entries, vector_length, (entries as f64 / vector_length as f64) * 100.);
     }
 
-    Map {
+    let map = Map {
         forest: forest,
         dep_graph: forest.dep_graph.clone(),
         map: map,
         definitions: definitions,
         inlined_bodies: RefCell::new(DefIdMap()),
-    }
+    };
+
+    hir_id_validator::check_crate(&map);
+
+    map
 }
 
 /// Identical to the `PpAnn` implementation for `hir::Crate`,
@@ -1052,6 +1077,7 @@ fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
                 ItemFn(..) => "fn",
                 ItemMod(..) => "mod",
                 ItemForeignMod(..) => "foreign mod",
+                ItemGlobalAsm(..) => "global asm",
                 ItemTy(..) => "ty",
                 ItemEnum(..) => "enum",
                 ItemStruct(..) => "struct",

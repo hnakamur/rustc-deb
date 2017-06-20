@@ -19,7 +19,7 @@ pub use self::DebugInfoLevel::*;
 use session::{early_error, early_warn, Session};
 use session::search_paths::SearchPaths;
 
-use rustc_back::PanicStrategy;
+use rustc_back::{LinkerFlavor, PanicStrategy};
 use rustc_back::target::Target;
 use lint;
 use middle::cstore;
@@ -82,6 +82,7 @@ pub enum OutputType {
     Bitcode,
     Assembly,
     LlvmAssembly,
+    Mir,
     Metadata,
     Object,
     Exe,
@@ -96,6 +97,7 @@ impl OutputType {
             OutputType::Bitcode |
             OutputType::Assembly |
             OutputType::LlvmAssembly |
+            OutputType::Mir |
             OutputType::Object |
             OutputType::Metadata => false,
         }
@@ -106,6 +108,7 @@ impl OutputType {
             OutputType::Bitcode => "llvm-bc",
             OutputType::Assembly => "asm",
             OutputType::LlvmAssembly => "llvm-ir",
+            OutputType::Mir => "mir",
             OutputType::Object => "obj",
             OutputType::Metadata => "metadata",
             OutputType::Exe => "link",
@@ -118,6 +121,7 @@ impl OutputType {
             OutputType::Bitcode => "bc",
             OutputType::Assembly => "s",
             OutputType::LlvmAssembly => "ll",
+            OutputType::Mir => "mir",
             OutputType::Object => "o",
             OutputType::Metadata => "rmeta",
             OutputType::DepInfo => "d",
@@ -172,6 +176,7 @@ impl OutputTypes {
             OutputType::Bitcode |
             OutputType::Assembly |
             OutputType::LlvmAssembly |
+            OutputType::Mir |
             OutputType::Object |
             OutputType::Exe => true,
             OutputType::Metadata |
@@ -636,12 +641,16 @@ macro_rules! options {
             Some("either `panic` or `abort`");
         pub const parse_sanitizer: Option<&'static str> =
             Some("one of: `address`, `leak`, `memory` or `thread`");
+        pub const parse_linker_flavor: Option<&'static str> =
+            Some(::rustc_back::LinkerFlavor::one_of());
+        pub const parse_optimization_fuel: Option<&'static str> =
+            Some("crate=integer");
     }
 
     #[allow(dead_code)]
     mod $mod_set {
         use super::{$struct_name, Passes, SomePasses, AllPasses, Sanitizer};
-        use rustc_back::PanicStrategy;
+        use rustc_back::{LinkerFlavor, PanicStrategy};
 
         $(
             pub fn $opt(cg: &mut $struct_name, v: Option<&str>) -> bool {
@@ -771,6 +780,29 @@ macro_rules! options {
                 _ => return false,
             }
             true
+        }
+
+        fn parse_linker_flavor(slote: &mut Option<LinkerFlavor>, v: Option<&str>) -> bool {
+            match v.and_then(LinkerFlavor::from_str) {
+                Some(lf) => *slote = Some(lf),
+                _ => return false,
+            }
+            true
+        }
+
+        fn parse_optimization_fuel(slot: &mut Option<(String, u64)>, v: Option<&str>) -> bool {
+            match v {
+                None => false,
+                Some(s) => {
+                    let parts = s.split('=').collect::<Vec<_>>();
+                    if parts.len() != 2 { return false; }
+                    let crate_name = parts[0].to_string();
+                    let fuel = parts[1].parse::<u64>();
+                    if fuel.is_err() { return false; }
+                    *slot = Some((crate_name, fuel.unwrap()));
+                    true
+                }
+            }
         }
     }
 ) }
@@ -971,9 +1003,15 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
     always_encode_mir: bool = (false, parse_bool, [TRACKED],
           "encode MIR of all functions into the crate metadata"),
     osx_rpath_install_name: bool = (false, parse_bool, [TRACKED],
-          "pass `-install_name @rpath/...` to the OSX linker"),
+          "pass `-install_name @rpath/...` to the macOS linker"),
     sanitizer: Option<Sanitizer> = (None, parse_sanitizer, [TRACKED],
                                    "Use a sanitizer"),
+    linker_flavor: Option<LinkerFlavor> = (None, parse_linker_flavor, [UNTRACKED],
+                                           "Linker flavor"),
+    fuel: Option<(String, u64)> = (None, parse_optimization_fuel, [TRACKED],
+        "Set the optimization fuel quota for a crate."),
+    print_fuel: Option<String> = (None, parse_opt_string, [TRACKED],
+        "Make Rustc print the total optimization fuel used by a crate."),
 }
 
 pub fn default_lib_output() -> CrateType {
@@ -1208,7 +1246,7 @@ pub fn rustc_short_optgroups() -> Vec<RustcOptGroup> {
                "NAME"),
         opt::multi_s("", "emit", "Comma separated list of types of output for \
                               the compiler to emit",
-                 "[asm|llvm-bc|llvm-ir|obj|metadata|link|dep-info]"),
+                 "[asm|llvm-bc|llvm-ir|obj|metadata|link|dep-info|mir]"),
         opt::multi_s("", "print", "Comma separated list of compiler information to \
                                print on stdout", &format!("[{}]",
                                &print_opts.join("|"))),
@@ -1370,6 +1408,7 @@ pub fn build_session_options_and_crate_config(matches: &getopts::Matches)
                 let output_type = match parts.next().unwrap() {
                     "asm" => OutputType::Assembly,
                     "llvm-ir" => OutputType::LlvmAssembly,
+                    "mir" => OutputType::Mir,
                     "llvm-bc" => OutputType::Bitcode,
                     "obj" => OutputType::Object,
                     "metadata" => OutputType::Metadata,
@@ -1766,11 +1805,13 @@ mod dep_tracking {
 
     impl_dep_tracking_hash_via_hash!(bool);
     impl_dep_tracking_hash_via_hash!(usize);
+    impl_dep_tracking_hash_via_hash!(u64);
     impl_dep_tracking_hash_via_hash!(String);
     impl_dep_tracking_hash_via_hash!(lint::Level);
     impl_dep_tracking_hash_via_hash!(Option<bool>);
     impl_dep_tracking_hash_via_hash!(Option<usize>);
     impl_dep_tracking_hash_via_hash!(Option<String>);
+    impl_dep_tracking_hash_via_hash!(Option<(String, u64)>);
     impl_dep_tracking_hash_via_hash!(Option<PanicStrategy>);
     impl_dep_tracking_hash_via_hash!(Option<lint::Level>);
     impl_dep_tracking_hash_via_hash!(Option<PathBuf>);
@@ -1792,6 +1833,7 @@ mod dep_tracking {
     impl_dep_tracking_hash_for_sortable_vec_of!((String, lint::Level));
     impl_dep_tracking_hash_for_sortable_vec_of!((String, Option<String>,
                                                  Option<cstore::NativeLibraryKind>));
+    impl_dep_tracking_hash_for_sortable_vec_of!((String, u64));
     impl DepTrackingHash for SearchPaths {
         fn hash(&self, hasher: &mut DefaultHasher, _: ErrorOutputType) {
             let mut elems: Vec<_> = self
