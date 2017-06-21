@@ -1,3 +1,9 @@
+rustc (1.17.0+dfsg2-7) UNRELEASED; urgency=medium
+
+  * Show exception traceback in bootstrap.py to examine ppc64el build failure.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 21 Jun 2017 10:45:12 +0200
+
 rustc (1.17.0+dfsg2-6) unstable; urgency=medium
 
   * Upload to unstable.

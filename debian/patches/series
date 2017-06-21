@@ -1,6 +1,7 @@
 # Patches for upstream
 # Ideally we would order these as follows:
 # [ applied already ], [ pending ], [ forwarded or to-be-forwarded ]
+u-exception-traceback.patch
 u-reproducible-dl-stage0.patch
 u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
