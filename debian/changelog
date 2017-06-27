@@ -1,8 +1,8 @@
-rustc (1.18.0+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.18.0+dfsg1-1) experimental; urgency=medium
 
   * New upstream release.
 
- -- Ximin Luo <infinity0@debian.org>  Wed, 21 Jun 2017 00:28:35 +0200
+ -- Ximin Luo <infinity0@debian.org>  Tue, 27 Jun 2017 12:51:22 +0200
 
 rustc (1.17.0+dfsg2-6) unstable; urgency=medium
 
