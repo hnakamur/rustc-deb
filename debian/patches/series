@@ -26,8 +26,8 @@ d-add-soname.patch
 d-dont-download-stage0.patch
 #d-dynamic-link-llvm.patch
 d-use-system-jquery.patch
-d-no-web-dependencies-in-doc.patch
 d-cross-compile-install.patch
+d-no-web-dependencies-in-doc.patch
 
 # Work around for some porterboxes, keep this commented
 #d-host-duplicates.patch
