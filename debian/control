@@ -21,6 +21,8 @@ Build-Depends: debhelper (>= 9),
                autotools-dev,
                cmake | cmake3,
                gperf,
+# this is sometimes needed depending on the LLVM situation, just keep it here
+               zlib1g-dev,
                binutils (>= 2.26) <!nocheck> | binutils-2.26 <!nocheck>,
                nodejs <!nocheck>,
                valgrind <!nocheck>,
