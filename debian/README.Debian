@@ -27,16 +27,16 @@ something like this:
 
     Build-Depends:
      [..]
-     rustc           (>= $version),
+     rustc:native    (>= $version),
      libstd-rust-dev (>= $version),
      [..]
 
 You need both, this is important. When Debian build toolchains satisfy the
-build-depends of a cross-build, (1) a "rustc" Build-Depends implies rustc for
-the native architecture, because it's marked as "Multi-Arch: foreign", and this
-will implicitly pull in libstd-rust-dev also for the native architecture; and
-(2) a "libstd-rust-dev" Build-Depends implies libstd-rust-dev for the foreign
-architecture, because it's marked as "Multi-Arch: same".
+build-depends of a cross-build, (1) a "rustc:native" Build-Depends selects
+rustc for the native architecture, which is possible because it's "Multi-Arch:
+allowed", and this will implicitly pull in libstd-rust-dev also for the native
+architecture; and (2) a "libstd-rust-dev" Build-Depends implies libstd-rust-dev
+for the foreign architecture, since it's "Multi-Arch: same".
 
 You'll probably also want to add
 

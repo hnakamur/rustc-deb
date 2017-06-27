@@ -34,7 +34,7 @@ RUST_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | $(SED_VERSION_SHORT))
 RUST_LONG_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -re 's/([^+]+).*/\1/')
 LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
 # Sed expression that matches the "rustc" we have in our Build-Depends field
-SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc .*,/p}" debian/control
+SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc:native .*,/p}" debian/control
 
 # These are the normal build flags. Upstream is moving to debian/config.toml
 # but at the current version not all of these flags are available in that file.
