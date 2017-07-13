@@ -32,3 +32,6 @@ link-shared = true
 
 [rust]
 dist-src = false
+
+debuginfo = true
+debuginfo-lines = true
