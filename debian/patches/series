@@ -17,6 +17,7 @@ u-skip-main-thread-stack-guard.patch
 u-fix-build_01.patch
 u-fix-build_02.patch
 
+u-allow-disable-debuginfo-only-std.patch
 gcc-4.8-aarch64-ice.diff
 
 # Debian-specific patches, not suitable for upstream
