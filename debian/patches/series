@@ -14,6 +14,7 @@ u-fix-weird-arm-logic.diff
 u-fix-debuginfo.patch
 u-allow-stable-features.patch
 u-only-run-linkchecker-if-docs.patch
+u-skip-main-thread-stack-guard.patch
 
 gcc-4.8-aarch64-ice.diff
 
