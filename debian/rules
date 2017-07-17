@@ -171,6 +171,13 @@ RUN_TESTS = \
 	fi
 
 override_dh_auto_test-arch:
+# ensure that rustc_llvm is actually dynamically linked to libLLVM
+	set -e; find build/*/stage2/lib/rustlib/* -name '*rustc_llvm*.so' | \
+	while read x; do \
+		stat -c '%s %n' "$$x"; \
+		objdump -p "$$x" | grep -q "NEEDED.*LLVM"; \
+		test "$$(stat -c %s "$$x")" -lt 6000000; \
+	done
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	$(call RUN_TESTS,RUST_BACKTRACE=1 $(RUSTBUILD) test $(RUSTBUILD_FLAGS))
 endif
