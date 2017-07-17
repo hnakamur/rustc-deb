@@ -3,11 +3,9 @@ Author: Mark Simulacrum <mark.simulacrum@gmail.com>
 Bug: https://github.com/rust-lang/rust/issues/42543
 Applied-Upstream: commit:73267374d4176ac1c5d685ff2bac36556cfa4730
 
-diff --git a/src/bootstrap/flags.rs b/src/bootstrap/flags.rs
-index 56cbb4cecf..dc9dac7362 100644
 --- a/src/bootstrap/flags.rs
 +++ b/src/bootstrap/flags.rs
-@@ -242,11 +242,18 @@ Arguments:
+@@ -230,11 +230,18 @@
          let cwd = t!(env::current_dir());
          let paths = matches.free[1..].iter().map(|p| cwd.join(p)).collect::<Vec<_>>();
  
@@ -27,7 +25,7 @@ index 56cbb4cecf..dc9dac7362 100644
              config.build = flags.build.clone();
              let mut build = Build::new(flags, config);
              metadata::build(&mut build);
-@@ -307,14 +314,6 @@ Arguments:
+@@ -290,14 +297,6 @@
          };
  
  

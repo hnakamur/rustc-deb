@@ -5,13 +5,13 @@ Bug: https://github.com/rust-lang/rust/pull/42792
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/bootstrap/bootstrap.py
 +++ b/src/bootstrap/bootstrap.py
-@@ -606,7 +606,8 @@
+@@ -602,7 +602,8 @@
              exit_code = e.code
          else:
              exit_code = 1
 -            print(e)
 +        import traceback
 +        traceback.print_exc()
-         print("Build completed unsuccessfully in %s" % format_build_time(time() - start_time))
+         if not help_triggered:
+             print("Build completed unsuccessfully in %s" % format_build_time(time() - start_time))
          sys.exit(exit_code)
- 

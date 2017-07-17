@@ -26,7 +26,6 @@ d-rust-gdb-paths
 d-rust-lldb-paths
 d-add-soname.patch
 d-dont-download-stage0.patch
-#d-dynamic-link-llvm.patch
 d-use-system-jquery.patch
 d-cross-compile-install.patch
 d-no-web-dependencies-in-doc.patch

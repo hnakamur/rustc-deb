@@ -5,11 +5,9 @@ Author: Mark Simulacrum <mark.simulacrum@gmail.com>
 Bug: https://github.com/rust-lang/rust/issues/42543
 Applied-Upstream: commit:4caa0b020f146e4504ab8ffdd52df29deaa49a09
 
-diff --git a/src/bootstrap/bin/main.rs b/src/bootstrap/bin/main.rs
-index 5ca5ce1648..5ef18b8984 100644
 --- a/src/bootstrap/bin/main.rs
 +++ b/src/bootstrap/bin/main.rs
-@@ -26,12 +26,6 @@ use bootstrap::{Flags, Config, Build};
+@@ -26,12 +26,6 @@
  fn main() {
      let args = env::args().skip(1).collect::<Vec<_>>();
      let flags = Flags::parse(&args);
@@ -23,8 +21,6 @@ index 5ca5ce1648..5ef18b8984 100644
 +    let config = Config::parse(&flags.build, flags.config.clone());
      Build::new(flags, config).build();
  }
-diff --git a/src/bootstrap/config.rs b/src/bootstrap/config.rs
-index fd8aa320fb..902cd0997a 100644
 --- a/src/bootstrap/config.rs
 +++ b/src/bootstrap/config.rs
 @@ -15,7 +15,7 @@
@@ -36,7 +32,7 @@ index fd8aa320fb..902cd0997a 100644
  use std::io::prelude::*;
  use std::path::PathBuf;
  use std::process;
-@@ -410,6 +410,12 @@ impl Config {
+@@ -395,6 +395,12 @@
              set(&mut config.rust_dist_src, t.src_tarball);
          }
  
@@ -49,7 +45,7 @@ index fd8aa320fb..902cd0997a 100644
          return config
      }
  
-@@ -418,7 +424,7 @@ impl Config {
+@@ -403,7 +409,7 @@
      /// While we still have `./configure` this implements the ability to decode
      /// that configuration into this. This isn't exactly a full-blown makefile
      /// parser, but hey it gets the job done!
