@@ -1,9 +1,14 @@
 # Patches for upstream
-# Ideally we would order these as follows:
-# [ applied already ], [ pending ], [ forwarded or to-be-forwarded ]
-u-exception-traceback.patch
-u-reproducible-dl-stage0.patch
+
+# applied already
+u-fix-debuginfo.patch
 u-rust-1.18.0-no-fail-fast.patch
+u-only-run-linkchecker-if-docs.patch
+u-fix-build_01.patch
+u-fix-build_02.patch
+u-skip-main-thread-stack-guard.patch
+
+# pending, forwarded
 u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
 u-ignoretest-armhf_03.patch
@@ -11,13 +16,12 @@ u-ignoretest-armhf_05.patch
 u-ignoretest-arm64.patch
 u-ignoretest-ppc64el.patch
 u-workaround-testfailure-armhf_01.patch
-u-fix-debuginfo.patch
-u-allow-stable-features.patch
-u-only-run-linkchecker-if-docs.patch
-u-skip-main-thread-stack-guard.patch
-u-fix-build_01.patch
-u-fix-build_02.patch
 u-allow-disable-debuginfo-only-std.patch
+
+# not forwarded, or forwarded but unlikely to be merged
+u-exception-traceback.patch
+u-reproducible-dl-stage0.patch
+u-allow-stable-features.patch
 
 gcc-4.8-aarch64-ice.diff
 
