@@ -38,13 +38,15 @@ SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc:nat
 
 # These are the normal build flags. Upstream is moving to debian/config.toml
 # but at the current version not all of these flags are available in that file.
-DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src --prefix=/usr
+# Certain flags also need to be kept here *as well as* debian/config.toml.in
+# because of https://github.com/rust-lang/rust/issues/43295
+DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src --prefix=/usr --release-channel=$(RELEASE_CHANNEL)
 
 # Use system LLVM (comment out to use vendored LLVM)
 OLD_LLVM_VERSION = 3.8
 DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.9
 RUSTBUILD = ./x.py
-RUSTBUILD_FLAGS = --config debian/config.toml -v
+RUSTBUILD_FLAGS = --config debian/config.toml -v --on-fail env
 
 update-version:
 	oldver=$(shell $(SED_RUSTC_BUILDDEP) | sed -ne 's/.*(<= \(.*\)).*/\1/gp' | $(SED_VERSION_SHORT)); \

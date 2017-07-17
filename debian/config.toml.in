@@ -3,8 +3,6 @@ submodules = false
 vendor = true
 locked-deps = false
 
-channel = "RELEASE_CHANNEL"
-
 build = "DEB_BUILD_RUST_TYPE"
 host = ["DEB_HOST_RUST_TYPE"]
 target = ["DEB_TARGET_RUST_TYPE"]
@@ -32,6 +30,8 @@ link-shared = true
 
 [rust]
 dist-src = false
+
+channel = "RELEASE_CHANNEL"
 
 codegen-units = 0
 debuginfo = true
