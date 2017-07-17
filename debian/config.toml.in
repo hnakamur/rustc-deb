@@ -33,5 +33,7 @@ link-shared = true
 [rust]
 dist-src = false
 
+codegen-units = 0
 debuginfo = true
 debuginfo-lines = true
+rpath = false
