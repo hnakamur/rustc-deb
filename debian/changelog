@@ -1,8 +1,8 @@
-rustc (1.17.0+dfsg2-8) UNRELEASED; urgency=medium
+rustc (1.17.0+dfsg2-8) unstable; urgency=medium
 
   * Workaround for linux #865549, fix FTBFS on ppc64el.
 
- -- Ximin Luo <infinity0@debian.org>  Mon, 17 Jul 2017 13:24:48 +0200
+ -- Ximin Luo <infinity0@debian.org>  Mon, 17 Jul 2017 13:41:59 +0200
 
 rustc (1.17.0+dfsg2-7) unstable; urgency=medium
 
