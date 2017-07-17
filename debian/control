@@ -10,8 +10,13 @@ Uploaders: Jordan Justen <jordan.l.justen@intel.com>,
 Build-Depends: debhelper (>= 9),
                dpkg-dev (>= 1.17.14),
                python:native,
+# TODO: related to https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=839145
+# the non-native lines can be deleted after all versions in unstable are M-A: allowed
+               cargo        (>= 0.17.0)      <!pkg.rustc.dlstage0> |
                cargo:native (>= 0.17.0)      <!pkg.rustc.dlstage0>,
+               rustc        (>= 1.17.0+dfsg) <!pkg.rustc.dlstage0> |
                rustc:native (>= 1.17.0+dfsg) <!pkg.rustc.dlstage0>,
+               rustc        (<= 1.18.0++)    <!pkg.rustc.dlstage0> |
                rustc:native (<= 1.18.0++)    <!pkg.rustc.dlstage0>,
                llvm-3.9-dev:native   (>= 1:3.9.1-10~),
                llvm-3.9-tools:native (>= 1:3.9.1-10~),
