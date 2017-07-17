@@ -181,14 +181,14 @@ override_dh_auto_test-arch:
 		test "$$(stat -c %s "$$x")" -lt 6000000; \
 	done
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	$(call RUN_TESTS,RUST_BACKTRACE=1 $(RUSTBUILD) test $(RUSTBUILD_FLAGS))
+	$(call RUN_TESTS,RUST_BACKTRACE=1 $(RUSTBUILD) test --no-fail-fast $(RUSTBUILD_FLAGS))
 endif
 
 override_dh_auto_test-indep:
 ifneq (,$(BUILD_DOCS))
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	# Run all rules that test the docs, i.e. in step.rs that depend on default:doc
-	$(call RUN_TESTS,RUST_BACKTRACE=1 $(RUSTBUILD) test src/tools/linkchecker $(RUSTBUILD_FLAGS))
+	$(call RUN_TESTS,RUST_BACKTRACE=1 $(RUSTBUILD) test --no-fail-fast src/tools/linkchecker $(RUSTBUILD_FLAGS))
 endif
 endif
 

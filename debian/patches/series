@@ -3,6 +3,7 @@
 # [ applied already ], [ pending ], [ forwarded or to-be-forwarded ]
 u-exception-traceback.patch
 u-reproducible-dl-stage0.patch
+u-rust-1.18.0-no-fail-fast.patch
 u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
 u-ignoretest-armhf_03.patch
@@ -16,8 +17,8 @@ u-only-run-linkchecker-if-docs.patch
 u-skip-main-thread-stack-guard.patch
 u-fix-build_01.patch
 u-fix-build_02.patch
-
 u-allow-disable-debuginfo-only-std.patch
+
 gcc-4.8-aarch64-ice.diff
 
 # Debian-specific patches, not suitable for upstream

@@ -5,7 +5,7 @@ Applied-Upstream: commit:73267374d4176ac1c5d685ff2bac36556cfa4730
 
 --- a/src/bootstrap/flags.rs
 +++ b/src/bootstrap/flags.rs
-@@ -230,11 +230,18 @@
+@@ -234,11 +234,18 @@
          let cwd = t!(env::current_dir());
          let paths = matches.free[1..].iter().map(|p| cwd.join(p)).collect::<Vec<_>>();
  
@@ -25,7 +25,7 @@ Applied-Upstream: commit:73267374d4176ac1c5d685ff2bac36556cfa4730
              config.build = flags.build.clone();
              let mut build = Build::new(flags, config);
              metadata::build(&mut build);
-@@ -290,14 +297,6 @@
+@@ -295,14 +302,6 @@
          };
  
  
