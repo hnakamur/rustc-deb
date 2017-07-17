@@ -1,6 +1,8 @@
-Description: Prefer dynamic linking
+Description: Prefer dynamic linking (currently disabled, not applied)
  As per Debian policy, we basically revert
  https://github.com/rust-lang/rfcs/blob/master/text/0404-change-prefer-dynamic.md
+ TODO: this does not yet work: https://github.com/rust-lang/rust/issues/43289
+ Perhaps a better method would be to modify dh-cargo instead of rustc
 Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 --- a/src/librustc/session/config.rs
