@@ -106,12 +106,17 @@ SRC_CLEAN = src/rt/hoedown/src/html_blocks.c \
 	src/bootstrap/bootstrap.pyc \
 	src/etc/__pycache__/
 
+# Workaround for linux #865549
+ifeq (0,$(shell test $$(uname -s) = "Linux" -a $$(getconf PAGESIZE) -gt 4096; echo $$?))
+  SYSTEM_WORKAROUNDS += ulimit -s $$(expr $$(getconf PAGESIZE) / 1024 '*' 256 + 8192);
+endif
+
 %:
-	dh $@ --parallel
+	$(SYSTEM_WORKAROUNDS) dh $@ --parallel
 
 .PHONY: build
 build:
-	dh $@ --parallel
+	$(SYSTEM_WORKAROUNDS) dh $@ --parallel
 
 debian/config.toml: debian/config.toml.in
 	m4  -DDEB_BUILD_RUST_TYPE="$(DEB_BUILD_RUST_TYPE)" \

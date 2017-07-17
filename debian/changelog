@@ -10,6 +10,18 @@ rustc (1.18.0+dfsg1-1) experimental; urgency=medium
 
  -- Ximin Luo <infinity0@debian.org>  Tue, 27 Jun 2017 12:51:22 +0200
 
+rustc (1.17.0+dfsg2-8) unstable; urgency=medium
+
+  * Workaround for linux #865549, fix FTBFS on ppc64el.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 17 Jul 2017 13:41:59 +0200
+
+rustc (1.17.0+dfsg2-7) unstable; urgency=medium
+
+  * Show exception traceback in bootstrap.py to examine ppc64el build failure.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 21 Jun 2017 10:46:27 +0200
+
 rustc (1.17.0+dfsg2-6) unstable; urgency=medium
 
   * Upload to unstable.
