@@ -13,6 +13,7 @@ u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
 u-ignoretest-armhf_03.patch
 u-ignoretest-armhf_05.patch
+u-ignoretest-armhf_06.patch
 u-ignoretest-arm64.patch
 u-ignoretest-ppc64el.patch
 u-workaround-testfailure-armhf_01.patch
