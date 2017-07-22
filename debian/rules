@@ -47,6 +47,11 @@ OLD_LLVM_VERSION = 3.8
 DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.9
 RUSTBUILD = ./x.py
 RUSTBUILD_FLAGS = --config debian/config.toml -v --on-fail env
+# To run a specific test, run something like:
+#   $ debian/rules override_dh_auto_test-arch \
+#     RUSTBUILD_TEST_FLAGS="src/test/run-make --test-args extern-fn-struct"
+# See src/bootstrap/README.md for more options.
+RUSTBUILD_TEST_FLAGS =
 
 update-version:
 	oldver=$(shell $(SED_RUSTC_BUILDDEP) | sed -ne 's/.*(<= \(.*\)).*/\1/gp' | $(SED_VERSION_SHORT)); \
@@ -181,7 +186,9 @@ override_dh_auto_test-arch:
 		test "$$(stat -c %s "$$x")" -lt 6000000; \
 	done
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	$(call RUN_TESTS,RUST_BACKTRACE=1 $(RUSTBUILD) test --no-fail-fast $(RUSTBUILD_FLAGS))
+	$(call RUN_TESTS,RUST_BACKTRACE=1 $(RUSTBUILD) test --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS))
+# don't continue if RUSTBUILD_TEST_FLAGS is non-empty
+	test -z "$(RUSTBUILD_TEST_FLAGS)"
 endif
 
 override_dh_auto_test-indep:
