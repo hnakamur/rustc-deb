@@ -1,9 +1,9 @@
-rustc (1.18.0+dfsg1-3) UNRELEASED; urgency=medium
+rustc (1.18.0+dfsg1-3) unstable; urgency=medium
 
   * Upload to unstable.
   * Disable failing run-make test on armhf.
 
- -- Ximin Luo <infinity0@debian.org>  Sat, 22 Jul 2017 20:26:41 +0200
+ -- Ximin Luo <infinity0@debian.org>  Sat, 22 Jul 2017 20:30:25 +0200
 
 rustc (1.18.0+dfsg1-2) experimental; urgency=medium
 
