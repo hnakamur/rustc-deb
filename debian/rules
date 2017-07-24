@@ -129,6 +129,19 @@ build:
 override_dh_clean:
 	dh_clean -Xsrc/vendor/bitflags/Cargo.toml.orig
 
+debian/configure-upstream: debian/config.toml debian/rules
+	rm -f "$@"
+	echo '#!/bin/sh' >> "$@"
+	echo '# This script can be used to configure a clean upstream checkout' >> "$@"
+	echo '# in case you need to test any differences between it and Debian' >> "$@"
+	echo 'set -e' >> "$@"
+	echo 'test -f ./configure' >> "$@"
+	echo 'cat > config.toml <<EOF' >> "$@"
+	cat debian/config.toml >> "$@"
+	echo 'EOF' >> "$@"
+	echo "./configure $(DEB_CONFIGURE_FLAGS)" >> "$@"
+	chmod +x "$@"
+
 debian/config.toml: debian/config.toml.in
 	m4  -DDEB_BUILD_RUST_TYPE="$(DEB_BUILD_RUST_TYPE)" \
 		-DDEB_HOST_RUST_TYPE="$(DEB_HOST_RUST_TYPE)" \
