@@ -29,15 +29,12 @@ Build-Depends: debhelper (>= 9),
                valgrind <!nocheck>,
                git <!nocheck>,
                procps <!nocheck>,
-# the tests require the docs to be built, which requires jquery
-               libjs-jquery <!nocheck>,
 # below are optional tools even for 'make check'
                antlr4 <!nocheck> | antlr <!nocheck>,
                bison <!nocheck>,
                flex <!nocheck>,
                gdb (>= 7.12) <!nocheck>,
                default-jdk-headless <!nocheck> | default-jdk <!nocheck>,
-Build-Depends-Indep: libjs-jquery <!nodoc>
 # Work around #864741. The version constraint for gdb above should already do
 # that, but this will keep things covered even in the case that they change
 # gdb-minimal to do a versioned Provides: gdb.
@@ -52,7 +49,7 @@ Architecture: any
 Multi-Arch: allowed
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${binary:Version}),
- gcc, libc-dev, libjs-jquery, binutils (>= 2.26)
+ gcc, libc-dev, binutils (>= 2.26)
 Recommends: rust-gdb | rust-lldb
 Suggests: rust-doc, rust-src
 Description: Rust systems programming language
