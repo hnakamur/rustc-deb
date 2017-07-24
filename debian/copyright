@@ -3,13 +3,29 @@ Upstream-Name: rust
 Source: https://www.rust-lang.org
 Files-Excluded:
  *.min.js
- cargo
  src/jemalloc/msvc/*_vc*.sln
  src/llvm
  src/rt/hoedown/src/html_blocks.c
  src/vendor/mdbook/src/theme/_FontAwesome
  src/vendor/mdbook/src/theme/highlight.js
  src/vendor/mdbook/src/theme/highlight.css
+# Exclude submodules https://github.com/rust-lang/rust/tree/master/src/tools
+# We prefer to do them in different Debian packages so they can have their own
+# version numbers. If upstream merges them "properly" (i.e. unify the version
+# numbers) then we can merge the packages in Debian. Note that cargotest here
+# does actually belong to rustc, it is an integration test suite for rustc to
+# check that certain popular crates continue to compile. It is not the same as
+# cargo's own test suite (in its own package) also called cargotest.
+ src/tools/cargo
+ src/tools/rls
+ src/tools/rust-installer
+# keep this up-to-date with cargo.git/debian/vendor-tarball-filter.txt
+ src/vendor/backtrace-sys*/src/libbacktrace
+ src/vendor/curl-sys*/curl
+ src/vendor/libgit2-sys*/libgit2*
+ src/vendor/libz-sys*/src/zlib-*
+ src/vendor/lzma-sys*/xz-*
+ src/vendor/strsim*/docs
 
 # Use crate-copyright.py to help you update this file quickly
 
