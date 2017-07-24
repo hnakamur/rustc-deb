@@ -2,10 +2,7 @@
 
 # applied already
 u-fix-debuginfo.patch
-u-rust-1.18.0-no-fail-fast.patch
 u-only-run-linkchecker-if-docs.patch
-u-fix-build_01.patch
-u-fix-build_02.patch
 u-skip-main-thread-stack-guard.patch
 
 # pending, forwarded
@@ -16,7 +13,6 @@ u-ignoretest-armhf_05.patch
 u-ignoretest-armhf_06.patch
 u-ignoretest-arm64.patch
 u-ignoretest-ppc64el.patch
-u-workaround-testfailure-armhf_01.patch
 u-allow-disable-debuginfo-only-std.patch
 
 # not forwarded, or forwarded but unlikely to be merged
@@ -33,7 +29,6 @@ d-rust-gdb-paths
 d-rust-lldb-paths
 d-add-soname.patch
 d-dont-download-stage0.patch
-d-use-system-jquery.patch
 d-cross-compile-install.patch
 d-no-web-dependencies-in-doc.patch
 

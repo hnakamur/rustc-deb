@@ -4,8 +4,8 @@ Forwarded: not-needed
 ---
 --- a/src/bootstrap/dist.rs
 +++ b/src/bootstrap/dist.rs
-@@ -434,7 +434,10 @@
-     }
+@@ -634,7 +634,10 @@
+     write_file(&plain_dst_src.join("version"), build.rust_version().as_bytes());
  
      // If we're building from git sources, we need to vendor a complete distribution.
 -    if build.src_is_git {
