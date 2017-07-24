@@ -14,8 +14,8 @@ NEW_M1=$(prev_stable $NEW)
 ORIG_R="${ORIG/./\\.}" # match a literal dot, otherwise this might sometimes match e.g. debhelper (>= 9.20141010)
 
 sed -i -e "s|libstd-rust-${ORIG_R}|libstd-rust-$NEW|g" \
-       -e "s|rustc:native\( *\)(<= ${ORIG_R}|rustc\1(<= $NEW|g" \
-       -e "s|rustc:native\( *\)(>= ${ORIG_M1/./\\.}|rustc\1(>= ${NEW_M1}|g" control
+       -e "s|rustc:native\( *\)(<= ${ORIG_R}|rustc:native\1(<= $NEW|g" \
+       -e "s|rustc:native\( *\)(>= ${ORIG_M1/./\\.}|rustc:native\1(>= ${NEW_M1}|g" control
 
 git mv libstd-rust-$ORIG.lintian-overrides libstd-rust-$NEW.lintian-overrides
 sed -i -e "s|libstd-rust-${ORIG_R}|libstd-rust-$NEW|g" libstd-rust-$NEW.lintian-overrides
