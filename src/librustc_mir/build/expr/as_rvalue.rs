@@ -33,8 +33,8 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                              -> BlockAnd<Rvalue<'tcx>>
         where M: Mirror<'tcx, Output = Expr<'tcx>>
     {
-        let topmost_scope = self.topmost_scope(); // FIXME(#6393)
-        self.as_rvalue(block, Some(topmost_scope), expr)
+        let local_scope = self.local_scope();
+        self.as_rvalue(block, local_scope, expr)
     }
 
     /// Compile `expr`, yielding an rvalue.
@@ -51,7 +51,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                       scope: Option<CodeExtent>,
                       expr: Expr<'tcx>)
                       -> BlockAnd<Rvalue<'tcx>> {
-        debug!("expr_as_rvalue(block={:?}, expr={:?})", block, expr);
+        debug!("expr_as_rvalue(block={:?}, scope={:?}, expr={:?})", block, scope, expr);
 
         let this = self;
         let expr_span = expr.span;
@@ -97,7 +97,8 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 let value = this.hir.mirror(value);
                 let result = this.temp(expr.ty, expr_span);
                 // to start, malloc some memory of suitable type (thus far, uninitialized):
-                this.cfg.push_assign(block, source_info, &result, Rvalue::Box(value.ty));
+                let box_ = Rvalue::NullaryOp(NullOp::Box, value.ty);
+                this.cfg.push_assign(block, source_info, &result, box_);
                 this.in_scope(value_extents, block, |this| {
                     // schedule a shallow free of that memory, lest we unwind:
                     this.schedule_box_free(expr_span, value_extents, &result, value.ty);

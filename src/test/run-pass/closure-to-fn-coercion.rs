@@ -8,9 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-stage0: new feature, remove this when SNAP
-
-#![feature(closure_to_fn_coercion)]
+use std::mem;
 
 const FOO: fn(u8) -> u8 = |v: u8| { v };
 
@@ -23,6 +21,10 @@ const BAR: [fn(&mut u32); 5] = [
 ];
 fn func_specific() -> (fn() -> u32) {
     || return 42
+}
+
+fn generic<T>(_: T) -> fn() -> usize {
+    || mem::size_of::<T>()
 }
 
 fn main() {
@@ -38,4 +40,5 @@ fn main() {
     assert_eq!({ BAR[2](&mut a); a }, 3);
     assert_eq!({ BAR[3](&mut a); a }, 6);
     assert_eq!({ BAR[4](&mut a); a }, 10);
+    assert_eq!(generic(0i8)(), 1);
 }

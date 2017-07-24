@@ -13,6 +13,8 @@ use ty::subst::{Subst, Substs};
 use ty::{self, Ty, TyCtxt, ToPredicate, ToPolyTraitRef};
 use ty::outlives::Component;
 use util::nodemap::FxHashSet;
+use hir::{self};
+use traits::specialize::specialization_graph::NodeItem;
 
 use super::{Obligation, ObligationCause, PredicateObligation, SelectionContext, Normalized};
 
@@ -130,7 +132,7 @@ impl<'cx, 'gcx, 'tcx> Elaborator<'cx, 'gcx, 'tcx> {
         match *predicate {
             ty::Predicate::Trait(ref data) => {
                 // Predicates declared on the trait.
-                let predicates = tcx.item_super_predicates(data.def_id());
+                let predicates = tcx.super_predicates_of(data.def_id());
 
                 let mut predicates: Vec<_> =
                     predicates.predicates
@@ -195,7 +197,7 @@ impl<'cx, 'gcx, 'tcx> Elaborator<'cx, 'gcx, 'tcx> {
                 // I want to be conservative. --nmatsakis
                 let ty_max = data.skip_binder().0;
                 let r_min = data.skip_binder().1;
-                if r_min.is_bound() {
+                if r_min.is_late_bound() {
                     return;
                 }
 
@@ -204,7 +206,7 @@ impl<'cx, 'gcx, 'tcx> Elaborator<'cx, 'gcx, 'tcx> {
                     tcx.outlives_components(ty_max)
                        .into_iter()
                        .filter_map(|component| match component {
-                           Component::Region(r) => if r.is_bound() {
+                           Component::Region(r) => if r.is_late_bound() {
                                None
                            } else {
                                Some(ty::Predicate::RegionOutlives(
@@ -301,7 +303,7 @@ impl<'cx, 'gcx, 'tcx> Iterator for SupertraitDefIds<'cx, 'gcx, 'tcx> {
             None => { return None; }
         };
 
-        let predicates = self.tcx.item_super_predicates(def_id);
+        let predicates = self.tcx.super_predicates_of(def_id);
         let visited = &mut self.visited;
         self.stack.extend(
             predicates.predicates
@@ -356,6 +358,7 @@ impl<'tcx,I:Iterator<Item=ty::Predicate<'tcx>>> Iterator for FilterToTraits<I> {
 /// returning the resulting trait ref and all obligations that arise.
 /// The obligations are closed under normalization.
 pub fn impl_trait_ref_and_oblig<'a, 'gcx, 'tcx>(selcx: &mut SelectionContext<'a, 'gcx, 'tcx>,
+                                                param_env: ty::ParamEnv<'tcx>,
                                                 impl_def_id: DefId,
                                                 impl_substs: &Substs<'tcx>)
                                                 -> (ty::TraitRef<'tcx>,
@@ -366,14 +369,14 @@ pub fn impl_trait_ref_and_oblig<'a, 'gcx, 'tcx>(selcx: &mut SelectionContext<'a,
     let impl_trait_ref =
         impl_trait_ref.subst(selcx.tcx(), impl_substs);
     let Normalized { value: impl_trait_ref, obligations: normalization_obligations1 } =
-        super::normalize(selcx, ObligationCause::dummy(), &impl_trait_ref);
+        super::normalize(selcx, param_env, ObligationCause::dummy(), &impl_trait_ref);
 
-    let predicates = selcx.tcx().item_predicates(impl_def_id);
+    let predicates = selcx.tcx().predicates_of(impl_def_id);
     let predicates = predicates.instantiate(selcx.tcx(), impl_substs);
     let Normalized { value: predicates, obligations: normalization_obligations2 } =
-        super::normalize(selcx, ObligationCause::dummy(), &predicates);
+        super::normalize(selcx, param_env, ObligationCause::dummy(), &predicates);
     let impl_obligations =
-        predicates_for_generics(ObligationCause::dummy(), 0, &predicates);
+        predicates_for_generics(ObligationCause::dummy(), 0, param_env, &predicates);
 
     let impl_obligations: Vec<_> =
         impl_obligations.into_iter()
@@ -387,6 +390,7 @@ pub fn impl_trait_ref_and_oblig<'a, 'gcx, 'tcx>(selcx: &mut SelectionContext<'a,
 /// See `super::obligations_for_generics`
 pub fn predicates_for_generics<'tcx>(cause: ObligationCause<'tcx>,
                                      recursion_depth: usize,
+                                     param_env: ty::ParamEnv<'tcx>,
                                      generic_bounds: &ty::InstantiatedPredicates<'tcx>)
                                      -> Vec<PredicateObligation<'tcx>>
 {
@@ -396,18 +400,21 @@ pub fn predicates_for_generics<'tcx>(cause: ObligationCause<'tcx>,
     generic_bounds.predicates.iter().map(|predicate| {
         Obligation { cause: cause.clone(),
                      recursion_depth: recursion_depth,
+                     param_env: param_env,
                      predicate: predicate.clone() }
     }).collect()
 }
 
 pub fn predicate_for_trait_ref<'tcx>(
     cause: ObligationCause<'tcx>,
+    param_env: ty::ParamEnv<'tcx>,
     trait_ref: ty::TraitRef<'tcx>,
     recursion_depth: usize)
     -> PredicateObligation<'tcx>
 {
     Obligation {
         cause: cause,
+        param_env: param_env,
         recursion_depth: recursion_depth,
         predicate: trait_ref.to_predicate(),
     }
@@ -415,18 +422,19 @@ pub fn predicate_for_trait_ref<'tcx>(
 
 impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     pub fn predicate_for_trait_def(self,
-        cause: ObligationCause<'tcx>,
-        trait_def_id: DefId,
-        recursion_depth: usize,
-        param_ty: Ty<'tcx>,
-        ty_params: &[Ty<'tcx>])
+                                   param_env: ty::ParamEnv<'tcx>,
+                                   cause: ObligationCause<'tcx>,
+                                   trait_def_id: DefId,
+                                   recursion_depth: usize,
+                                   param_ty: Ty<'tcx>,
+                                   ty_params: &[Ty<'tcx>])
         -> PredicateObligation<'tcx>
     {
         let trait_ref = ty::TraitRef {
             def_id: trait_def_id,
             substs: self.mk_substs_trait(param_ty, ty_params)
         };
-        predicate_for_trait_ref(cause, trait_ref, recursion_depth)
+        predicate_for_trait_ref(cause, param_env, trait_ref, recursion_depth)
     }
 
     /// Cast a trait reference into a reference to one of its super
@@ -503,6 +511,30 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             substs: self.mk_substs_trait(self_ty, &[arguments_tuple]),
         };
         ty::Binder((trait_ref, sig.skip_binder().output()))
+    }
+
+    pub fn impl_is_default(self, node_item_def_id: DefId) -> bool {
+        match self.hir.as_local_node_id(node_item_def_id) {
+            Some(node_id) => {
+                let item = self.hir.expect_item(node_id);
+                if let hir::ItemImpl(_, _, defaultness, ..) = item.node {
+                    defaultness.is_default()
+                } else {
+                    false
+                }
+            }
+            None => {
+                self.global_tcx()
+                    .sess
+                    .cstore
+                    .impl_defaultness(node_item_def_id)
+                    .is_default()
+            }
+        }
+    }
+
+    pub fn impl_item_is_final(self, node_item: &NodeItem<hir::Defaultness>) -> bool {
+        node_item.item.is_final() && !self.impl_is_default(node_item.node.def_id())
     }
 }
 

@@ -1,4 +1,4 @@
-error: `a` does not live long enough
+error[E0597]: `a` does not live long enough
   --> $DIR/issue-36537.rs:15:1
    |
 14 |     p = &a; //~ NOTE borrow occurs here
@@ -8,5 +8,5 @@ error: `a` does not live long enough
    |
    = note: values in a scope are dropped in the opposite order they are created
 
-error: aborting due to previous error
+error: aborting due to previous error(s)
 

@@ -116,8 +116,24 @@ struct Target {
     available: bool,
     url: Option<String>,
     hash: Option<String>,
+    xz_url: Option<String>,
+    xz_hash: Option<String>,
     components: Option<Vec<Component>>,
     extensions: Option<Vec<Component>>,
+}
+
+impl Target {
+    fn unavailable() -> Target {
+        Target {
+            available: false,
+            url: None,
+            hash: None,
+            xz_url: None,
+            xz_hash: None,
+            components: None,
+            extensions: None,
+        }
+    }
 }
 
 #[derive(RustcEncodable)]
@@ -136,7 +152,6 @@ macro_rules! t {
 struct Builder {
     rust_release: String,
     cargo_release: String,
-    rls_release: String,
     input: PathBuf,
     output: PathBuf,
     gpg_passphrase: String,
@@ -145,7 +160,6 @@ struct Builder {
     date: String,
     rust_version: String,
     cargo_version: String,
-    rls_version: String,
 }
 
 fn main() {
@@ -155,7 +169,6 @@ fn main() {
     let date = args.next().unwrap();
     let rust_release = args.next().unwrap();
     let cargo_release = args.next().unwrap();
-    let rls_release = args.next().unwrap();
     let s3_address = args.next().unwrap();
     let mut passphrase = String::new();
     t!(io::stdin().read_to_string(&mut passphrase));
@@ -163,7 +176,6 @@ fn main() {
     Builder {
         rust_release: rust_release,
         cargo_release: cargo_release,
-        rls_release: rls_release,
         input: input,
         output: output,
         gpg_passphrase: passphrase,
@@ -172,7 +184,6 @@ fn main() {
         date: date,
         rust_version: String::new(),
         cargo_version: String::new(),
-        rls_version: String::new(),
     }.build();
 }
 
@@ -180,7 +191,6 @@ impl Builder {
     fn build(&mut self) {
         self.rust_version = self.version("rust", "x86_64-unknown-linux-gnu");
         self.cargo_version = self.version("cargo", "x86_64-unknown-linux-gnu");
-        self.rls_version = self.version("rls", "x86_64-unknown-linux-gnu");
 
         self.digest_and_sign();
         let Manifest { manifest_version, date, pkg } = self.build_manifest();
@@ -230,7 +240,6 @@ impl Builder {
         self.package("rust-std", &mut manifest.pkg, TARGETS);
         self.package("rust-docs", &mut manifest.pkg, TARGETS);
         self.package("rust-src", &mut manifest.pkg, &["*"]);
-        // self.package("rls", &mut manifest.pkg, HOSTS);
         self.package("rust-analysis", &mut manifest.pkg, TARGETS);
 
         let mut pkg = Package {
@@ -242,16 +251,12 @@ impl Builder {
             let digest = match self.digests.remove(&filename) {
                 Some(digest) => digest,
                 None => {
-                    pkg.target.insert(host.to_string(), Target {
-                        available: false,
-                        url: None,
-                        hash: None,
-                        components: None,
-                        extensions: None,
-                    });
+                    pkg.target.insert(host.to_string(), Target::unavailable());
                     continue
                 }
             };
+            let xz_filename = filename.replace(".tar.gz", ".tar.xz");
+            let xz_digest = self.digests.remove(&xz_filename);
             let mut components = Vec::new();
             let mut extensions = Vec::new();
 
@@ -270,10 +275,6 @@ impl Builder {
                 });
             }
 
-            // extensions.push(Component {
-            //     pkg: "rls".to_string(),
-            //     target: host.to_string(),
-            // });
             extensions.push(Component {
                 pkg: "rust-analysis".to_string(),
                 target: host.to_string(),
@@ -293,8 +294,10 @@ impl Builder {
 
             pkg.target.insert(host.to_string(), Target {
                 available: true,
-                url: Some(self.url("rust", host)),
+                url: Some(self.url(&filename)),
                 hash: Some(digest),
+                xz_url: xz_digest.as_ref().map(|_| self.url(&xz_filename)),
+                xz_hash: xz_digest,
                 components: Some(components),
                 extensions: Some(extensions),
             });
@@ -312,21 +315,17 @@ impl Builder {
             let filename = self.filename(pkgname, name);
             let digest = match self.digests.remove(&filename) {
                 Some(digest) => digest,
-                None => {
-                    return (name.to_string(), Target {
-                        available: false,
-                        url: None,
-                        hash: None,
-                        components: None,
-                        extensions: None,
-                    })
-                }
+                None => return (name.to_string(), Target::unavailable()),
             };
+            let xz_filename = filename.replace(".tar.gz", ".tar.xz");
+            let xz_digest = self.digests.remove(&xz_filename);
 
             (name.to_string(), Target {
                 available: true,
-                url: Some(self.url(pkgname, name)),
+                url: Some(self.url(&filename)),
                 hash: Some(digest),
+                xz_url: xz_digest.as_ref().map(|_| self.url(&xz_filename)),
+                xz_hash: xz_digest,
                 components: None,
                 extensions: None,
             })
@@ -338,11 +337,11 @@ impl Builder {
         });
     }
 
-    fn url(&self, component: &str, target: &str) -> String {
+    fn url(&self, filename: &str) -> String {
         format!("{}/{}/{}",
                 self.s3_address,
                 self.date,
-                self.filename(component, target))
+                filename)
     }
 
     fn filename(&self, component: &str, target: &str) -> String {
@@ -350,8 +349,6 @@ impl Builder {
             format!("rust-src-{}.tar.gz", self.rust_release)
         } else if component == "cargo" {
             format!("cargo-{}-{}.tar.gz", self.cargo_release, target)
-        } else if component == "rls" {
-            format!("rls-{}-{}.tar.gz", self.rls_release, target)
         } else {
             format!("{}-{}-{}.tar.gz", component, self.rust_release, target)
         }
@@ -360,8 +357,6 @@ impl Builder {
     fn cached_version(&self, component: &str) -> &str {
         if component == "cargo" {
             &self.cargo_version
-        } else if component == "rls" {
-            &self.rls_version
         } else {
             &self.rust_version
         }

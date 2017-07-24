@@ -22,18 +22,28 @@ use rustc_const_eval::ConstContext;
 use rustc_data_structures::indexed_vec::Idx;
 use rustc::hir::def_id::DefId;
 use rustc::hir::map::blocks::FnLikeNode;
+use rustc::middle::region::RegionMaps;
 use rustc::infer::InferCtxt;
 use rustc::ty::subst::Subst;
 use rustc::ty::{self, Ty, TyCtxt};
-use syntax::symbol::{Symbol, InternedString};
+use syntax::symbol::Symbol;
 use rustc::hir;
 use rustc_const_math::{ConstInt, ConstUsize};
+use std::rc::Rc;
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct Cx<'a, 'gcx: 'a + 'tcx, 'tcx: 'a> {
     tcx: TyCtxt<'a, 'gcx, 'tcx>,
     infcx: &'a InferCtxt<'a, 'gcx, 'tcx>,
+    pub param_env: ty::ParamEnv<'tcx>,
+    pub region_maps: Rc<RegionMaps>,
+
+    /// This is `Constness::Const` if we are compiling a `static`,
+    /// `const`, or the body of a `const fn`.
     constness: hir::Constness,
+
+    /// What are we compiling?
+    pub src: MirSource,
 
     /// True if this constant/function needs overflow checks.
     check_overflow: bool,
@@ -51,7 +61,14 @@ impl<'a, 'gcx, 'tcx> Cx<'a, 'gcx, 'tcx> {
             MirSource::Promoted(..) => bug!(),
         };
 
-        let attrs = infcx.tcx.hir.attrs(src.item_id());
+        let tcx = infcx.tcx;
+        let src_id = src.item_id();
+        let src_def_id = tcx.hir.local_def_id(src_id);
+
+        let param_env = tcx.param_env(src_def_id);
+        let region_maps = tcx.region_maps(src_def_id);
+
+        let attrs = tcx.hir.attrs(src_id);
 
         // Some functions always have overflow checks enabled,
         // however, they may not get codegen'd, depending on
@@ -60,17 +77,12 @@ impl<'a, 'gcx, 'tcx> Cx<'a, 'gcx, 'tcx> {
             .any(|item| item.check_name("rustc_inherit_overflow_checks"));
 
         // Respect -C overflow-checks.
-        check_overflow |= infcx.tcx.sess.overflow_checks();
+        check_overflow |= tcx.sess.overflow_checks();
 
         // Constants and const fn's always need overflow checks.
         check_overflow |= constness == hir::Constness::Const;
 
-        Cx {
-            tcx: infcx.tcx,
-            infcx: infcx,
-            constness: constness,
-            check_overflow: check_overflow,
-        }
+        Cx { tcx, infcx, param_env, region_maps, constness, src, check_overflow }
     }
 }
 
@@ -97,10 +109,6 @@ impl<'a, 'gcx, 'tcx> Cx<'a, 'gcx, 'tcx> {
 
     pub fn unit_ty(&mut self) -> Ty<'tcx> {
         self.tcx.mk_nil()
-    }
-
-    pub fn str_literal(&mut self, value: InternedString) -> Literal<'tcx> {
-        Literal::Value { value: ConstVal::Str(value) }
     }
 
     pub fn true_literal(&mut self) -> Literal<'tcx> {
@@ -140,7 +148,7 @@ impl<'a, 'gcx, 'tcx> Cx<'a, 'gcx, 'tcx> {
         let substs = self.tcx.mk_substs_trait(self_ty, params);
         for item in self.tcx.associated_items(trait_def_id) {
             if item.kind == ty::AssociatedKind::Method && item.name == method_name {
-                let method_ty = self.tcx.item_type(item.def_id);
+                let method_ty = self.tcx.type_of(item.def_id);
                 let method_ty = method_ty.subst(self.tcx, substs);
                 return (method_ty,
                         Literal::Value {
@@ -163,12 +171,12 @@ impl<'a, 'gcx, 'tcx> Cx<'a, 'gcx, 'tcx> {
     }
 
     pub fn needs_drop(&mut self, ty: Ty<'tcx>) -> bool {
-        let ty = self.tcx.lift_to_global(&ty).unwrap_or_else(|| {
-            bug!("MIR: Cx::needs_drop({}) got \
+        let (ty, param_env) = self.tcx.lift_to_global(&(ty, self.param_env)).unwrap_or_else(|| {
+            bug!("MIR: Cx::needs_drop({:?}, {:?}) got \
                   type with inference types/regions",
-                 ty);
+                 ty, self.param_env);
         });
-        ty.needs_drop(self.tcx.global_tcx(), &self.infcx.parameter_environment)
+        ty.needs_drop(self.tcx.global_tcx(), param_env)
     }
 
     pub fn tcx(&self) -> TyCtxt<'a, 'gcx, 'tcx> {

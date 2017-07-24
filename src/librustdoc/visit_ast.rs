@@ -16,7 +16,6 @@ use std::mem;
 use syntax::abi;
 use syntax::ast;
 use syntax::attr;
-use syntax::tokenstream::TokenStream;
 use syntax_pos::Span;
 
 use rustc::hir::map as hir_map;
@@ -214,8 +213,8 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                         LoadedMacro::ProcMacro(..) => continue,
                     };
 
-                    let matchers = if let ast::ItemKind::MacroDef(ref tokens) = def.node {
-                        let tts: Vec<_> = TokenStream::from(tokens.clone()).into_trees().collect();
+                    let matchers = if let ast::ItemKind::MacroDef(ref def) = def.node {
+                        let tts: Vec<_> = def.stream().into_trees().collect();
                         tts.chunks(4).map(|arm| arm[0].span()).collect()
                     } else {
                         unreachable!()
@@ -502,7 +501,13 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                 om.traits.push(t);
             },
 
-            hir::ItemImpl(unsafety, polarity, ref gen, ref tr, ref ty, ref item_ids) => {
+            hir::ItemImpl(unsafety,
+                          polarity,
+                          defaultness,
+                          ref gen,
+                          ref tr,
+                          ref ty,
+                          ref item_ids) => {
                 // Don't duplicate impls when inlining, we'll pick them up
                 // regardless of where they're located.
                 if !self.inlining {
@@ -512,6 +517,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     let i = Impl {
                         unsafety: unsafety,
                         polarity: polarity,
+                        defaultness: defaultness,
                         generics: gen.clone(),
                         trait_: tr.clone(),
                         for_: ty.clone(),

@@ -28,7 +28,7 @@ pub fn guarantee_lifetime<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                     span: Span,
                                     cause: euv::LoanCause,
                                     cmt: mc::cmt<'tcx>,
-                                    loan_region: &'tcx ty::Region,
+                                    loan_region: ty::Region<'tcx>,
                                     _: ty::BorrowKind)
                                     -> Result<(),()> {
     //! Reports error if `loan_region` is larger than S
@@ -56,7 +56,7 @@ struct GuaranteeLifetimeContext<'a, 'tcx: 'a> {
 
     span: Span,
     cause: euv::LoanCause,
-    loan_region: &'tcx ty::Region,
+    loan_region: ty::Region<'tcx>,
     cmt_original: mc::cmt<'tcx>
 }
 
@@ -72,11 +72,11 @@ impl<'a, 'tcx> GuaranteeLifetimeContext<'a, 'tcx> {
 
         match cmt.cat {
             Categorization::Rvalue(..) |
-            Categorization::Local(..) |                         // L-Local
+            Categorization::Local(..) |                     // L-Local
             Categorization::Upvar(..) |
-            Categorization::Deref(.., mc::BorrowedPtr(..)) |  // L-Deref-Borrowed
-            Categorization::Deref(.., mc::Implicit(..)) |
-            Categorization::Deref(.., mc::UnsafePtr(..)) => {
+            Categorization::Deref(_, mc::BorrowedPtr(..)) | // L-Deref-Borrowed
+            Categorization::Deref(_, mc::Implicit(..)) |
+            Categorization::Deref(_, mc::UnsafePtr(..)) => {
                 self.check_scope(self.scope(cmt))
             }
 
@@ -85,14 +85,14 @@ impl<'a, 'tcx> GuaranteeLifetimeContext<'a, 'tcx> {
             }
 
             Categorization::Downcast(ref base, _) |
-            Categorization::Deref(ref base, _, mc::Unique) |     // L-Deref-Send
-            Categorization::Interior(ref base, _) => {             // L-Field
+            Categorization::Deref(ref base, mc::Unique) |   // L-Deref-Send
+            Categorization::Interior(ref base, _) => {      // L-Field
                 self.check(base, discr_scope)
             }
         }
     }
 
-    fn check_scope(&self, max_scope: &'tcx ty::Region) -> R {
+    fn check_scope(&self, max_scope: ty::Region<'tcx>) -> R {
         //! Reports an error if `loan_region` is larger than `max_scope`
 
         if !self.bccx.is_subregion_of(self.loan_region, max_scope) {
@@ -102,13 +102,13 @@ impl<'a, 'tcx> GuaranteeLifetimeContext<'a, 'tcx> {
         }
     }
 
-    fn scope(&self, cmt: &mc::cmt<'tcx>) -> &'tcx ty::Region {
+    fn scope(&self, cmt: &mc::cmt<'tcx>) -> ty::Region<'tcx> {
         //! Returns the maximal region scope for the which the
         //! lvalue `cmt` is guaranteed to be valid without any
         //! rooting etc, and presuming `cmt` is not mutated.
 
         match cmt.cat {
-            Categorization::Rvalue(temp_scope, _) => {
+            Categorization::Rvalue(temp_scope) => {
                 temp_scope
             }
             Categorization::Upvar(..) => {
@@ -116,18 +116,18 @@ impl<'a, 'tcx> GuaranteeLifetimeContext<'a, 'tcx> {
             }
             Categorization::Local(local_id) => {
                 self.bccx.tcx.mk_region(ty::ReScope(
-                    self.bccx.tcx.region_maps.var_scope(local_id)))
+                    self.bccx.region_maps.var_scope(local_id)))
             }
             Categorization::StaticItem |
-            Categorization::Deref(.., mc::UnsafePtr(..)) => {
+            Categorization::Deref(_, mc::UnsafePtr(..)) => {
                 self.bccx.tcx.types.re_static
             }
-            Categorization::Deref(.., mc::BorrowedPtr(_, r)) |
-            Categorization::Deref(.., mc::Implicit(_, r)) => {
+            Categorization::Deref(_, mc::BorrowedPtr(_, r)) |
+            Categorization::Deref(_, mc::Implicit(_, r)) => {
                 r
             }
             Categorization::Downcast(ref cmt, _) |
-            Categorization::Deref(ref cmt, _, mc::Unique) |
+            Categorization::Deref(ref cmt, mc::Unique) |
             Categorization::Interior(ref cmt, _) => {
                 self.scope(cmt)
             }

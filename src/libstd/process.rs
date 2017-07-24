@@ -148,8 +148,9 @@ impl fmt::Debug for Child {
     }
 }
 
-/// A handle to a child process's stdin. This struct is used in the [`stdin`]
-/// field on [`Child`].
+/// A handle to a child process's stdin.
+///
+/// This struct is used in the [`stdin`] field on [`Child`].
 ///
 /// [`Child`]: struct.Child.html
 /// [`stdin`]: struct.Child.html#structfield.stdin
@@ -190,8 +191,9 @@ impl fmt::Debug for ChildStdin {
     }
 }
 
-/// A handle to a child process's stdout. This struct is used in the [`stdout`]
-/// field on [`Child`].
+/// A handle to a child process's stdout.
+///
+/// This struct is used in the [`stdout`] field on [`Child`].
 ///
 /// [`Child`]: struct.Child.html
 /// [`stdout`]: struct.Child.html#structfield.stdout
@@ -438,8 +440,6 @@ impl Command {
     /// Basic usage:
     ///
     /// ```no_run
-    /// #![feature(command_envs)]
-    ///
     /// use std::process::{Command, Stdio};
     /// use std::env;
     /// use std::collections::HashMap;
@@ -457,7 +457,7 @@ impl Command {
     ///         .spawn()
     ///         .expect("printenv failed to start");
     /// ```
-    #[unstable(feature = "command_envs", issue = "38526")]
+    #[stable(feature = "command_envs", since = "1.19.0")]
     pub fn envs<I, K, V>(&mut self, vars: I) -> &mut Command
         where I: IntoIterator<Item=(K, V)>, K: AsRef<OsStr>, V: AsRef<OsStr>
     {
@@ -752,6 +752,13 @@ impl fmt::Debug for Stdio {
 }
 
 /// Describes the result of a process after it has terminated.
+///
+/// This `struct` is used to represent the exit status of a child process.
+/// Child processes are created via the [`Command`] struct and their exit
+/// status is exposed through the [`status`] method.
+///
+/// [`Command`]: struct.Command.html
+/// [`status`]: struct.Command.html#method.status
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 #[stable(feature = "process", since = "1.0.0")]
 pub struct ExitStatus(imp::ExitStatus);
@@ -786,6 +793,22 @@ impl ExitStatus {
     /// On Unix, this will return `None` if the process was terminated
     /// by a signal; `std::os::unix` provides an extension trait for
     /// extracting the signal and other details from the `ExitStatus`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::process::Command;
+    ///
+    /// let status = Command::new("mkdir")
+    ///                      .arg("projects")
+    ///                      .status()
+    ///                      .expect("failed to execute mkdir");
+    ///
+    /// match status.code() {
+    ///     Some(code) => println!("Exited with status code: {}", code),
+    ///     None       => println!("Process terminated by signal")
+    /// }
+    /// ```
     #[stable(feature = "process", since = "1.0.0")]
     pub fn code(&self) -> Option<i32> {
         self.0.code()
@@ -1033,7 +1056,7 @@ impl Child {
 /// ```no_run
 /// use std::process;
 ///
-/// process::exit(0x0f00);
+/// process::exit(0x0100);
 /// ```
 ///
 /// [platform-specific behavior]: #platform-specific-behavior

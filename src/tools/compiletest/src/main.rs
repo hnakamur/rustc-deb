@@ -25,6 +25,7 @@ extern crate rustc_serialize;
 extern crate log;
 extern crate env_logger;
 extern crate filetime;
+extern crate diff;
 
 use std::env;
 use std::ffi::OsString;
@@ -36,7 +37,7 @@ use filetime::FileTime;
 use getopts::{optopt, optflag, reqopt};
 use common::Config;
 use common::{Pretty, DebugInfoGdb, DebugInfoLldb, Mode};
-use test::TestPaths;
+use test::{TestPaths, ColorConfig};
 use util::logv;
 
 use self::header::EarlyProps;
@@ -49,7 +50,6 @@ pub mod runtest;
 pub mod common;
 pub mod errors;
 mod raise_fd_limit;
-mod uidiff;
 
 fn main() {
     env_logger::init().unwrap();
@@ -90,6 +90,7 @@ pub fn parse_config(args: Vec<String> ) -> Config {
           optopt("", "target-rustcflags", "flags to pass to rustc for target", "FLAGS"),
           optflag("", "verbose", "run tests verbosely, showing all output"),
           optflag("", "quiet", "print one character per test instead of one line"),
+          optopt("", "color", "coloring: auto, always, never", "WHEN"),
           optopt("", "logfile", "file to log test execution to", "FILE"),
           optopt("", "target", "the target to build for", "TARGET"),
           optopt("", "host", "the host to build for", "HOST"),
@@ -106,7 +107,7 @@ pub fn parse_config(args: Vec<String> ) -> Config {
           reqopt("", "llvm-components", "list of LLVM components built in", "LIST"),
           reqopt("", "llvm-cxxflags", "C++ flags for LLVM", "FLAGS"),
           optopt("", "nodejs", "the name of nodejs", "PATH"),
-          optopt("", "qemu-test-client", "path to the qemu test client", "PATH"),
+          optopt("", "remote-test-client", "path to the remote test client", "PATH"),
           optflag("h", "help", "show this message")];
 
     let (argv0, args_) = args.split_first().unwrap();
@@ -147,6 +148,13 @@ pub fn parse_config(args: Vec<String> ) -> Config {
 
     let (gdb, gdb_version, gdb_native_rust) = analyze_gdb(matches.opt_str("gdb"));
 
+    let color = match matches.opt_str("color").as_ref().map(|x| &**x) {
+        Some("auto") | None => ColorConfig::AutoColor,
+        Some("always") => ColorConfig::AlwaysColor,
+        Some("never") => ColorConfig::NeverColor,
+        Some(x) => panic!("argument for --color must be auto, always, or never, but found `{}`", x),
+    };
+
     Config {
         compile_lib_path: make_absolute(opt_path(matches, "compile-lib-path")),
         run_lib_path: make_absolute(opt_path(matches, "run-lib-path")),
@@ -177,9 +185,7 @@ pub fn parse_config(args: Vec<String> ) -> Config {
         llvm_version: matches.opt_str("llvm-version"),
         android_cross_path: opt_path(matches, "android-cross-path"),
         adb_path: opt_str2(matches.opt_str("adb-path")),
-        adb_test_dir: format!("{}/{}",
-            opt_str2(matches.opt_str("adb-test-dir")),
-            opt_str2(matches.opt_str("target"))),
+        adb_test_dir: opt_str2(matches.opt_str("adb-test-dir")),
         adb_device_status:
             opt_str2(matches.opt_str("target")).contains("android") &&
             "(none)" != opt_str2(matches.opt_str("adb-test-dir")) &&
@@ -187,7 +193,8 @@ pub fn parse_config(args: Vec<String> ) -> Config {
         lldb_python_dir: matches.opt_str("lldb-python-dir"),
         verbose: matches.opt_present("verbose"),
         quiet: matches.opt_present("quiet"),
-        qemu_test_client: matches.opt_str("qemu-test-client").map(PathBuf::from),
+        color: color,
+        remote_test_client: matches.opt_str("remote-test-client").map(PathBuf::from),
 
         cc: matches.opt_str("cc").unwrap(),
         cxx: matches.opt_str("cxx").unwrap(),
@@ -252,27 +259,14 @@ pub fn run_tests(config: &Config) {
         if let DebugInfoGdb = config.mode {
             println!("{} debug-info test uses tcp 5039 port.\
                      please reserve it", config.target);
-        }
 
-        // android debug-info test uses remote debugger
-        // so, we test 1 thread at once.
-        // also trying to isolate problems with adb_run_wrapper.sh ilooping
-        match config.mode {
-            // These tests don't actually run code or don't run for android, so
-            // we don't need to limit ourselves there
-            Mode::Ui |
-            Mode::CompileFail |
-            Mode::ParseFail |
-            Mode::RunMake |
-            Mode::Codegen |
-            Mode::CodegenUnits |
-            Mode::Pretty |
-            Mode::Rustdoc => {}
-
-            _ => {
-                env::set_var("RUST_TEST_THREADS", "1");
-            }
-
+            // android debug-info test uses remote debugger so, we test 1 thread
+            // at once as they're all sharing the same TCP port to communicate
+            // over.
+            //
+            // we should figure out how to lift this restriction! (run them all
+            // on different ports allocated dynamically).
+            env::set_var("RUST_TEST_THREADS", "1");
         }
     }
 
@@ -296,9 +290,10 @@ pub fn run_tests(config: &Config) {
         }
 
         DebugInfoGdb => {
-            if config.qemu_test_client.is_some() {
+            if config.remote_test_client.is_some() &&
+               !config.target.contains("android"){
                 println!("WARNING: debuginfo tests are not available when \
-                          testing with QEMU");
+                          testing with remote");
                 return
             }
         }
@@ -346,10 +341,11 @@ pub fn test_opts(config: &Config) -> test::TestOpts {
             Ok(val) => &val != "0",
             Err(_) => false
         },
-        color: test::AutoColor,
+        color: config.color,
         test_threads: None,
         skip: vec![],
         list: false,
+        options: test::Options::new(),
     }
 }
 

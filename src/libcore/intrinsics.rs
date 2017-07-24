@@ -46,7 +46,6 @@
             issue = "0")]
 #![allow(missing_docs)]
 
-#[cfg(not(stage0))]
 #[stable(feature = "drop_in_place", since = "1.8.0")]
 #[rustc_deprecated(reason = "no longer an intrinsic - use `ptr::drop_in_place` directly",
                    since = "1.18.0")]
@@ -565,7 +564,54 @@ extern "rust-intrinsic" {
     pub fn atomic_umax_rel<T>(dst: *mut T, src: T) -> T;
     pub fn atomic_umax_acqrel<T>(dst: *mut T, src: T) -> T;
     pub fn atomic_umax_relaxed<T>(dst: *mut T, src: T) -> T;
+
+    /// The `prefetch` intrinsic is a hint to the code generator to insert a prefetch instruction
+    /// if supported; otherwise, it is a noop.
+    /// Prefetches have no effect on the behavior of the program but can change its performance
+    /// characteristics.
+    ///
+    /// The `locality` argument must be a constant integer and is a temporal locality specifier
+    /// ranging from (0) - no locality, to (3) - extremely local keep in cache
+    #[cfg(not(stage0))]
+    pub fn prefetch_read_data<T>(data: *const T, locality: i32);
+    /// The `prefetch` intrinsic is a hint to the code generator to insert a prefetch instruction
+    /// if supported; otherwise, it is a noop.
+    /// Prefetches have no effect on the behavior of the program but can change its performance
+    /// characteristics.
+    ///
+    /// The `locality` argument must be a constant integer and is a temporal locality specifier
+    /// ranging from (0) - no locality, to (3) - extremely local keep in cache
+    #[cfg(not(stage0))]
+    pub fn prefetch_write_data<T>(data: *const T, locality: i32);
+    /// The `prefetch` intrinsic is a hint to the code generator to insert a prefetch instruction
+    /// if supported; otherwise, it is a noop.
+    /// Prefetches have no effect on the behavior of the program but can change its performance
+    /// characteristics.
+    ///
+    /// The `locality` argument must be a constant integer and is a temporal locality specifier
+    /// ranging from (0) - no locality, to (3) - extremely local keep in cache
+    #[cfg(not(stage0))]
+    pub fn prefetch_read_instruction<T>(data: *const T, locality: i32);
+    /// The `prefetch` intrinsic is a hint to the code generator to insert a prefetch instruction
+    /// if supported; otherwise, it is a noop.
+    /// Prefetches have no effect on the behavior of the program but can change its performance
+    /// characteristics.
+    ///
+    /// The `locality` argument must be a constant integer and is a temporal locality specifier
+    /// ranging from (0) - no locality, to (3) - extremely local keep in cache
+    #[cfg(not(stage0))]
+    pub fn prefetch_write_instruction<T>(data: *const T, locality: i32);
 }
+
+// Empty bootstrap implementations for stage0 compilation
+#[cfg(stage0)]
+pub fn prefetch_read_data<T>(_data: *const T, _locality: i32) { /* EMPTY */ }
+#[cfg(stage0)]
+pub fn prefetch_write_data<T>(_data: *const T, _locality: i32) { /* EMPTY */ }
+#[cfg(stage0)]
+pub fn prefetch_read_instruction<T>(_data: *const T, _locality: i32) { /* EMPTY */ }
+#[cfg(stage0)]
+pub fn prefetch_write_instruction<T>(_data: *const T, _locality: i32) { /* EMPTY */ }
 
 extern "rust-intrinsic" {
 
@@ -644,27 +690,6 @@ extern "rust-intrinsic" {
 
     pub fn size_of_val<T: ?Sized>(_: &T) -> usize;
     pub fn min_align_of_val<T: ?Sized>(_: &T) -> usize;
-
-    #[cfg(stage0)]
-    /// Executes the destructor (if any) of the pointed-to value.
-    ///
-    /// This has two use cases:
-    ///
-    /// * It is *required* to use `drop_in_place` to drop unsized types like
-    ///   trait objects, because they can't be read out onto the stack and
-    ///   dropped normally.
-    ///
-    /// * It is friendlier to the optimizer to do this over `ptr::read` when
-    ///   dropping manually allocated memory (e.g. when writing Box/Rc/Vec),
-    ///   as the compiler doesn't need to prove that it's sound to elide the
-    ///   copy.
-    ///
-    /// # Undefined Behavior
-    ///
-    /// This has all the same safety problems as `ptr::read` with respect to
-    /// invalid pointers, types, and double drops.
-    #[stable(feature = "drop_in_place", since = "1.8.0")]
-    pub fn drop_in_place<T: ?Sized>(to_drop: *mut T);
 
     /// Gets a static string slice containing the name of a type.
     pub fn type_name<T: ?Sized>() -> &'static str;
@@ -1261,11 +1286,9 @@ extern "rust-intrinsic" {
 
     /// Performs an unchecked left shift, resulting in undefined behavior when
     /// y < 0 or y >= N, where N is the width of T in bits.
-    #[cfg(not(stage0))]
     pub fn unchecked_shl<T>(x: T, y: T) -> T;
     /// Performs an unchecked right shift, resulting in undefined behavior when
     /// y < 0 or y >= N, where N is the width of T in bits.
-    #[cfg(not(stage0))]
     pub fn unchecked_shr<T>(x: T, y: T) -> T;
 
     /// Returns (a + b) mod 2<sup>N</sup>, where N is the width of T in bits.

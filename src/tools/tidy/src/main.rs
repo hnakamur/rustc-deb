@@ -57,11 +57,12 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
 
     let mut bad = false;
+    let quiet = args.iter().any(|s| *s == "--quiet");
     bins::check(&path, &mut bad);
     style::check(&path, &mut bad);
     errors::check(&path, &mut bad);
     cargo::check(&path, &mut bad);
-    features::check(&path, &mut bad);
+    features::check(&path, &mut bad, quiet);
     pal::check(&path, &mut bad);
     unstable_book::check(&path, &mut bad);
     if !args.iter().any(|s| *s == "--no-vendor") {
@@ -81,10 +82,12 @@ fn filter_dirs(path: &Path) -> bool {
         "src/libbacktrace",
         "src/compiler-rt",
         "src/rustllvm",
-        "src/rust-installer",
         "src/liblibc",
         "src/vendor",
         "src/rt/hoedown",
+        "src/tools/cargo",
+        "src/tools/rls",
+        "src/tools/rust-installer",
     ];
     skip.iter().any(|p| path.ends_with(p))
 }

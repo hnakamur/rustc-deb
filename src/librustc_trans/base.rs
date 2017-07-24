@@ -34,17 +34,18 @@ use back::linker::LinkerInfo;
 use back::symbol_export::{self, ExportedSymbols};
 use llvm::{ContextRef, Linkage, ModuleRef, ValueRef, Vector, get_param};
 use llvm;
+use metadata;
 use rustc::hir::def_id::LOCAL_CRATE;
-use middle::lang_items::StartFnLangItem;
-use middle::cstore::EncodedMetadata;
+use rustc::middle::lang_items::StartFnLangItem;
+use rustc::middle::cstore::EncodedMetadata;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::dep_graph::AssertDepGraphSafe;
 use rustc::middle::cstore::LinkMeta;
 use rustc::hir::map as hir_map;
 use rustc::util::common::time;
-use session::config::{self, NoDebugInfo};
+use rustc::session::config::{self, NoDebugInfo};
+use rustc::session::Session;
 use rustc_incremental::IncrementalHashesMap;
-use session::{self, DataTypeKind, Session};
 use abi;
 use mir::lvalue::LvalueRef;
 use attributes;
@@ -65,14 +66,12 @@ use meth;
 use mir;
 use monomorphize::{self, Instance};
 use partitioning::{self, PartitioningStrategy, CodegenUnit};
-use symbol_cache::SymbolCache;
-use symbol_map::SymbolMap;
 use symbol_names_test;
 use trans_item::{TransItem, DefPathBasedNames};
 use type_::Type;
 use type_of;
 use value::Value;
-use util::nodemap::{NodeSet, FxHashMap, FxHashSet};
+use rustc::util::nodemap::{NodeSet, FxHashMap, FxHashSet};
 
 use libc::c_uint;
 use std::ffi::{CStr, CString};
@@ -81,7 +80,6 @@ use std::i32;
 use syntax_pos::Span;
 use syntax::attr;
 use rustc::hir;
-use rustc::ty::layout::{self, Layout};
 use syntax::ast;
 
 use mir::lvalue::Alignment;
@@ -756,10 +754,7 @@ fn write_metadata<'a, 'gcx>(tcx: TyCtxt<'a, 'gcx, 'gcx>,
     }).max().unwrap();
 
     if kind == MetadataKind::None {
-        return (metadata_llcx, metadata_llmod, EncodedMetadata {
-            raw_data: vec![],
-            hashes: vec![],
-        });
+        return (metadata_llcx, metadata_llmod, EncodedMetadata::new());
     }
 
     let cstore = &tcx.sess.cstore;
@@ -783,8 +778,7 @@ fn write_metadata<'a, 'gcx>(tcx: TyCtxt<'a, 'gcx, 'gcx>,
     };
     unsafe {
         llvm::LLVMSetInitializer(llglobal, llconst);
-        let section_name =
-            tcx.sess.cstore.metadata_section_name(&tcx.sess.target.target);
+        let section_name = metadata::metadata_section_name(&tcx.sess.target.target);
         let name = CString::new(section_name).unwrap();
         llvm::LLVMSetSection(llglobal, name.as_ptr());
 
@@ -804,7 +798,6 @@ fn internalize_symbols<'a, 'tcx>(sess: &Session,
                                  scx: &SharedCrateContext<'a, 'tcx>,
                                  translation_items: &FxHashSet<TransItem<'tcx>>,
                                  llvm_modules: &[ModuleLlvm],
-                                 symbol_map: &SymbolMap<'tcx>,
                                  exported_symbols: &ExportedSymbols) {
     let export_threshold =
         symbol_export::crates_export_threshold(&sess.crate_types.borrow());
@@ -856,7 +849,7 @@ fn internalize_symbols<'a, 'tcx>(sess: &Session,
             let mut linkage_fixed_explicitly = FxHashSet();
 
             for trans_item in translation_items {
-                let symbol_name = symbol_map.get_or_compute(scx, *trans_item);
+                let symbol_name = str::to_owned(&trans_item.symbol_name(tcx));
                 if trans_item.explicit_linkage(tcx).is_some() {
                     linkage_fixed_explicitly.insert(symbol_name.clone());
                 }
@@ -1041,7 +1034,7 @@ pub fn find_exported_symbols(tcx: TyCtxt, reachable: &NodeSet) -> NodeSet {
             hir_map::NodeImplItem(&hir::ImplItem {
                 node: hir::ImplItemKind::Method(..), .. }) => {
                 let def_id = tcx.hir.local_def_id(id);
-                let generics = tcx.item_generics(def_id);
+                let generics = tcx.generics_of(def_id);
                 let attributes = tcx.get_attrs(def_id);
                 (generics.parent_types == 0 && generics.types.is_empty()) &&
                 // Functions marked with #[inline] are only ever translated
@@ -1110,7 +1103,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     // Run the translation item collector and partition the collected items into
     // codegen units.
-    let (translation_items, codegen_units, symbol_map) =
+    let (translation_items, codegen_units) =
         collect_and_partition_translation_items(&shared_ccx);
 
     let mut all_stats = Stats::default();
@@ -1139,8 +1132,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
         let cgu_name = String::from(cgu.name());
         let cgu_id = cgu.work_product_id();
-        let symbol_cache = SymbolCache::new(scx.tcx());
-        let symbol_name_hash = cgu.compute_symbol_name_hash(scx, &symbol_cache);
+        let symbol_name_hash = cgu.compute_symbol_name_hash(scx);
 
         // Check whether there is a previous work-product we can
         // re-use.  Not only must the file exist, and the inputs not
@@ -1175,11 +1167,11 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         }
 
         // Instantiate translation items without filling out definitions yet...
-        let lcx = LocalCrateContext::new(scx, cgu, &symbol_cache);
+        let lcx = LocalCrateContext::new(scx, cgu);
         let module = {
             let ccx = CrateContext::new(scx, &lcx);
             let trans_items = ccx.codegen_unit()
-                                 .items_in_deterministic_order(ccx.tcx(), &symbol_cache);
+                                 .items_in_deterministic_order(ccx.tcx());
             for &(trans_item, linkage) in &trans_items {
                 trans_item.predefine(&ccx, linkage);
             }
@@ -1271,8 +1263,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     let sess = shared_ccx.sess();
 
-    let exported_symbols = ExportedSymbols::compute_from(&shared_ccx,
-                                                         &symbol_map);
+    let exported_symbols = ExportedSymbols::compute(&shared_ccx);
 
     // Get the list of llvm modules we created. We'll do a few wacky
     // transforms on them now.
@@ -1292,13 +1283,8 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                             &shared_ccx,
                             &translation_items,
                             &llvm_modules,
-                            &symbol_map,
                             &exported_symbols);
     });
-
-    if tcx.sess.opts.debugging_opts.print_type_sizes {
-        gather_type_sizes(tcx);
-    }
 
     if sess.target.target.options.is_like_msvc &&
        sess.crate_types.borrow().iter().any(|ct| *ct == config::CrateTypeRlib) {
@@ -1331,188 +1317,49 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 }
 
-fn gather_type_sizes<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    let layout_cache = tcx.layout_cache.borrow();
-    for (ty, layout) in layout_cache.iter() {
+#[inline(never)] // give this a place in the profiler
+fn assert_symbols_are_distinct<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>, trans_items: I)
+    where I: Iterator<Item=&'a TransItem<'tcx>>
+{
+    let mut symbols: Vec<_> = trans_items.map(|trans_item| {
+        (trans_item, trans_item.symbol_name(tcx))
+    }).collect();
 
-        // (delay format until we actually need it)
-        let record = |kind, opt_discr_size, variants| {
-            let type_desc = format!("{:?}", ty);
-            let overall_size = layout.size(tcx);
-            let align = layout.align(tcx);
-            tcx.sess.code_stats.borrow_mut().record_type_size(kind,
-                                                              type_desc,
-                                                              align,
-                                                              overall_size,
-                                                              opt_discr_size,
-                                                              variants);
-        };
+    (&mut symbols[..]).sort_by(|&(_, ref sym1), &(_, ref sym2)|{
+        sym1.cmp(sym2)
+    });
 
-        let (adt_def, substs) = match ty.sty {
-            ty::TyAdt(ref adt_def, substs) => {
-                debug!("print-type-size t: `{:?}` process adt", ty);
-                (adt_def, substs)
-            }
+    for pair in (&symbols[..]).windows(2) {
+        let sym1 = &pair[0].1;
+        let sym2 = &pair[1].1;
 
-            ty::TyClosure(..) => {
-                debug!("print-type-size t: `{:?}` record closure", ty);
-                record(DataTypeKind::Closure, None, vec![]);
-                continue;
-            }
+        if *sym1 == *sym2 {
+            let trans_item1 = pair[0].0;
+            let trans_item2 = pair[1].0;
 
-            _ => {
-                debug!("print-type-size t: `{:?}` skip non-nominal", ty);
-                continue;
-            }
-        };
+            let span1 = trans_item1.local_span(tcx);
+            let span2 = trans_item2.local_span(tcx);
 
-        let adt_kind = adt_def.adt_kind();
-
-        let build_field_info = |(field_name, field_ty): (ast::Name, Ty), offset: &layout::Size| {
-            match layout_cache.get(&field_ty) {
-                None => bug!("no layout found for field {} type: `{:?}`", field_name, field_ty),
-                Some(field_layout) => {
-                    session::FieldInfo {
-                        name: field_name.to_string(),
-                        offset: offset.bytes(),
-                        size: field_layout.size(tcx).bytes(),
-                        align: field_layout.align(tcx).abi(),
-                    }
+            // Deterministically select one of the spans for error reporting
+            let span = match (span1, span2) {
+                (Some(span1), Some(span2)) => {
+                    Some(if span1.lo.0 > span2.lo.0 {
+                        span1
+                    } else {
+                        span2
+                    })
                 }
-            }
-        };
-
-        let build_primitive_info = |name: ast::Name, value: &layout::Primitive| {
-            session::VariantInfo {
-                name: Some(name.to_string()),
-                kind: session::SizeKind::Exact,
-                align: value.align(tcx).abi(),
-                size: value.size(tcx).bytes(),
-                fields: vec![],
-            }
-        };
-
-        enum Fields<'a> {
-            WithDiscrim(&'a layout::Struct),
-            NoDiscrim(&'a layout::Struct),
-        }
-
-        let build_variant_info = |n: Option<ast::Name>, flds: &[(ast::Name, Ty)], layout: Fields| {
-            let (s, field_offsets) = match layout {
-                Fields::WithDiscrim(s) => (s, &s.offsets[1..]),
-                Fields::NoDiscrim(s) => (s, &s.offsets[0..]),
+                (Some(span), None) |
+                (None, Some(span)) => Some(span),
+                _ => None
             };
-            let field_info: Vec<_> = flds.iter()
-                .zip(field_offsets.iter())
-                .map(|(&field_name_ty, offset)| build_field_info(field_name_ty, offset))
-                .collect();
 
-            session::VariantInfo {
-                name: n.map(|n|n.to_string()),
-                kind: if s.sized {
-                    session::SizeKind::Exact
-                } else {
-                    session::SizeKind::Min
-                },
-                align: s.align.abi(),
-                size: s.min_size.bytes(),
-                fields: field_info,
-            }
-        };
+            let error_message = format!("symbol `{}` is already defined", sym1);
 
-        match **layout {
-            Layout::StructWrappedNullablePointer { nonnull: ref variant_layout,
-                                                   nndiscr,
-                                                   discrfield: _,
-                                                   discrfield_source: _ } => {
-                debug!("print-type-size t: `{:?}` adt struct-wrapped nullable nndiscr {} is {:?}",
-                       ty, nndiscr, variant_layout);
-                let variant_def = &adt_def.variants[nndiscr as usize];
-                let fields: Vec<_> = variant_def.fields.iter()
-                    .map(|field_def| (field_def.name, field_def.ty(tcx, substs)))
-                    .collect();
-                record(adt_kind.into(),
-                       None,
-                       vec![build_variant_info(Some(variant_def.name),
-                                               &fields,
-                                               Fields::NoDiscrim(variant_layout))]);
-            }
-            Layout::RawNullablePointer { nndiscr, value } => {
-                debug!("print-type-size t: `{:?}` adt raw nullable nndiscr {} is {:?}",
-                       ty, nndiscr, value);
-                let variant_def = &adt_def.variants[nndiscr as usize];
-                record(adt_kind.into(), None,
-                       vec![build_primitive_info(variant_def.name, &value)]);
-            }
-            Layout::Univariant { variant: ref variant_layout, non_zero: _ } => {
-                let variant_names = || {
-                    adt_def.variants.iter().map(|v|format!("{}", v.name)).collect::<Vec<_>>()
-                };
-                debug!("print-type-size t: `{:?}` adt univariant {:?} variants: {:?}",
-                       ty, variant_layout, variant_names());
-                assert!(adt_def.variants.len() <= 1,
-                        "univariant with variants {:?}", variant_names());
-                if adt_def.variants.len() == 1 {
-                    let variant_def = &adt_def.variants[0];
-                    let fields: Vec<_> = variant_def.fields.iter()
-                        .map(|field_def| (field_def.name, field_def.ty(tcx, substs)))
-                        .collect();
-                    record(adt_kind.into(),
-                           None,
-                           vec![build_variant_info(Some(variant_def.name),
-                                                   &fields,
-                                                   Fields::NoDiscrim(variant_layout))]);
-                } else {
-                    // (This case arises for *empty* enums; so give it
-                    // zero variants.)
-                    record(adt_kind.into(), None, vec![]);
-                }
-            }
-
-            Layout::General { ref variants, discr, .. } => {
-                debug!("print-type-size t: `{:?}` adt general variants def {} layouts {} {:?}",
-                       ty, adt_def.variants.len(), variants.len(), variants);
-                let variant_infos: Vec<_> = adt_def.variants.iter()
-                    .zip(variants.iter())
-                    .map(|(variant_def, variant_layout)| {
-                        let fields: Vec<_> = variant_def.fields.iter()
-                            .map(|field_def| (field_def.name, field_def.ty(tcx, substs)))
-                            .collect();
-                        build_variant_info(Some(variant_def.name),
-                                           &fields,
-                                           Fields::WithDiscrim(variant_layout))
-                    })
-                    .collect();
-                record(adt_kind.into(), Some(discr.size()), variant_infos);
-            }
-
-            Layout::UntaggedUnion { ref variants } => {
-                debug!("print-type-size t: `{:?}` adt union variants {:?}",
-                       ty, variants);
-                // layout does not currently store info about each
-                // variant...
-                record(adt_kind.into(), None, Vec::new());
-            }
-
-            Layout::CEnum { discr, .. } => {
-                debug!("print-type-size t: `{:?}` adt c-like enum", ty);
-                let variant_infos: Vec<_> = adt_def.variants.iter()
-                    .map(|variant_def| {
-                        build_primitive_info(variant_def.name,
-                                             &layout::Primitive::Int(discr))
-                    })
-                    .collect();
-                record(adt_kind.into(), Some(discr.size()), variant_infos);
-            }
-
-            // other cases provide little interesting (i.e. adjustable
-            // via representation tweaks) size info beyond total size.
-            Layout::Scalar { .. } |
-            Layout::Vector { .. } |
-            Layout::Array { .. } |
-            Layout::FatPointer { .. } => {
-                debug!("print-type-size t: `{:?}` adt other", ty);
-                record(adt_kind.into(), None, Vec::new())
+            if let Some(span) = span {
+                tcx.sess.span_fatal(span, &error_message)
+            } else {
+                tcx.sess.fatal(&error_message)
             }
         }
     }
@@ -1520,8 +1367,7 @@ fn gather_type_sizes<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
 
 fn collect_and_partition_translation_items<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>)
                                                      -> (FxHashSet<TransItem<'tcx>>,
-                                                         Vec<CodegenUnit<'tcx>>,
-                                                         SymbolMap<'tcx>) {
+                                                         Vec<CodegenUnit<'tcx>>) {
     let time_passes = scx.sess().time_passes();
 
     let collection_mode = match scx.sess().opts.debugging_opts.print_trans_items {
@@ -1549,7 +1395,7 @@ fn collect_and_partition_translation_items<'a, 'tcx>(scx: &SharedCrateContext<'a
             collector::collect_crate_translation_items(&scx, collection_mode)
     });
 
-    let symbol_map = SymbolMap::build(scx, items.iter().cloned());
+    assert_symbols_are_distinct(scx.tcx(), items.iter());
 
     let strategy = if scx.sess().opts.debugging_opts.incremental.is_some() {
         PartitioningStrategy::PerModule
@@ -1622,5 +1468,5 @@ fn collect_and_partition_translation_items<'a, 'tcx>(scx: &SharedCrateContext<'a
         }
     }
 
-    (translation_items, codegen_units, symbol_map)
+    (translation_items, codegen_units)
 }

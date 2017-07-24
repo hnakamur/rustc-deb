@@ -49,6 +49,7 @@ pub enum CallConv {
     X86FastcallCallConv = 65,
     ArmAapcsCallConv = 67,
     Msp430Intr = 69,
+    X86_ThisCall = 70,
     PtxKernel = 71,
     X86_64_SysV = 78,
     X86_64_Win64 = 79,
@@ -284,10 +285,13 @@ pub enum CodeGenOptLevel {
 #[derive(Copy, Clone, PartialEq)]
 #[repr(C)]
 pub enum RelocMode {
-    Default = 0,
-    Static = 1,
-    PIC = 2,
-    DynamicNoPic = 3,
+    Default,
+    Static,
+    PIC,
+    DynamicNoPic,
+    ROPI,
+    RWPI,
+    ROPI_RWPI,
 }
 
 /// LLVMRustCodeModel

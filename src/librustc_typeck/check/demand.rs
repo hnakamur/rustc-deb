@@ -18,7 +18,7 @@ use syntax_pos::{self, Span};
 use rustc::hir;
 use rustc::hir::def::Def;
 use rustc::ty::{self, Ty, AssociatedItem};
-use errors::DiagnosticBuilder;
+use errors::{DiagnosticBuilder, CodeMapper};
 
 use super::method::probe;
 
@@ -26,8 +26,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     // Requires that the two types unify, and prints an error message if
     // they don't.
     pub fn demand_suptype(&self, sp: Span, expected: Ty<'tcx>, actual: Ty<'tcx>) {
-        let cause = self.misc(sp);
-        match self.sub_types(false, &cause, actual, expected) {
+        let cause = &self.misc(sp);
+        match self.at(cause, self.param_env).sup(expected, actual) {
             Ok(InferOk { obligations, value: () }) => {
                 self.register_predicates(obligations);
             },
@@ -54,7 +54,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                      cause: &ObligationCause<'tcx>,
                                      expected: Ty<'tcx>,
                                      actual: Ty<'tcx>) -> Option<DiagnosticBuilder<'tcx>> {
-        match self.eq_types(false, cause, actual, expected) {
+        match self.at(cause, self.param_env).eq(expected, actual) {
             Ok(InferOk { obligations, value: () }) => {
                 self.register_predicates(obligations);
                 None
@@ -135,7 +135,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     fn has_no_input_arg(&self, method: &AssociatedItem) -> bool {
         match method.def() {
             Def::Method(def_id) => {
-                match self.tcx.item_type(def_id).sty {
+                match self.tcx.type_of(def_id).sty {
                     ty::TypeVariants::TyFnDef(_, _, sig) => {
                         sig.inputs().skip_binder().len() == 1
                     }
@@ -187,7 +187,9 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                                        checked_ty),
                 };
                 if self.can_coerce(ref_ty, expected) {
-                    if let Ok(src) = self.tcx.sess.codemap().span_to_snippet(expr.span) {
+                    // Use the callsite's span if this is a macro call. #41858
+                    let sp = self.sess().codemap().call_span_if_macro(expr.span);
+                    if let Ok(src) = self.tcx.sess.codemap().span_to_snippet(sp) {
                         return Some(format!("try with `{}{}`",
                                             match mutability.mutbl {
                                                 hir::Mutability::MutMutable => "&mut ",

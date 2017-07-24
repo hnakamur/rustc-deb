@@ -16,10 +16,9 @@ use check::FnCtxt;
 use rustc::hir;
 use rustc::hir::intravisit::{self, Visitor, NestedVisitorMap};
 use rustc::infer::{InferCtxt};
-use rustc::ty::{self, Ty, TyCtxt, MethodCall, MethodCallee};
-use rustc::ty::adjustment;
+use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::fold::{TypeFolder,TypeFoldable};
-use rustc::util::nodemap::{DefIdMap, DefIdSet};
+use rustc::util::nodemap::DefIdSet;
 use syntax::ast;
 use syntax_pos::Span;
 use std::mem;
@@ -43,7 +42,6 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         wbcx.visit_liberated_fn_sigs();
         wbcx.visit_fru_field_types();
         wbcx.visit_anon_types();
-        wbcx.visit_type_nodes();
         wbcx.visit_cast_types();
         wbcx.visit_lints();
         wbcx.visit_free_region_map();
@@ -72,55 +70,17 @@ struct WritebackCx<'cx, 'gcx: 'cx+'tcx, 'tcx: 'cx> {
 
     tables: ty::TypeckTables<'gcx>,
 
-    // Mapping from free regions of the function to the
-    // early-bound versions of them, visible from the
-    // outside of the function. This is needed by, and
-    // only populated if there are any `impl Trait`.
-    free_to_bound_regions: DefIdMap<&'gcx ty::Region>,
-
     body: &'gcx hir::Body,
 }
 
 impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
     fn new(fcx: &'cx FnCtxt<'cx, 'gcx, 'tcx>, body: &'gcx hir::Body)
         -> WritebackCx<'cx, 'gcx, 'tcx> {
-        let mut wbcx = WritebackCx {
+        WritebackCx {
             fcx: fcx,
             tables: ty::TypeckTables::empty(),
-            free_to_bound_regions: DefIdMap(),
             body: body
-        };
-
-        // Only build the reverse mapping if `impl Trait` is used.
-        if fcx.anon_types.borrow().is_empty() {
-            return wbcx;
         }
-
-        let gcx = fcx.tcx.global_tcx();
-        let free_substs = fcx.parameter_environment.free_substs;
-        for (i, k) in free_substs.iter().enumerate() {
-            let r = if let Some(r) = k.as_region() {
-                r
-            } else {
-                continue;
-            };
-            match *r {
-                ty::ReFree(ty::FreeRegion {
-                    bound_region: ty::BoundRegion::BrNamed(def_id, name), ..
-                }) => {
-                    let bound_region = gcx.mk_region(ty::ReEarlyBound(ty::EarlyBoundRegion {
-                        index: i as u32,
-                        name: name,
-                    }));
-                    wbcx.free_to_bound_regions.insert(def_id, bound_region);
-                }
-                _ => {
-                    bug!("{:?} is not a free region for an early-bound lifetime", r);
-                }
-            }
-        }
-
-        wbcx
     }
 
     fn tcx(&self) -> TyCtxt<'cx, 'gcx, 'tcx> {
@@ -145,7 +105,9 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
                 let inner_ty = self.fcx.resolve_type_vars_if_possible(&inner_ty);
 
                 if inner_ty.is_scalar() {
-                    self.fcx.tables.borrow_mut().method_map.remove(&MethodCall::expr(e.id));
+                    let mut tables = self.fcx.tables.borrow_mut();
+                    tables.type_dependent_defs.remove(&e.id);
+                    tables.node_substs.remove(&e.id);
                 }
             }
             hir::ExprBinary(ref op, ref lhs, ref rhs) |
@@ -157,20 +119,19 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
                 let rhs_ty = self.fcx.resolve_type_vars_if_possible(&rhs_ty);
 
                 if lhs_ty.is_scalar() && rhs_ty.is_scalar() {
-                    self.fcx.tables.borrow_mut().method_map.remove(&MethodCall::expr(e.id));
+                    let mut tables = self.fcx.tables.borrow_mut();
+                    tables.type_dependent_defs.remove(&e.id);
+                    tables.node_substs.remove(&e.id);
 
-                    // weird but true: the by-ref binops put an
-                    // adjustment on the lhs but not the rhs; the
-                    // adjustment for rhs is kind of baked into the
-                    // system.
                     match e.node {
                         hir::ExprBinary(..) => {
                             if !op.node.is_by_value() {
-                                self.fcx.tables.borrow_mut().adjustments.remove(&lhs.id);
+                                tables.adjustments.get_mut(&lhs.id).map(|a| a.pop());
+                                tables.adjustments.get_mut(&rhs.id).map(|a| a.pop());
                             }
                         },
                         hir::ExprAssignOp(..) => {
-                            self.fcx.tables.borrow_mut().adjustments.remove(&lhs.id);
+                            tables.adjustments.get_mut(&lhs.id).map(|a| a.pop());
                         },
                         _ => {},
                     }
@@ -203,7 +164,6 @@ impl<'cx, 'gcx, 'tcx> Visitor<'gcx> for WritebackCx<'cx, 'gcx, 'tcx> {
         self.fix_scalar_builtin_expr(e);
 
         self.visit_node_id(e.span, e.id);
-        self.visit_method_map_entry(e.span, MethodCall::expr(e.id));
 
         if let hir::ExprClosure(_, _, body, _) = e.node {
             let body = self.fcx.tcx.hir.body(body);
@@ -275,7 +235,9 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
     }
 
     fn visit_free_region_map(&mut self) {
-        self.tables.free_region_map = self.fcx.tables.borrow().free_region_map.clone();
+        let free_region_map = self.tcx().lift_to_global(&self.fcx.tables.borrow().free_region_map);
+        let free_region_map = free_region_map.expect("all regions in free-region-map are global");
+        self.tables.free_region_map = free_region_map;
     }
 
     fn visit_anon_types(&mut self) {
@@ -284,22 +246,16 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
             let inside_ty = self.resolve(&concrete_ty, &node_id);
 
             // Convert the type from the function into a type valid outside
-            // the function, by replacing free regions with early-bound ones.
+            // the function, by replacing invalid regions with 'static,
+            // after producing an error for each of them.
             let outside_ty = gcx.fold_regions(&inside_ty, &mut false, |r, _| {
                 match *r {
-                    // 'static is valid everywhere.
-                    ty::ReStatic => gcx.types.re_static,
-                    ty::ReEmpty => gcx.types.re_empty,
-
-                    // Free regions that come from early-bound regions are valid.
-                    ty::ReFree(ty::FreeRegion {
-                        bound_region: ty::BoundRegion::BrNamed(def_id, ..), ..
-                    }) if self.free_to_bound_regions.contains_key(&def_id) => {
-                        self.free_to_bound_regions[&def_id]
-                    }
+                    // 'static and early-bound regions are valid.
+                    ty::ReStatic |
+                    ty::ReEarlyBound(_) |
+                    ty::ReEmpty => r,
 
                     ty::ReFree(_) |
-                    ty::ReEarlyBound(_) |
                     ty::ReLateBound(..) |
                     ty::ReScope(_) |
                     ty::ReSkolemized(..) => {
@@ -323,9 +279,9 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
     }
 
     fn visit_node_id(&mut self, span: Span, node_id: ast::NodeId) {
-        // Export associated path extensions.
-        if let Some(def) = self.fcx.tables.borrow_mut().type_relative_path_defs.remove(&node_id) {
-            self.tables.type_relative_path_defs.insert(node_id, def);
+        // Export associated path extensions and method resultions.
+        if let Some(def) = self.fcx.tables.borrow_mut().type_dependent_defs.remove(&node_id) {
+            self.tables.type_dependent_defs.insert(node_id, def);
         }
 
         // Resolve any borrowings for the node with id `node_id`
@@ -338,91 +294,26 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
         debug!("Node {} has type {:?}", node_id, n_ty);
 
         // Resolve any substitutions
-        self.fcx.opt_node_ty_substs(node_id, |item_substs| {
-            let item_substs = self.resolve(item_substs, &span);
-            if !item_substs.is_noop() {
-                debug!("write_substs_to_tcx({}, {:?})", node_id, item_substs);
-                assert!(!item_substs.substs.needs_infer());
-                self.tables.item_substs.insert(node_id, item_substs);
-            }
-        });
+        if let Some(&substs) = self.fcx.tables.borrow().node_substs.get(&node_id) {
+            let substs = self.resolve(&substs, &span);
+            debug!("write_substs_to_tcx({}, {:?})", node_id, substs);
+            assert!(!substs.needs_infer());
+            self.tables.node_substs.insert(node_id, substs);
+        }
     }
 
     fn visit_adjustments(&mut self, span: Span, node_id: ast::NodeId) {
-        let adjustments = self.fcx.tables.borrow_mut().adjustments.remove(&node_id);
-        match adjustments {
+        let adjustment = self.fcx.tables.borrow_mut().adjustments.remove(&node_id);
+        match adjustment {
             None => {
                 debug!("No adjustments for node {}", node_id);
             }
 
             Some(adjustment) => {
-                let resolved_adjustment = match adjustment.kind {
-                    adjustment::Adjust::NeverToAny => {
-                        adjustment::Adjust::NeverToAny
-                    }
-
-                    adjustment::Adjust::ReifyFnPointer => {
-                        adjustment::Adjust::ReifyFnPointer
-                    }
-
-                    adjustment::Adjust::MutToConstPointer => {
-                        adjustment::Adjust::MutToConstPointer
-                    }
-
-                    adjustment::Adjust::ClosureFnPointer => {
-                        adjustment::Adjust::ClosureFnPointer
-                    }
-
-                    adjustment::Adjust::UnsafeFnPointer => {
-                        adjustment::Adjust::UnsafeFnPointer
-                    }
-
-                    adjustment::Adjust::DerefRef { autoderefs, autoref, unsize } => {
-                        for autoderef in 0..autoderefs {
-                            let method_call = MethodCall::autoderef(node_id, autoderef as u32);
-                            self.visit_method_map_entry(span, method_call);
-                        }
-
-                        adjustment::Adjust::DerefRef {
-                            autoderefs: autoderefs,
-                            autoref: self.resolve(&autoref, &span),
-                            unsize: unsize,
-                        }
-                    }
-                };
-                let resolved_adjustment = adjustment::Adjustment {
-                    kind: resolved_adjustment,
-                    target: self.resolve(&adjustment.target, &span)
-                };
+                let resolved_adjustment = self.resolve(&adjustment, &span);
                 debug!("Adjustments for node {}: {:?}", node_id, resolved_adjustment);
                 self.tables.adjustments.insert(node_id, resolved_adjustment);
             }
-        }
-    }
-
-    fn visit_method_map_entry(&mut self,
-                              method_span: Span,
-                              method_call: MethodCall) {
-        // Resolve any method map entry
-        let new_method = match self.fcx.tables.borrow_mut().method_map.remove(&method_call) {
-            Some(method) => {
-                debug!("writeback::resolve_method_map_entry(call={:?}, entry={:?})",
-                       method_call,
-                       method);
-                let new_method = MethodCallee {
-                    def_id: method.def_id,
-                    ty: self.resolve(&method.ty, &method_span),
-                    substs: self.resolve(&method.substs, &method_span),
-                };
-
-                Some(new_method)
-            }
-            None => None
-        };
-
-        //NB(jroesch): We need to match twice to avoid a double borrow which would cause an ICE
-        if let Some(method) = new_method {
-            self.tables.method_map.insert(method_call, method);
         }
     }
 
@@ -437,13 +328,6 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
         for (&node_id, ftys) in self.fcx.tables.borrow().fru_field_types.iter() {
             let ftys = self.resolve(ftys, &node_id);
             self.tables.fru_field_types.insert(node_id, ftys);
-        }
-    }
-
-    fn visit_type_nodes(&self) {
-        for (&id, ty) in self.fcx.ast_ty_to_ty_cache.borrow().iter() {
-            let ty = self.resolve(ty, &id);
-            self.fcx.tcx.ast_ty_to_ty_cache.borrow_mut().insert(id, ty);
         }
     }
 
@@ -522,7 +406,7 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for Resolver<'cx, 'gcx, 'tcx> {
 
     // FIXME This should be carefully checked
     // We could use `self.report_error` but it doesn't accept a ty::Region, right now.
-    fn fold_region(&mut self, r: &'tcx ty::Region) -> &'tcx ty::Region {
+    fn fold_region(&mut self, r: ty::Region<'tcx>) -> ty::Region<'tcx> {
         match self.infcx.fully_resolve(&r) {
             Ok(r) => r,
             Err(_) => {

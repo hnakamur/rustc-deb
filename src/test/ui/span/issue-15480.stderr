@@ -1,4 +1,4 @@
-error: borrowed value does not live long enough
+error[E0597]: borrowed value does not live long enough
   --> $DIR/issue-15480.rs:14:6
    |
 13 |         &3
@@ -11,5 +11,5 @@ error: borrowed value does not live long enough
    |
    = note: consider using a `let` binding to increase its lifetime
 
-error: aborting due to previous error
+error: aborting due to previous error(s)
 

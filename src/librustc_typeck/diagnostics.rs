@@ -1524,67 +1524,6 @@ impl TypeWrapper {
 ```
 "##,
 
-E0119: r##"
-There are conflicting trait implementations for the same type.
-Example of erroneous code:
-
-```compile_fail,E0119
-trait MyTrait {
-    fn get(&self) -> usize;
-}
-
-impl<T> MyTrait for T {
-    fn get(&self) -> usize { 0 }
-}
-
-struct Foo {
-    value: usize
-}
-
-impl MyTrait for Foo { // error: conflicting implementations of trait
-                       //        `MyTrait` for type `Foo`
-    fn get(&self) -> usize { self.value }
-}
-```
-
-When looking for the implementation for the trait, the compiler finds
-both the `impl<T> MyTrait for T` where T is all types and the `impl
-MyTrait for Foo`. Since a trait cannot be implemented multiple times,
-this is an error. So, when you write:
-
-```
-trait MyTrait {
-    fn get(&self) -> usize;
-}
-
-impl<T> MyTrait for T {
-    fn get(&self) -> usize { 0 }
-}
-```
-
-This makes the trait implemented on all types in the scope. So if you
-try to implement it on another one after that, the implementations will
-conflict. Example:
-
-```
-trait MyTrait {
-    fn get(&self) -> usize;
-}
-
-impl<T> MyTrait for T {
-    fn get(&self) -> usize { 0 }
-}
-
-struct Foo;
-
-fn main() {
-    let f = Foo;
-
-    f.get(); // the trait is implemented so we can use it
-}
-```
-"##,
-
 E0120: r##"
 An attempt was made to implement Drop on a trait, which is not allowed: only
 structs and enums can implement Drop. An example causing this error:
@@ -3181,6 +3120,13 @@ x << 2; // ok!
 
 It is also possible to overload most operators for your own type by
 implementing traits from `std::ops`.
+
+String concatenation appends the string on the right to the string on the
+left and may require reallocation. This requires ownership of the string
+on the left. If something should be added to a string literal, move the
+literal to the heap by allocating it with `to_owned()` like in
+`"Your text".to_owned()`.
+
 "##,
 
 E0370: r##"
@@ -4059,7 +4005,7 @@ details.
 [issue #33685]: https://github.com/rust-lang/rust/issues/33685
 "##,
 
-    E0582: r##"
+E0582: r##"
 A lifetime appears only in an associated-type binding,
 and not in the input types to the trait.
 
@@ -4094,6 +4040,59 @@ compiler, but this was since corrected. See [issue #33685] for more
 details.
 
 [issue #33685]: https://github.com/rust-lang/rust/issues/33685
+"##,
+
+E0599: r##"
+```compile_fail,E0599
+struct Mouth;
+
+let x = Mouth;
+x.chocolate(); // error: no method named `chocolate` found for type `Mouth`
+               //        in the current scope
+```
+"##,
+
+E0600: r##"
+An unary operator was used on a type which doesn't implement it.
+
+Example of erroneous code:
+
+```compile_fail,E0600
+enum Question {
+    Yes,
+    No,
+}
+
+!Question::Yes; // error: cannot apply unary operator `!` to type `Question`
+```
+
+In this case, `Question` would need to implement the `std::ops::Not` trait in
+order to be able to use `!` on it. Let's implement it:
+
+```
+use std::ops::Not;
+
+enum Question {
+    Yes,
+    No,
+}
+
+// We implement the `Not` trait on the enum.
+impl Not for Question {
+    type Output = bool;
+
+    fn not(self) -> bool {
+        match self {
+            Question::Yes => false, // If the `Answer` is `Yes`, then it
+                                    // returns false.
+            Question::No => true, // And here we do the opposite.
+        }
+    }
+}
+
+assert_eq!(!Question::Yes, false);
+assert_eq!(!Question::No, true);
+```
 "##,
 
 }
@@ -4132,7 +4131,7 @@ register_diagnostics! {
 //  E0217, // ambiguous associated type, defined in multiple supertraits
 //  E0218, // no associated type defined
 //  E0219, // associated type defined in higher-ranked supertrait
-//  E0222, // Error code E0045 (variadic function must have C calling
+//  E0222, // Error code E0045 (variadic function must have C or cdecl calling
            // convention) duplicate
     E0224, // at least one non-builtin train is required for an object type
     E0227, // ambiguous lifetime bound, explicit lifetime bound required

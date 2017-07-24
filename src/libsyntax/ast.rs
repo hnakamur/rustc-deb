@@ -37,7 +37,7 @@ use std::u32;
 pub struct Lifetime {
     pub id: NodeId,
     pub span: Span,
-    pub name: Name
+    pub ident: Ident,
 }
 
 impl fmt::Debug for Lifetime {
@@ -715,7 +715,7 @@ impl Stmt {
             StmtKind::Mac(mac) => StmtKind::Mac(mac.map(|(mac, _style, attrs)| {
                 (mac, MacStmtStyle::Semicolon, attrs)
             })),
-            node @ _ => node,
+            node => node,
         };
         self
     }
@@ -1019,6 +1019,18 @@ impl Mac_ {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+pub struct MacroDef {
+    pub tokens: ThinTokenStream,
+    pub legacy: bool,
+}
+
+impl MacroDef {
+    pub fn stream(&self) -> TokenStream {
+        self.tokens.clone().into()
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
 pub enum StrStyle {
     /// A regular string, like `"foo"`
@@ -1076,16 +1088,16 @@ impl LitKind {
     pub fn is_unsuffixed(&self) -> bool {
         match *self {
             // unsuffixed variants
-            LitKind::Str(..) => true,
-            LitKind::ByteStr(..) => true,
-            LitKind::Byte(..) => true,
-            LitKind::Char(..) => true,
-            LitKind::Int(_, LitIntType::Unsuffixed) => true,
-            LitKind::FloatUnsuffixed(..) => true,
+            LitKind::Str(..) |
+            LitKind::ByteStr(..) |
+            LitKind::Byte(..) |
+            LitKind::Char(..) |
+            LitKind::Int(_, LitIntType::Unsuffixed) |
+            LitKind::FloatUnsuffixed(..) |
             LitKind::Bool(..) => true,
             // suffixed variants
-            LitKind::Int(_, LitIntType::Signed(..)) => false,
-            LitKind::Int(_, LitIntType::Unsigned(..)) => false,
+            LitKind::Int(_, LitIntType::Signed(..)) |
+            LitKind::Int(_, LitIntType::Unsigned(..)) |
             LitKind::Float(..) => false,
         }
     }
@@ -1852,6 +1864,7 @@ pub enum ItemKind {
     /// E.g. `impl<A> Foo<A> { .. }` or `impl<A> Trait for Foo<A> { .. }`
     Impl(Unsafety,
              ImplPolarity,
+             Defaultness,
              Generics,
              Option<TraitRef>, // (optional) trait this impl implements
              P<Ty>, // self
@@ -1862,7 +1875,7 @@ pub enum ItemKind {
     Mac(Mac),
 
     /// A macro definition.
-    MacroDef(ThinTokenStream),
+    MacroDef(MacroDef),
 }
 
 impl ItemKind {

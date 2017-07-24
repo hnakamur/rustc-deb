@@ -1,3 +1,11 @@
+// Copyright 2017 Serde Developers
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Deserialize JSON data to a Rust data structure.
 
 use std::{i32, u64};
@@ -8,9 +16,9 @@ use serde::de::{self, Unexpected};
 
 use super::error::{Error, ErrorCode, Result};
 
-use read;
+use read::{self, Reference};
 
-pub use read::{Read, IoRead, IteratorRead, SliceRead, StrRead};
+pub use read::{Read, IoRead, SliceRead, StrRead};
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -21,8 +29,9 @@ pub struct Deserializer<R> {
     remaining_depth: u8,
 }
 
-impl<R> Deserializer<R>
-    where R: read::Read
+impl<'de, R> Deserializer<R>
+where
+    R: read::Read<'de>,
 {
     /// Create a JSON deserializer from one of the possible serde_json input
     /// sources.
@@ -31,7 +40,6 @@ impl<R> Deserializer<R>
     ///
     ///   - Deserializer::from_str
     ///   - Deserializer::from_bytes
-    ///   - Deserializer::from_iter
     ///   - Deserializer::from_reader
     pub fn new(read: R) -> Self {
         Deserializer {
@@ -42,17 +50,9 @@ impl<R> Deserializer<R>
     }
 }
 
-impl<I> Deserializer<read::IteratorRead<I>>
-    where I: Iterator<Item = io::Result<u8>>
-{
-    /// Creates a JSON deserializer from a `std::iter::Iterator`.
-    pub fn from_iter(iter: I) -> Self {
-        Deserializer::new(read::IteratorRead::new(iter))
-    }
-}
-
 impl<R> Deserializer<read::IoRead<R>>
-    where R: io::Read
+where
+    R: io::Read,
 {
     /// Creates a JSON deserializer from an `io::Read`.
     pub fn from_reader(reader: R) -> Self {
@@ -80,32 +80,54 @@ macro_rules! overflow {
     }
 }
 
-impl<R: Read> Deserializer<R> {
+enum Number {
+    F64(f64),
+    U64(u64),
+    I64(i64),
+}
+
+impl Number {
+    fn visit<'de, V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
+    {
+        match self {
+            Number::F64(x) => visitor.visit_f64(x),
+            Number::U64(x) => visitor.visit_u64(x),
+            Number::I64(x) => visitor.visit_i64(x),
+        }
+    }
+}
+
+impl<'de, R: Read<'de>> Deserializer<R> {
     /// The `Deserializer::end` method should be called after a value has been fully deserialized.
     /// This allows the `Deserializer` to validate that the input stream is at the end or that it
     /// only has trailing whitespace.
     pub fn end(&mut self) -> Result<()> {
-        if try!(self.parse_whitespace()) { // true if eof
-            Ok(())
-        } else {
-            Err(self.peek_error(ErrorCode::TrailingCharacters))
+        match try!(self.parse_whitespace()) {
+            Some(_) => Err(self.peek_error(ErrorCode::TrailingCharacters)),
+            None => Ok(()),
         }
     }
 
     /// Turn a JSON deserializer into an iterator over values of type T.
-    pub fn into_iter<T>(self) -> StreamDeserializer<R, T>
-        where T: de::Deserialize
+    pub fn into_iter<T>(self) -> StreamDeserializer<'de, R, T>
+    where
+        T: de::Deserialize<'de>,
     {
         // This cannot be an implementation of std::iter::IntoIterator because
         // we need the caller to choose what T is.
+        let offset = self.read.byte_offset();
         StreamDeserializer {
             de: self,
-            _marker: PhantomData,
+            offset: offset,
+            output: PhantomData,
+            lifetime: PhantomData,
         }
     }
 
     fn peek(&mut self) -> Result<Option<u8>> {
-        self.read.peek().map_err(Into::into)
+        self.read.peek().map_err(Error::io)
     }
 
     fn peek_or_null(&mut self) -> Result<u8> {
@@ -117,7 +139,7 @@ impl<R: Read> Deserializer<R> {
     }
 
     fn next_char(&mut self) -> Result<Option<u8>> {
-        self.read.next().map_err(Into::into)
+        self.read.next().map_err(Error::io)
     }
 
     fn next_char_or_null(&mut self) -> Result<u8> {
@@ -136,33 +158,33 @@ impl<R: Read> Deserializer<R> {
         Error::syntax(reason, pos.line, pos.column)
     }
 
-    /// Consume whitespace until the next non-whitespace character.
-    ///
-    /// Return `Ok(true)` if EOF was encountered in the process and `Ok(false)` otherwise.
-    fn parse_whitespace(&mut self) -> Result<bool> {
+    /// Returns the first non-whitespace byte without consuming it, or `None` if
+    /// EOF is encountered.
+    fn parse_whitespace(&mut self) -> Result<Option<u8>> {
         loop {
             match try!(self.peek()) {
-                Some(b) => match b {
-                    b' ' | b'\n' | b'\t' | b'\r' => {
-                        self.eat_char();
-                    }
-                    _ => {
-                        return Ok(false);
-                    }
-                },
-                None => return Ok(true),
+                Some(b' ') | Some(b'\n') | Some(b'\t') | Some(b'\r') => {
+                    self.eat_char();
+                }
+                other => {
+                    return Ok(other);
+                }
             }
         }
     }
 
     fn parse_value<V>(&mut self, visitor: V) -> Result<V::Value>
-        where V: de::Visitor,
+    where
+        V: de::Visitor<'de>,
     {
-        if try!(self.parse_whitespace()) { // true if eof
-            return Err(self.peek_error(ErrorCode::EOFWhileParsingValue));
-        }
+        let peek = match try!(self.parse_whitespace()) {
+            Some(b) => b,
+            None => {
+                return Err(self.peek_error(ErrorCode::EofWhileParsingValue));
+            }
+        };
 
-        let value = match try!(self.peek_or_null()) {
+        let value = match peek {
             b'n' => {
                 self.eat_char();
                 try!(self.parse_ident(b"ull"));
@@ -180,14 +202,16 @@ impl<R: Read> Deserializer<R> {
             }
             b'-' => {
                 self.eat_char();
-                self.parse_integer(false, visitor)
+                try!(self.parse_integer(false)).visit(visitor)
             }
-            b'0'...b'9' => self.parse_integer(true, visitor),
+            b'0'...b'9' => try!(self.parse_integer(true)).visit(visitor),
             b'"' => {
                 self.eat_char();
                 self.str_buf.clear();
-                let s = try!(self.read.parse_str(&mut self.str_buf));
-                visitor.visit_str(s)
+                match try!(self.read.parse_str(&mut self.str_buf)) {
+                    Reference::Borrowed(s) => visitor.visit_borrowed_str(s),
+                    Reference::Copied(s) => visitor.visit_str(s),
+                }
             }
             b'[' => {
                 self.remaining_depth -= 1;
@@ -196,7 +220,7 @@ impl<R: Read> Deserializer<R> {
                 }
 
                 self.eat_char();
-                let ret = visitor.visit_seq(SeqVisitor::new(self));
+                let ret = visitor.visit_seq(SeqAccess::new(self));
 
                 self.remaining_depth += 1;
 
@@ -212,7 +236,7 @@ impl<R: Read> Deserializer<R> {
                 }
 
                 self.eat_char();
-                let ret = visitor.visit_map(MapVisitor::new(self));
+                let ret = visitor.visit_map(MapAccess::new(self));
 
                 self.remaining_depth += 1;
 
@@ -246,17 +270,13 @@ impl<R: Read> Deserializer<R> {
         Ok(())
     }
 
-    fn parse_integer<V>(&mut self, pos: bool, visitor: V) -> Result<V::Value>
-        where V: de::Visitor,
-    {
+    fn parse_integer(&mut self, pos: bool) -> Result<Number> {
         match try!(self.next_char_or_null()) {
             b'0' => {
                 // There can be only one leading '0'.
                 match try!(self.peek_or_null()) {
-                    b'0'...b'9' => {
-                        Err(self.peek_error(ErrorCode::InvalidNumber))
-                    }
-                    _ => self.parse_number(pos, 0, visitor),
+                    b'0'...b'9' => Err(self.peek_error(ErrorCode::InvalidNumber)),
+                    _ => self.parse_number(pos, 0),
                 }
             }
             c @ b'1'...b'9' => {
@@ -272,16 +292,17 @@ impl<R: Read> Deserializer<R> {
                             // number as a `u64` until we grow too large. At that point, switch to
                             // parsing the value as a `f64`.
                             if overflow!(res * 10 + digit, u64::MAX) {
-                                return self.parse_long_integer(pos,
-                                                               res,
-                                                               1, // res * 10^1
-                                                               visitor);
+                                return Ok(Number::F64(try!(self.parse_long_integer(
+                                    pos,
+                                    res,
+                                    1, // res * 10^1
+                                ))));
                             }
 
                             res = res * 10 + digit;
                         }
                         _ => {
-                            return self.parse_number(pos, res, visitor);
+                            return self.parse_number(pos, res);
                         }
                     }
                 }
@@ -290,15 +311,12 @@ impl<R: Read> Deserializer<R> {
         }
     }
 
-    fn parse_long_integer<V>(
+    fn parse_long_integer(
         &mut self,
         pos: bool,
         significand: u64,
         mut exponent: i32,
-        visitor: V
-    ) -> Result<V::Value>
-        where V: de::Visitor,
-    {
+    ) -> Result<f64> {
         loop {
             match try!(self.peek_or_null()) {
                 b'0'...b'9' => {
@@ -308,58 +326,45 @@ impl<R: Read> Deserializer<R> {
                     exponent += 1;
                 }
                 b'.' => {
-                    return self.parse_decimal(pos, significand, exponent, visitor);
+                    return self.parse_decimal(pos, significand, exponent);
                 }
                 b'e' | b'E' => {
-                    return self.parse_exponent(pos, significand, exponent, visitor);
+                    return self.parse_exponent(pos, significand, exponent);
                 }
                 _ => {
-                    return self.visit_f64_from_parts(pos,
-                                                     significand,
-                                                     exponent,
-                                                     visitor);
+                    return self.f64_from_parts(pos, significand, exponent);
                 }
             }
         }
     }
 
-    fn parse_number<V>(
-        &mut self,
-        pos: bool,
-        significand: u64,
-        visitor: V
-    ) -> Result<V::Value>
-        where V: de::Visitor,
-    {
-        match try!(self.peek_or_null()) {
-            b'.' => self.parse_decimal(pos, significand, 0, visitor),
-            b'e' | b'E' => self.parse_exponent(pos, significand, 0, visitor),
+    fn parse_number(&mut self, pos: bool, significand: u64) -> Result<Number> {
+        Ok(match try!(self.peek_or_null()) {
+            b'.' => Number::F64(try!(self.parse_decimal(pos, significand, 0))),
+            b'e' | b'E' => Number::F64(try!(self.parse_exponent(pos, significand, 0))),
             _ => {
                 if pos {
-                    visitor.visit_u64(significand)
+                    Number::U64(significand)
                 } else {
                     let neg = (significand as i64).wrapping_neg();
 
                     // Convert into a float if we underflow.
                     if neg > 0 {
-                        visitor.visit_f64(-(significand as f64))
+                        Number::F64(-(significand as f64))
                     } else {
-                        visitor.visit_i64(neg)
+                        Number::I64(neg)
                     }
                 }
             }
-        }
+        })
     }
 
-    fn parse_decimal<V>(
+    fn parse_decimal(
         &mut self,
         pos: bool,
         mut significand: u64,
         mut exponent: i32,
-        visitor: V
-    ) -> Result<V::Value>
-        where V: de::Visitor,
-    {
+    ) -> Result<f64> {
         self.eat_char();
 
         let mut at_least_one_digit = false;
@@ -386,22 +391,17 @@ impl<R: Read> Deserializer<R> {
         }
 
         match try!(self.peek_or_null()) {
-            b'e' | b'E' => {
-                self.parse_exponent(pos, significand, exponent, visitor)
-            }
-            _ => self.visit_f64_from_parts(pos, significand, exponent, visitor),
+            b'e' | b'E' => self.parse_exponent(pos, significand, exponent),
+            _ => self.f64_from_parts(pos, significand, exponent),
         }
     }
 
-    fn parse_exponent<V>(
+    fn parse_exponent(
         &mut self,
         pos: bool,
         significand: u64,
         starting_exp: i32,
-        visitor: V
-    ) -> Result<V::Value>
-        where V: de::Visitor,
-    {
+    ) -> Result<f64> {
         self.eat_char();
 
         let pos_exp = match try!(self.peek_or_null()) {
@@ -429,10 +429,7 @@ impl<R: Read> Deserializer<R> {
             let digit = (c - b'0') as i32;
 
             if overflow!(exp * 10 + digit, i32::MAX) {
-                return self.parse_exponent_overflow(pos,
-                                                    significand,
-                                                    pos_exp,
-                                                    visitor);
+                return self.parse_exponent_overflow(pos, significand, pos_exp);
             }
 
             exp = exp * 10 + digit;
@@ -444,22 +441,19 @@ impl<R: Read> Deserializer<R> {
             starting_exp.saturating_sub(exp)
         };
 
-        self.visit_f64_from_parts(pos, significand, final_exp, visitor)
+        self.f64_from_parts(pos, significand, final_exp)
     }
 
     // This cold code should not be inlined into the middle of the hot
     // exponent-parsing loop above.
     #[cold]
     #[inline(never)]
-    fn parse_exponent_overflow<V>(
+    fn parse_exponent_overflow(
         &mut self,
         pos: bool,
         significand: u64,
         pos_exp: bool,
-        visitor: V
-    ) -> Result<V::Value>
-        where V: de::Visitor,
-    {
+    ) -> Result<f64> {
         // Error instead of +/- infinity.
         if significand != 0 && pos_exp {
             return Err(self.error(ErrorCode::NumberOutOfRange));
@@ -468,22 +462,15 @@ impl<R: Read> Deserializer<R> {
         while let b'0'...b'9' = try!(self.peek_or_null()) {
             self.eat_char();
         }
-        visitor.visit_f64(if pos {
-            0.0
-        } else {
-            -0.0
-        })
+        Ok(if pos { 0.0 } else { -0.0 })
     }
 
-    fn visit_f64_from_parts<V>(
+    fn f64_from_parts(
         &mut self,
         pos: bool,
         significand: u64,
         mut exponent: i32,
-        visitor: V
-    ) -> Result<V::Value>
-        where V: de::Visitor,
-    {
+    ) -> Result<f64> {
         let mut f = significand as f64;
         loop {
             match POW10.get(exponent.abs() as usize) {
@@ -510,47 +497,44 @@ impl<R: Read> Deserializer<R> {
                 }
             }
         }
-        visitor.visit_f64(if pos {
-            f
-        } else {
-            -f
-        })
+        Ok(if pos { f } else { -f })
     }
 
     fn parse_object_colon(&mut self) -> Result<()> {
-        try!(self.parse_whitespace());
-
-        match try!(self.peek()) {
+        match try!(self.parse_whitespace()) {
             Some(b':') => {
                 self.eat_char();
                 Ok(())
             }
             Some(_) => Err(self.peek_error(ErrorCode::ExpectedColon)),
-            None => Err(self.peek_error(ErrorCode::EOFWhileParsingObject)),
+            None => Err(self.peek_error(ErrorCode::EofWhileParsingObject)),
         }
     }
 
     fn end_seq(&mut self) -> Result<()> {
-        try!(self.parse_whitespace());
-
-        match try!(self.next_char()) {
-            Some(b']') => Ok(()),
-            Some(_) => Err(self.error(ErrorCode::TrailingCharacters)),
-            None => Err(self.error(ErrorCode::EOFWhileParsingList)),
+        match try!(self.parse_whitespace()) {
+            Some(b']') => {
+                self.eat_char();
+                Ok(())
+            }
+            Some(_) => Err(self.peek_error(ErrorCode::TrailingCharacters)),
+            None => Err(self.peek_error(ErrorCode::EofWhileParsingList)),
         }
     }
 
     fn end_map(&mut self) -> Result<()> {
-        try!(self.parse_whitespace());
-
-        match try!(self.next_char()) {
-            Some(b'}') => Ok(()),
-            Some(_) => Err(self.error(ErrorCode::TrailingCharacters)),
-            None => Err(self.error(ErrorCode::EOFWhileParsingObject)),
+        match try!(self.parse_whitespace()) {
+            Some(b'}') => {
+                self.eat_char();
+                Ok(())
+            }
+            Some(_) => Err(self.peek_error(ErrorCode::TrailingCharacters)),
+            None => Err(self.peek_error(ErrorCode::EofWhileParsingObject)),
         }
     }
 }
 
+#[cfg_attr(rustfmt, rustfmt_skip)]
 static POW10: [f64; 309] =
     [1e000, 1e001, 1e002, 1e003, 1e004, 1e005, 1e006, 1e007, 1e008, 1e009,
      1e010, 1e011, 1e012, 1e013, 1e014, 1e015, 1e016, 1e017, 1e018, 1e019,
@@ -584,12 +568,13 @@ static POW10: [f64; 309] =
      1e290, 1e291, 1e292, 1e293, 1e294, 1e295, 1e296, 1e297, 1e298, 1e299,
      1e300, 1e301, 1e302, 1e303, 1e304, 1e305, 1e306, 1e307, 1e308];
 
-impl<'a, R: Read> de::Deserializer for &'a mut Deserializer<R> {
+impl<'de, 'a, R: Read<'de>> de::Deserializer<'de> for &'a mut Deserializer<R> {
     type Error = Error;
 
     #[inline]
-    fn deserialize<V>(self, visitor: V) -> Result<V::Value>
-        where V: de::Visitor,
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
     {
         self.parse_value(visitor)
     }
@@ -597,12 +582,11 @@ impl<'a, R: Read> de::Deserializer for &'a mut Deserializer<R> {
     /// Parses a `null` as a None, and any other values as a `Some(...)`.
     #[inline]
     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value>
-        where V: de::Visitor,
+    where
+        V: de::Visitor<'de>,
     {
-        try!(self.parse_whitespace());
-
-        match try!(self.peek_or_null()) {
-            b'n' => {
+        match try!(self.parse_whitespace()) {
+            Some(b'n') => {
                 self.eat_char();
                 try!(self.parse_ident(b"ull"));
                 visitor.visit_none()
@@ -613,12 +597,9 @@ impl<'a, R: Read> de::Deserializer for &'a mut Deserializer<R> {
 
     /// Parses a newtype struct as the underlying value.
     #[inline]
-    fn deserialize_newtype_struct<V>(
-        self,
-        _name: &str,
-        visitor: V
-    ) -> Result<V::Value>
-        where V: de::Visitor,
+    fn deserialize_newtype_struct<V>(self, _name: &str, visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
     {
         visitor.visit_newtype_struct(self)
     }
@@ -630,126 +611,173 @@ impl<'a, R: Read> de::Deserializer for &'a mut Deserializer<R> {
         self,
         _name: &str,
         _variants: &'static [&'static str],
-        visitor: V
+        visitor: V,
     ) -> Result<V::Value>
-        where V: de::Visitor,
+    where
+        V: de::Visitor<'de>,
     {
-        try!(self.parse_whitespace());
-
-        match try!(self.peek_or_null()) {
-            b'{' => {
+        match try!(self.parse_whitespace()) {
+            Some(b'{') => {
                 self.remaining_depth -= 1;
                 if self.remaining_depth == 0 {
                     return Err(self.peek_error(ErrorCode::RecursionLimitExceeded));
                 }
 
                 self.eat_char();
-                let value = try!(visitor.visit_enum(VariantVisitor::new(self)));
+                let value = try!(visitor.visit_enum(VariantAccess::new(self)));
 
                 self.remaining_depth += 1;
 
-                try!(self.parse_whitespace());
-
-                match try!(self.next_char_or_null()) {
-                    b'}' => Ok(value),
-                    _ => Err(self.error(ErrorCode::ExpectedSomeValue)),
+                match try!(self.parse_whitespace()) {
+                    Some(b'}') => {
+                        self.eat_char();
+                        Ok(value)
+                    }
+                    Some(_) => Err(self.error(ErrorCode::ExpectedSomeValue)),
+                    None => Err(self.error(ErrorCode::EofWhileParsingObject)),
                 }
             }
-            b'"' => visitor.visit_enum(UnitVariantVisitor::new(self)),
-            _ => Err(self.peek_error(ErrorCode::ExpectedSomeValue)),
+            Some(b'"') => visitor.visit_enum(UnitVariantAccess::new(self)),
+            Some(_) => Err(self.peek_error(ErrorCode::ExpectedSomeValue)),
+            None => Err(self.peek_error(ErrorCode::EofWhileParsingValue)),
         }
     }
 
-    /// Parses a JSON string as bytes. Note that this function does not
-    /// check whether the bytes represent valid unicode code points.
+    /// Parses a JSON string as bytes. Note that this function does not check
+    /// whether the bytes represent a valid UTF-8 string.
     ///
-    /// The JSON specification requires that strings only contain valid
-    /// unicode characters. To deal with non-conforming JSON, you may use
-    /// this function, which attempts to parse a string without checking
-    /// whether the bytes represent valid unicode code points.
+    /// The relevant part of the JSON specification is Section 8.2 of [RFC
+    /// 7159]:
     ///
-    /// Escape sequences are processed as usual, and for `\uXXXX` escapes 
-    /// it is still checked if the hex number represents a valid unicode
-    /// code point.
+    /// > When all the strings represented in a JSON text are composed entirely
+    /// > of Unicode characters (however escaped), then that JSON text is
+    /// > interoperable in the sense that all software implementations that
+    /// > parse it will agree on the contents of names and of string values in
+    /// > objects and arrays.
+    /// >
+    /// > However, the ABNF in this specification allows member names and string
+    /// > values to contain bit sequences that cannot encode Unicode characters;
+    /// > for example, "\uDEAD" (a single unpaired UTF-16 surrogate). Instances
+    /// > of this have been observed, for example, when a library truncates a
+    /// > UTF-16 string without checking whether the truncation split a
+    /// > surrogate pair.  The behavior of software that receives JSON texts
+    /// > containing such values is unpredictable; for example, implementations
+    /// > might return different values for the length of a string value or even
+    /// > suffer fatal runtime exceptions.
     ///
-    /// # Example usage
+    /// [RFC 7159]: https://tools.ietf.org/html/rfc7159
     ///
-    /// You can use this to parse JSON strings containing non-unicode bytes:
+    /// The behavior of serde_json is specified to fail on non-UTF-8 strings
+    /// when deserializing into Rust UTF-8 string types such as String, and
+    /// succeed with non-UTF-8 bytes when deserializing using this method.
     ///
-    /// ```
-    /// # extern crate serde;
-    /// # extern crate serde_json;
+    /// Escape sequences are processed as usual, and for `\uXXXX` escapes it is
+    /// still checked if the hex number represents a valid Unicode code point.
+    ///
+    /// # Examples
+    ///
+    /// You can use this to parse JSON strings containing invalid UTF-8 bytes.
+    ///
+    /// ```rust
+    /// extern crate serde_json;
+    /// extern crate serde_bytes;
+    ///
+    /// use serde_bytes::ByteBuf;
+    ///
+    /// fn look_at_bytes() -> Result<(), serde_json::Error> {
+    ///     let json_data = b"\"some bytes: \xe5\x00\xe5\"";
+    ///     let bytes: ByteBuf = serde_json::from_slice(json_data)?;
+    ///
+    ///     assert_eq!(b'\xe5', bytes[12]);
+    ///     assert_eq!(b'\0', bytes[13]);
+    ///     assert_eq!(b'\xe5', bytes[14]);
+    ///
+    ///     Ok(())
+    /// }
     /// #
-    /// let bytes = serde::bytes::ByteBuf::from(b"some raw bytes: \xe5\x00\xe5".to_vec());
-    /// let parsed = serde_json::from_slice(  b"\"some raw bytes: \xe5\x00\xe5\"").unwrap();
-    /// 
-    /// assert_eq!(bytes, parsed);
+    /// # fn main() {
+    /// #     look_at_bytes().unwrap();
+    /// # }
     /// ```
     ///
-    /// `\u` escape sequences with invalid unicode code points still fail to parse:
+    /// Backslash escape sequences like `\n` are still interpreted and required
+    /// to be valid, and `\u` escape sequences are required to represent valid
+    /// Unicode code points.
     ///
-    /// ```
-    /// # extern crate serde;
-    /// # extern crate serde_json;
+    /// ```rust
+    /// extern crate serde_json;
+    /// extern crate serde_bytes;
+    ///
+    /// use serde_bytes::ByteBuf;
+    ///
+    /// fn look_at_bytes() {
+    ///     let json_data = b"\"invalid unicode surrogate: \\uD801\"";
+    ///     let parsed: Result<ByteBuf, _> = serde_json::from_slice(json_data);
+    ///
+    ///     assert!(parsed.is_err());
+    ///
+    ///     let expected_msg = "unexpected end of hex escape at line 1 column 35";
+    ///     assert_eq!(expected_msg, parsed.unwrap_err().to_string());
+    /// }
     /// #
-    /// let json = "\"invalid unicode surrogate: \\uD801\"";
-    /// let parsed: Result<serde::bytes::ByteBuf, _> = serde_json::from_str(json);
-    /// assert!(parsed.is_err(), "{} should not parse: {:?}", json, parsed);
+    /// # fn main() {
+    /// #     look_at_bytes();
+    /// # }
     /// ```
     fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value>
-        where V: de::Visitor
+    where
+        V: de::Visitor<'de>,
     {
-        try!(self.parse_whitespace());
-
-        match try!(self.peek_or_null()) {
-            b'"' => {
+        match try!(self.parse_whitespace()) {
+            Some(b'"') => {
                 self.eat_char();
                 self.str_buf.clear();
-                let slice = try!(self.read.parse_str_raw(&mut self.str_buf));
-                visitor.visit_bytes(slice)
+                match try!(self.read.parse_str_raw(&mut self.str_buf)) {
+                    Reference::Borrowed(b) => visitor.visit_borrowed_bytes(b),
+                    Reference::Copied(b) => visitor.visit_bytes(b),
+                }
             }
-            _ => self.deserialize(visitor),
+            _ => self.deserialize_any(visitor),
         }
 
     }
 
     #[inline]
     fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value>
-        where V: de::Visitor
+    where
+        V: de::Visitor<'de>,
     {
         self.deserialize_bytes(visitor)
     }
 
-    forward_to_deserialize! {
-        bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
-        seq_fixed_size map unit_struct tuple_struct struct
-        struct_field tuple ignored_any
+    forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string unit
+        unit_struct seq tuple tuple_struct map struct identifier ignored_any
     }
 }
 
-struct SeqVisitor<'a, R: Read + 'a> {
+struct SeqAccess<'a, R: 'a> {
     de: &'a mut Deserializer<R>,
     first: bool,
 }
 
-impl<'a, R: Read + 'a> SeqVisitor<'a, R> {
+impl<'a, R: 'a> SeqAccess<'a, R> {
     fn new(de: &'a mut Deserializer<R>) -> Self {
-        SeqVisitor {
+        SeqAccess {
             de: de,
             first: true,
         }
     }
 }
 
-impl<'a, R: Read + 'a> de::SeqVisitor for SeqVisitor<'a, R> {
+impl<'de, 'a, R: Read<'de> + 'a> de::SeqAccess<'de> for SeqAccess<'a, R> {
     type Error = Error;
 
-    fn visit_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>>
-        where T: de::DeserializeSeed,
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>>
+    where
+        T: de::DeserializeSeed<'de>,
     {
-        try!(self.de.parse_whitespace());
-
-        match try!(self.de.peek()) {
+        match try!(self.de.parse_whitespace()) {
             Some(b']') => {
                 return Ok(None);
             }
@@ -760,12 +788,11 @@ impl<'a, R: Read + 'a> de::SeqVisitor for SeqVisitor<'a, R> {
                 if self.first {
                     self.first = false;
                 } else {
-                    return Err(self.de
-                        .peek_error(ErrorCode::ExpectedListCommaOrEnd));
+                    return Err(self.de.peek_error(ErrorCode::ExpectedListCommaOrEnd));
                 }
             }
             None => {
-                return Err(self.de.peek_error(ErrorCode::EOFWhileParsingList));
+                return Err(self.de.peek_error(ErrorCode::EofWhileParsingList));
             }
         }
 
@@ -774,59 +801,58 @@ impl<'a, R: Read + 'a> de::SeqVisitor for SeqVisitor<'a, R> {
     }
 }
 
-struct MapVisitor<'a, R: Read + 'a> {
+struct MapAccess<'a, R: 'a> {
     de: &'a mut Deserializer<R>,
     first: bool,
 }
 
-impl<'a, R: Read + 'a> MapVisitor<'a, R> {
+impl<'a, R: 'a> MapAccess<'a, R> {
     fn new(de: &'a mut Deserializer<R>) -> Self {
-        MapVisitor {
+        MapAccess {
             de: de,
             first: true,
         }
     }
 }
 
-impl<'a, R: Read + 'a> de::MapVisitor for MapVisitor<'a, R> {
+impl<'de, 'a, R: Read<'de> + 'a> de::MapAccess<'de> for MapAccess<'a, R> {
     type Error = Error;
 
-    fn visit_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>>
-        where K: de::DeserializeSeed,
+    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>>
+    where
+        K: de::DeserializeSeed<'de>,
     {
-        try!(self.de.parse_whitespace());
-
-        match try!(self.de.peek()) {
+        let peek = match try!(self.de.parse_whitespace()) {
             Some(b'}') => {
                 return Ok(None);
             }
             Some(b',') if !self.first => {
                 self.de.eat_char();
-                try!(self.de.parse_whitespace());
+                try!(self.de.parse_whitespace())
             }
-            Some(_) => {
+            Some(b) => {
                 if self.first {
                     self.first = false;
+                    Some(b)
                 } else {
-                    return Err(self.de
-                        .peek_error(ErrorCode::ExpectedObjectCommaOrEnd));
+                    return Err(self.de.peek_error(ErrorCode::ExpectedObjectCommaOrEnd));
                 }
             }
             None => {
-                return Err(self.de
-                    .peek_error(ErrorCode::EOFWhileParsingObject));
+                return Err(self.de.peek_error(ErrorCode::EofWhileParsingObject));
             }
-        }
+        };
 
-        match try!(self.de.peek()) {
-            Some(b'"') => Ok(Some(try!(seed.deserialize(&mut *self.de)))),
+        match peek {
+            Some(b'"') => seed.deserialize(MapKey { de: &mut *self.de }).map(Some),
             Some(_) => Err(self.de.peek_error(ErrorCode::KeyMustBeAString)),
-            None => Err(self.de.peek_error(ErrorCode::EOFWhileParsingValue)),
+            None => Err(self.de.peek_error(ErrorCode::EofWhileParsingValue)),
         }
     }
 
-    fn visit_value_seed<V>(&mut self, seed: V) -> Result<V::Value>
-        where V: de::DeserializeSeed,
+    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value>
+    where
+        V: de::DeserializeSeed<'de>,
     {
         try!(self.de.parse_object_colon());
 
@@ -834,24 +860,23 @@ impl<'a, R: Read + 'a> de::MapVisitor for MapVisitor<'a, R> {
     }
 }
 
-struct VariantVisitor<'a, R: Read + 'a> {
+struct VariantAccess<'a, R: 'a> {
     de: &'a mut Deserializer<R>,
 }
 
-impl<'a, R: Read + 'a> VariantVisitor<'a, R> {
+impl<'a, R: 'a> VariantAccess<'a, R> {
     fn new(de: &'a mut Deserializer<R>) -> Self {
-        VariantVisitor {
-            de: de,
-        }
+        VariantAccess { de: de }
     }
 }
 
-impl<'a, R: Read + 'a> de::EnumVisitor for VariantVisitor<'a, R> {
+impl<'de, 'a, R: Read<'de> + 'a> de::EnumAccess<'de> for VariantAccess<'a, R> {
     type Error = Error;
     type Variant = Self;
 
-    fn visit_variant_seed<V>(self, seed: V) -> Result<(V::Value, Self)>
-        where V: de::DeserializeSeed,
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self)>
+    where
+        V: de::DeserializeSeed<'de>,
     {
         let val = try!(seed.deserialize(&mut *self.de));
         try!(self.de.parse_object_colon());
@@ -859,87 +884,183 @@ impl<'a, R: Read + 'a> de::EnumVisitor for VariantVisitor<'a, R> {
     }
 }
 
-impl<'a, R: Read + 'a> de::VariantVisitor for VariantVisitor<'a, R> {
+impl<'de, 'a, R: Read<'de> + 'a> de::VariantAccess<'de> for VariantAccess<'a, R> {
     type Error = Error;
 
-    fn visit_unit(self) -> Result<()> {
+    fn unit_variant(self) -> Result<()> {
         de::Deserialize::deserialize(self.de)
     }
 
-    fn visit_newtype_seed<T>(self, seed: T) -> Result<T::Value>
-        where T: de::DeserializeSeed,
+    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value>
+    where
+        T: de::DeserializeSeed<'de>,
     {
         seed.deserialize(self.de)
     }
 
-    fn visit_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value>
-        where V: de::Visitor,
+    fn tuple_variant<V>(self, _len: usize, visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
     {
-        de::Deserializer::deserialize(self.de, visitor)
+        de::Deserializer::deserialize_any(self.de, visitor)
     }
 
-    fn visit_struct<V>(
-        self,
-        _fields: &'static [&'static str],
-        visitor: V
-    ) -> Result<V::Value>
-        where V: de::Visitor,
+    fn struct_variant<V>(self, _fields: &'static [&'static str], visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
     {
-        de::Deserializer::deserialize(self.de, visitor)
+        de::Deserializer::deserialize_any(self.de, visitor)
     }
 }
 
-struct UnitVariantVisitor<'a, R: Read + 'a> {
+struct UnitVariantAccess<'a, R: 'a> {
     de: &'a mut Deserializer<R>,
 }
 
-impl<'a, R: Read + 'a> UnitVariantVisitor<'a, R> {
+impl<'a, R: 'a> UnitVariantAccess<'a, R> {
     fn new(de: &'a mut Deserializer<R>) -> Self {
-        UnitVariantVisitor {
-            de: de,
-        }
+        UnitVariantAccess { de: de }
     }
 }
 
-impl<'a, R: Read + 'a> de::EnumVisitor for UnitVariantVisitor<'a, R> {
+impl<'de, 'a, R: Read<'de> + 'a> de::EnumAccess<'de> for UnitVariantAccess<'a, R> {
     type Error = Error;
     type Variant = Self;
 
-    fn visit_variant_seed<V>(self, seed: V) -> Result<(V::Value, Self)>
-        where V: de::DeserializeSeed,
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self)>
+    where
+        V: de::DeserializeSeed<'de>,
     {
         let variant = try!(seed.deserialize(&mut *self.de));
         Ok((variant, self))
     }
 }
 
-impl<'a, R: Read + 'a> de::VariantVisitor for UnitVariantVisitor<'a, R> {
+impl<'de, 'a, R: Read<'de> + 'a> de::VariantAccess<'de> for UnitVariantAccess<'a, R> {
     type Error = Error;
 
-    fn visit_unit(self) -> Result<()> {
+    fn unit_variant(self) -> Result<()> {
         Ok(())
     }
 
-    fn visit_newtype_seed<T>(self, _seed: T) -> Result<T::Value>
-        where T: de::DeserializeSeed,
+    fn newtype_variant_seed<T>(self, _seed: T) -> Result<T::Value>
+    where
+        T: de::DeserializeSeed<'de>,
     {
-        Err(de::Error::invalid_type(Unexpected::UnitVariant, &"newtype variant"))
+        Err(de::Error::invalid_type(Unexpected::UnitVariant, &"newtype variant"),)
     }
 
-    fn visit_tuple<V>(self, _len: usize, _visitor: V) -> Result<V::Value>
-        where V: de::Visitor,
+    fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
     {
-        Err(de::Error::invalid_type(Unexpected::UnitVariant, &"tuple variant"))
+        Err(de::Error::invalid_type(Unexpected::UnitVariant, &"tuple variant"),)
     }
 
-    fn visit_struct<V>(
+    fn struct_variant<V>(self, _fields: &'static [&'static str], _visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
+    {
+        Err(de::Error::invalid_type(Unexpected::UnitVariant, &"struct variant"),)
+    }
+}
+
+/// Only deserialize from this after peeking a '"' byte! Otherwise it may
+/// deserialize invalid JSON successfully.
+struct MapKey<'a, R: 'a> {
+    de: &'a mut Deserializer<R>,
+}
+
+macro_rules! deserialize_integer_key {
+    ($deserialize:ident => $visit:ident) => {
+        fn $deserialize<V>(self, visitor: V) -> Result<V::Value>
+        where
+            V: de::Visitor<'de>,
+        {
+            self.de.eat_char();
+            self.de.str_buf.clear();
+            let string = try!(self.de.read.parse_str(&mut self.de.str_buf));
+            match (string.parse(), string) {
+                (Ok(integer), _) => visitor.$visit(integer),
+                (Err(_), Reference::Borrowed(s)) => visitor.visit_borrowed_str(s),
+                (Err(_), Reference::Copied(s)) => visitor.visit_str(s),
+            }
+        }
+    }
+}
+
+impl<'de, 'a, R> de::Deserializer<'de> for MapKey<'a, R>
+where
+    R: Read<'de>,
+{
+    type Error = Error;
+
+    #[inline]
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
+    {
+        self.de.parse_value(visitor)
+    }
+
+    deserialize_integer_key!(deserialize_i8 => visit_i8);
+    deserialize_integer_key!(deserialize_i16 => visit_i16);
+    deserialize_integer_key!(deserialize_i32 => visit_i32);
+    deserialize_integer_key!(deserialize_i64 => visit_i64);
+    deserialize_integer_key!(deserialize_u8 => visit_u8);
+    deserialize_integer_key!(deserialize_u16 => visit_u16);
+    deserialize_integer_key!(deserialize_u32 => visit_u32);
+    deserialize_integer_key!(deserialize_u64 => visit_u64);
+
+    #[inline]
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
+    {
+        // Map keys cannot be null.
+        visitor.visit_some(self)
+    }
+
+    #[inline]
+    fn deserialize_newtype_struct<V>(self, _name: &'static str, visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_newtype_struct(self)
+    }
+
+    #[inline]
+    fn deserialize_enum<V>(
         self,
-        _fields: &'static [&'static str],
-        _visitor: V
+        name: &'static str,
+        variants: &'static [&'static str],
+        visitor: V,
     ) -> Result<V::Value>
-        where V: de::Visitor,
+    where
+        V: de::Visitor<'de>,
     {
-        Err(de::Error::invalid_type(Unexpected::UnitVariant, &"struct variant"))
+        self.de.deserialize_enum(name, variants, visitor)
+    }
+
+    #[inline]
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
+    {
+        self.de.deserialize_bytes(visitor)
+    }
+
+    #[inline]
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
+    {
+        self.de.deserialize_bytes(visitor)
+    }
+
+    forward_to_deserialize_any! {
+        bool f32 f64 char str string unit unit_struct seq tuple tuple_struct map
+        struct identifier ignored_any
     }
 }
 
@@ -950,13 +1071,17 @@ impl<'a, R: Read + 'a> de::VariantVisitor for UnitVariantVisitor<'a, R> {
 /// A stream deserializer can be created from any JSON deserializer using the
 /// `Deserializer::into_iter` method.
 ///
+/// The data must consist of JSON arrays and JSON objects optionally separated
+/// by whitespace. A null, boolean, number, or string at the top level are all
+/// errors.
+///
 /// ```rust
 /// extern crate serde_json;
 ///
 /// use serde_json::{Deserializer, Value};
 ///
 /// fn main() {
-///     let data = "1 2 {\"k\": 3}";
+///     let data = "{\"k\": 3}  {}  [0, 1, 2]";
 ///
 ///     let stream = Deserializer::from_str(data).into_iter::<Value>();
 ///
@@ -965,14 +1090,17 @@ impl<'a, R: Read + 'a> de::VariantVisitor for UnitVariantVisitor<'a, R> {
 ///     }
 /// }
 /// ```
-pub struct StreamDeserializer<R, T> {
+pub struct StreamDeserializer<'de, R, T> {
     de: Deserializer<R>,
-    _marker: PhantomData<T>,
+    offset: usize,
+    output: PhantomData<T>,
+    lifetime: PhantomData<&'de ()>,
 }
 
-impl<R, T> StreamDeserializer<R, T>
-    where R: read::Read,
-          T: de::Deserialize
+impl<'de, R, T> StreamDeserializer<'de, R, T>
+where
+    R: read::Read<'de>,
+    T: de::Deserialize<'de>,
 {
     /// Create a JSON stream deserializer from one of the possible serde_json
     /// input sources.
@@ -981,19 +1109,57 @@ impl<R, T> StreamDeserializer<R, T>
     ///
     ///   - Deserializer::from_str(...).into_iter()
     ///   - Deserializer::from_bytes(...).into_iter()
-    ///   - Deserializer::from_iter(...).into_iter()
     ///   - Deserializer::from_reader(...).into_iter()
     pub fn new(read: R) -> Self {
+        let offset = read.byte_offset();
         StreamDeserializer {
             de: Deserializer::new(read),
-            _marker: PhantomData,
+            offset: offset,
+            output: PhantomData,
+            lifetime: PhantomData,
         }
+    }
+
+    /// Returns the number of bytes so far deserialized into a successful `T`.
+    ///
+    /// If a stream deserializer returns an EOF error, new data can be joined to
+    /// `old_data[stream.byte_offset()..]` to try again.
+    ///
+    /// ```rust
+    /// let data = b"[0] [1] [";
+    ///
+    /// let de = serde_json::Deserializer::from_slice(data);
+    /// let mut stream = de.into_iter::<Vec<i32>>();
+    /// assert_eq!(0, stream.byte_offset());
+    ///
+    /// println!("{:?}", stream.next()); // [0]
+    /// assert_eq!(3, stream.byte_offset());
+    ///
+    /// println!("{:?}", stream.next()); // [1]
+    /// assert_eq!(7, stream.byte_offset());
+    ///
+    /// println!("{:?}", stream.next()); // error
+    /// assert_eq!(8, stream.byte_offset());
+    ///
+    /// // If err.is_eof(), can join the remaining data to new data and continue.
+    /// let remaining = &data[stream.byte_offset()..];
+    /// ```
+    ///
+    /// *Note:* In the future this method may be changed to return the number of
+    /// bytes so far deserialized into a successful T *or* syntactically valid
+    /// JSON skipped over due to a type error. See [serde-rs/json#70] for an
+    /// example illustrating this.
+    ///
+    /// [serde-rs/json#70]: https://github.com/serde-rs/json/issues/70
+    pub fn byte_offset(&self) -> usize {
+        self.offset
     }
 }
 
-impl<R, T> Iterator for StreamDeserializer<R, T>
-    where R: Read,
-          T: de::Deserialize,
+impl<'de, R, T> Iterator for StreamDeserializer<'de, R, T>
+where
+    R: Read<'de>,
+    T: de::Deserialize<'de>,
 {
     type Item = Result<T>;
 
@@ -1002,13 +1168,19 @@ impl<R, T> Iterator for StreamDeserializer<R, T>
         // this helps with trailing whitespaces, since whitespaces between
         // values are handled for us.
         match self.de.parse_whitespace() {
-            Ok(true) => None, // eof
-            Ok(false) => {
-                match de::Deserialize::deserialize(&mut self.de) {
-                    Ok(v) => Some(Ok(v)),
-                    Err(e) => Some(Err(e)),
-                }
+            Ok(None) => {
+                self.offset = self.de.read.byte_offset();
+                None
             }
+            Ok(Some(b'{')) | Ok(Some(b'[')) => {
+                self.offset = self.de.read.byte_offset();
+                let result = de::Deserialize::deserialize(&mut self.de);
+                if result.is_ok() {
+                    self.offset = self.de.read.byte_offset();
+                }
+                Some(result)
+            }
+            Ok(Some(_)) => Some(Err(self.de.peek_error(ErrorCode::ExpectedObjectOrArray))),
             Err(e) => Some(Err(e)),
         }
     }
@@ -1016,9 +1188,10 @@ impl<R, T> Iterator for StreamDeserializer<R, T>
 
 //////////////////////////////////////////////////////////////////////////////
 
-fn from_trait<R, T>(read: R) -> Result<T>
-    where R: Read,
-          T: de::Deserialize,
+fn from_trait<'de, R, T>(read: R) -> Result<T>
+where
+    R: Read<'de>,
+    T: de::Deserialize<'de>,
 {
     let mut de = Deserializer::new(read);
     let value = try!(de::Deserialize::deserialize(&mut de));
@@ -1028,64 +1201,143 @@ fn from_trait<R, T>(read: R) -> Result<T>
     Ok(value)
 }
 
-/// Deserialize an instance of type `T` from an iterator over bytes of JSON.
-///
-/// This conversion can fail if the structure of the Value does not match the
-/// structure expected by `T`, for example if `T` is a struct type but the Value
-/// contains something other than a JSON map. It can also fail if the structure
-/// is correct but `T`'s implementation of `Deserialize` decides that something
-/// is wrong with the data, for example required struct fields are missing from
-/// the JSON map or some number is too big to fit in the expected primitive
-/// type.
-pub fn from_iter<I, T>(iter: I) -> Result<T>
-    where I: Iterator<Item = io::Result<u8>>,
-          T: de::Deserialize,
-{
-    from_trait(read::IteratorRead::new(iter))
-}
-
 /// Deserialize an instance of type `T` from an IO stream of JSON.
 ///
-/// This conversion can fail if the structure of the Value does not match the
-/// structure expected by `T`, for example if `T` is a struct type but the Value
+/// # Errors
+///
+/// This conversion can fail if the structure of the input does not match the
+/// structure expected by `T`, for example if `T` is a struct type but the input
 /// contains something other than a JSON map. It can also fail if the structure
 /// is correct but `T`'s implementation of `Deserialize` decides that something
 /// is wrong with the data, for example required struct fields are missing from
 /// the JSON map or some number is too big to fit in the expected primitive
 /// type.
+///
+/// ```rust
+/// #[macro_use]
+/// extern crate serde_derive;
+///
+/// extern crate serde;
+/// extern crate serde_json;
+///
+/// use std::error::Error;
+/// use std::fs::File;
+/// use std::path::Path;
+///
+/// #[derive(Deserialize, Debug)]
+/// struct User {
+///     fingerprint: String,
+///     location: String,
+/// }
+///
+/// fn read_user_from_file<P: AsRef<Path>>(path: P) -> Result<User, Box<Error>> {
+///     // Open the file in read-only mode.
+///     let file = File::open(path)?;
+///
+///     // Read the JSON contents of the file as an instance of `User`.
+///     let u = serde_json::from_reader(file)?;
+///
+///     // Return the `User`.
+///     Ok(u)
+/// }
+///
+/// fn main() {
+/// # }
+/// # fn fake_main() {
+///     let u = read_user_from_file("test.json").unwrap();
+///     println!("{:#?}", u);
+/// }
+/// ```
 pub fn from_reader<R, T>(rdr: R) -> Result<T>
-    where R: io::Read,
-          T: de::Deserialize,
+where
+    R: io::Read,
+    T: de::DeserializeOwned,
 {
-    from_iter(rdr.bytes())
+    from_trait(read::IoRead::new(rdr))
 }
 
 /// Deserialize an instance of type `T` from bytes of JSON text.
 ///
-/// This conversion can fail if the structure of the Value does not match the
-/// structure expected by `T`, for example if `T` is a struct type but the Value
+/// # Errors
+///
+/// This conversion can fail if the structure of the input does not match the
+/// structure expected by `T`, for example if `T` is a struct type but the input
 /// contains something other than a JSON map. It can also fail if the structure
 /// is correct but `T`'s implementation of `Deserialize` decides that something
 /// is wrong with the data, for example required struct fields are missing from
 /// the JSON map or some number is too big to fit in the expected primitive
 /// type.
-pub fn from_slice<T>(v: &[u8]) -> Result<T>
-    where T: de::Deserialize,
+///
+/// ```rust
+/// #[macro_use]
+/// extern crate serde_derive;
+///
+/// extern crate serde;
+/// extern crate serde_json;
+///
+/// #[derive(Deserialize, Debug)]
+/// struct User {
+///     fingerprint: String,
+///     location: String,
+/// }
+///
+/// fn main() {
+///     // The type of `j` is `&[u8]`
+///     let j = b"{
+///                 \"fingerprint\": \"0xF9BA143B95FF6D82\",
+///                 \"location\": \"Menlo Park, CA\"
+///               }";
+///
+///     let u: User = serde_json::from_slice(j).unwrap();
+///     println!("{:#?}", u);
+/// }
+/// ```
+pub fn from_slice<'a, T>(v: &'a [u8]) -> Result<T>
+where
+    T: de::Deserialize<'a>,
 {
     from_trait(read::SliceRead::new(v))
 }
 
 /// Deserialize an instance of type `T` from a string of JSON text.
 ///
-/// This conversion can fail if the structure of the Value does not match the
-/// structure expected by `T`, for example if `T` is a struct type but the Value
+/// # Errors
+///
+/// This conversion can fail if the structure of the input does not match the
+/// structure expected by `T`, for example if `T` is a struct type but the input
 /// contains something other than a JSON map. It can also fail if the structure
 /// is correct but `T`'s implementation of `Deserialize` decides that something
 /// is wrong with the data, for example required struct fields are missing from
 /// the JSON map or some number is too big to fit in the expected primitive
 /// type.
-pub fn from_str<T>(s: &str) -> Result<T>
-    where T: de::Deserialize,
+///
+/// ```rust
+/// #[macro_use]
+/// extern crate serde_derive;
+///
+/// extern crate serde;
+/// extern crate serde_json;
+///
+/// #[derive(Deserialize, Debug)]
+/// struct User {
+///     fingerprint: String,
+///     location: String,
+/// }
+///
+/// fn main() {
+///     // The type of `j` is `&str`
+///     let j = "{
+///                \"fingerprint\": \"0xF9BA143B95FF6D82\",
+///                \"location\": \"Menlo Park, CA\"
+///              }";
+///
+///     let u: User = serde_json::from_str(j).unwrap();
+///     println!("{:#?}", u);
+/// }
+/// ```
+pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+where
+    T: de::Deserialize<'a>,
 {
     from_trait(read::StrRead::new(s))
 }

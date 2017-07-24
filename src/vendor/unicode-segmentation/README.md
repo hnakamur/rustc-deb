@@ -40,23 +40,5 @@ to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-unicode-segmentation = "1.1.0"
+unicode-segmentation = "0.1.2"
 ```
-
-# Change Log
-
-## 1.1.0
-
-* Add `as_str` methods to the iterator types.
-
-## 1.0.3
-
-* Code cleanup and additional tests.
-
-## 1.0.1
-
-* Fix a bug affecting some grapheme clusters containing Prepend characters.
-
-## 1.0.0
-
-* Upgrade to Unicode 9.0.0.

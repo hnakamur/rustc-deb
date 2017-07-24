@@ -1,4 +1,4 @@
-error: `b` does not live long enough
+error[E0597]: `b` does not live long enough
   --> $DIR/mut-ptr-cant-outlive-ref.rs:19:5
    |
 18 |         p = &*b; //~ ERROR `b` does not live long enough
@@ -8,5 +8,5 @@ error: `b` does not live long enough
 20 | }
    | - borrowed value needs to live until here
 
-error: aborting due to previous error
+error: aborting due to previous error(s)
 

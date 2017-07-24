@@ -204,7 +204,7 @@ use rustc::mir::visit::Visitor as MirVisitor;
 use context::SharedCrateContext;
 use common::{def_ty, instance_ty};
 use monomorphize::{self, Instance};
-use util::nodemap::{FxHashSet, FxHashMap, DefIdMap};
+use rustc::util::nodemap::{FxHashSet, FxHashMap, DefIdMap};
 
 use trans_item::{TransItem, DefPathBasedNames, InstantiationMode};
 
@@ -493,6 +493,8 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
             }
             mir::Rvalue::Cast(mir::CastKind::ClosureFnPointer, ref operand, _) => {
                 let source_ty = operand.ty(self.mir, self.scx.tcx());
+                let source_ty = self.scx.tcx().trans_apply_param_substs(self.param_substs,
+                                                                        &source_ty);
                 match source_ty.sty {
                     ty::TyClosure(def_id, substs) => {
                         let instance = monomorphize::resolve_closure(
@@ -502,7 +504,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                     _ => bug!(),
                 }
             }
-            mir::Rvalue::Box(..) => {
+            mir::Rvalue::NullaryOp(mir::NullOp::Box, _) => {
                 let tcx = self.scx.tcx();
                 let exchange_malloc_fn_def_id = tcx
                     .lang_items
@@ -543,6 +545,8 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                              block: mir::BasicBlock,
                              kind: &mir::TerminatorKind<'tcx>,
                              location: Location) {
+        debug!("visiting terminator {:?} @ {:?}", kind, location);
+
         let tcx = self.scx.tcx();
         match *kind {
             mir::TerminatorKind::Call { ref func, .. } => {
@@ -612,17 +616,7 @@ fn visit_instance_use<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                 output.push(create_fn_trans_item(instance));
             }
         }
-        ty::InstanceDef::DropGlue(_, Some(ty)) => {
-            match ty.sty {
-                ty::TyArray(ety, _) |
-                ty::TySlice(ety)
-                    if is_direct_call =>
-                {
-                    // drop of arrays/slices is translated in-line.
-                    visit_drop_use(scx, ety, false, output);
-                }
-                _ => {}
-            };
+        ty::InstanceDef::DropGlue(_, Some(_)) => {
             output.push(create_fn_trans_item(instance));
         }
         ty::InstanceDef::ClosureOnceShim { .. } |
@@ -652,14 +646,14 @@ fn should_trans_locally<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, instance: &Instan
         }
         Some(_) => true,
         None => {
-            if tcx.sess.cstore.is_exported_symbol(def_id) ||
-                tcx.sess.cstore.is_foreign_item(def_id)
+            if tcx.is_exported_symbol(def_id) ||
+                tcx.is_foreign_item(def_id)
             {
                 // We can link to the item in question, no instance needed
                 // in this crate
                 false
             } else {
-                if !tcx.sess.cstore.is_item_mir_available(def_id) {
+                if !tcx.is_mir_available(def_id) {
                     bug!("Cannot create local trans-item for {:?}", def_id)
                 }
                 true
@@ -880,7 +874,7 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
                 let parent_node_id = hir_map.get_parent_node(ii.id);
                 let is_impl_generic = match hir_map.expect_item(parent_node_id) {
                     &hir::Item {
-                        node: hir::ItemImpl(_, _, ref generics, ..),
+                        node: hir::ItemImpl(_, _, _, ref generics, ..),
                         ..
                     } => {
                         generics.is_type_parameterized()
@@ -912,6 +906,7 @@ fn create_trans_items_for_default_impls<'a, 'tcx>(scx: &SharedCrateContext<'a, '
     match item.node {
         hir::ItemImpl(_,
                       _,
+                      _,
                       ref generics,
                       ..,
                       ref impl_item_refs) => {
@@ -935,14 +930,14 @@ fn create_trans_items_for_default_impls<'a, 'tcx>(scx: &SharedCrateContext<'a, '
                         continue;
                     }
 
-                    if !tcx.item_generics(method.def_id).types.is_empty() {
+                    if !tcx.generics_of(method.def_id).types.is_empty() {
                         continue;
                     }
 
                     let instance =
                         monomorphize::resolve(scx, method.def_id, callee_substs);
 
-                    let predicates = tcx.item_predicates(instance.def_id()).predicates
+                    let predicates = tcx.predicates_of(instance.def_id()).predicates
                         .subst(tcx, instance.substs);
                     if !traits::normalize_and_test_predicates(tcx, predicates) {
                         continue;

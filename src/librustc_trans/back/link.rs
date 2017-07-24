@@ -12,19 +12,17 @@ use super::archive::{ArchiveBuilder, ArchiveConfig};
 use super::linker::Linker;
 use super::rpath::RPathConfig;
 use super::rpath;
-use super::msvc;
-use session::config;
-use session::config::NoDebugInfo;
-use session::config::{OutputFilenames, Input, OutputType};
-use session::filesearch;
-use session::search_paths::PathKind;
-use session::Session;
-use middle::cstore::{self, LinkMeta, NativeLibrary, LibSource};
-use middle::cstore::{LinkagePreference, NativeLibraryKind};
-use middle::dependency_format::Linkage;
+use metadata::METADATA_FILENAME;
+use rustc::session::config::{self, NoDebugInfo, OutputFilenames, Input, OutputType};
+use rustc::session::filesearch;
+use rustc::session::search_paths::PathKind;
+use rustc::session::Session;
+use rustc::middle::cstore::{self, LinkMeta, NativeLibrary, LibSource, LinkagePreference,
+                            NativeLibraryKind};
+use rustc::middle::dependency_format::Linkage;
 use CrateTranslation;
-use util::common::time;
-use util::fs::fix_windows_verbatim_for_gcc;
+use rustc::util::common::time;
+use rustc::util::fs::fix_windows_verbatim_for_gcc;
 use rustc::dep_graph::DepNode;
 use rustc::hir::def_id::CrateNum;
 use rustc::hir::svh::Svh;
@@ -143,18 +141,42 @@ pub fn build_link_meta(incremental_hashes_map: &IncrementalHashesMap) -> LinkMet
     return r;
 }
 
-// The third parameter is for an extra path to add to PATH for MSVC
-// cross linkers for host toolchain DLL dependencies
-pub fn get_linker(sess: &Session) -> (String, Command, Option<PathBuf>) {
+// The third parameter is for env vars, used on windows to set up the
+// path for MSVC to find its DLLs, and gcc to find its bundled
+// toolchain
+pub fn get_linker(sess: &Session) -> (String, Command, Vec<(OsString, OsString)>) {
+    let envs = vec![("PATH".into(), command_path(sess))];
+
     if let Some(ref linker) = sess.opts.cg.linker {
-        (linker.clone(), Command::new(linker), None)
+        (linker.clone(), Command::new(linker), envs)
     } else if sess.target.target.options.is_like_msvc {
-        let (cmd, host) = msvc::link_exe_cmd(sess);
-        ("link.exe".to_string(), cmd, host)
+        let (cmd, envs) = msvc_link_exe_cmd(sess);
+        ("link.exe".to_string(), cmd, envs)
     } else {
-        (sess.target.target.options.linker.clone(),
-         Command::new(&sess.target.target.options.linker), None)
+        let linker = &sess.target.target.options.linker;
+        (linker.clone(), Command::new(&linker), envs)
     }
+}
+
+#[cfg(windows)]
+pub fn msvc_link_exe_cmd(sess: &Session) -> (Command, Vec<(OsString, OsString)>) {
+    use gcc::windows_registry;
+
+    let target = &sess.opts.target_triple;
+    let tool = windows_registry::find_tool(target, "link.exe");
+
+    if let Some(tool) = tool {
+        let envs = tool.env().to_vec();
+        (tool.to_command(), envs)
+    } else {
+        debug!("Failed to locate linker.");
+        (Command::new("link.exe"), vec![])
+    }
+}
+
+#[cfg(not(windows))]
+pub fn msvc_link_exe_cmd(_sess: &Session) -> (Command, Vec<(OsString, OsString)>) {
+    (Command::new("link.exe"), vec![])
 }
 
 pub fn get_ar_prog(sess: &Session) -> String {
@@ -163,7 +185,7 @@ pub fn get_ar_prog(sess: &Session) -> String {
     })
 }
 
-fn command_path(sess: &Session, extra: Option<PathBuf>) -> OsString {
+fn command_path(sess: &Session) -> OsString {
     // The compiler's sysroot often has some bundled tools, so add it to the
     // PATH for the child.
     let mut new_path = sess.host_filesearch(PathKind::All)
@@ -171,7 +193,6 @@ fn command_path(sess: &Session, extra: Option<PathBuf>) -> OsString {
     if let Some(path) = env::var_os("PATH") {
         new_path.extend(env::split_paths(&path));
     }
-    new_path.extend(extra);
     env::join_paths(new_path).unwrap()
 }
 
@@ -432,7 +453,7 @@ fn archive_config<'a>(sess: &'a Session,
         src: input.map(|p| p.to_path_buf()),
         lib_search_paths: archive_search_paths(sess),
         ar_prog: get_ar_prog(sess),
-        command_path: command_path(sess, None),
+        command_path: command_path(sess),
     }
 }
 
@@ -521,7 +542,7 @@ fn link_rlib<'a>(sess: &'a Session,
             // contain the metadata in a separate file. We use a temp directory
             // here so concurrent builds in the same directory don't try to use
             // the same filename for metadata (stomping over one another)
-            let metadata = tmpdir.join(sess.cstore.metadata_filename());
+            let metadata = tmpdir.join(METADATA_FILENAME);
             emit_metadata(sess, trans, &metadata);
             ab.add_file(&metadata);
 
@@ -707,13 +728,18 @@ fn link_natively(sess: &Session,
     let flavor = sess.linker_flavor();
 
     // The invocations of cc share some flags across platforms
-    let (pname, mut cmd, extra) = get_linker(sess);
-    cmd.env("PATH", command_path(sess, extra));
+    let (pname, mut cmd, envs) = get_linker(sess);
+    // This will set PATH on windows
+    cmd.envs(envs);
 
     let root = sess.target_filesearch(PathKind::Native).get_lib_path();
     if let Some(args) = sess.target.target.options.pre_link_args.get(&flavor) {
         cmd.args(args);
     }
+    if let Some(ref args) = sess.opts.debugging_opts.pre_link_args {
+        cmd.args(args);
+    }
+    cmd.args(&sess.opts.debugging_opts.pre_link_arg);
 
     let pre_link_objects = if crate_type == config::CrateTypeExecutable {
         &sess.target.target.options.pre_link_objects_exe
@@ -1122,14 +1148,26 @@ fn add_upstream_rust_crates(cmd: &mut Linker,
                               cnum: CrateNum) {
         let src = sess.cstore.used_crate_source(cnum);
         let cratepath = &src.rlib.unwrap().0;
+
+        if sess.target.target.options.is_like_osx {
+            // On Apple platforms, the sanitizer is always built as a dylib, and
+            // LLVM will link to `@rpath/*.dylib`, so we need to specify an
+            // rpath to the library as well (the rpath should be absolute, see
+            // PR #41352 for details).
+            //
+            // FIXME: Remove this logic into librustc_*san once Cargo supports it
+            let rpath = cratepath.parent().unwrap();
+            let rpath = rpath.to_str().expect("non-utf8 component in path");
+            cmd.args(&["-Wl,-rpath".into(), "-Xlinker".into(), rpath.into()]);
+        }
+
         let dst = tmpdir.join(cratepath.file_name().unwrap());
         let cfg = archive_config(sess, &dst, Some(cratepath));
         let mut archive = ArchiveBuilder::new(cfg);
         archive.update_symbols();
 
         for f in archive.src_files() {
-            if f.ends_with("bytecode.deflate") ||
-                f == sess.cstore.metadata_filename() {
+            if f.ends_with("bytecode.deflate") || f == METADATA_FILENAME {
                     archive.remove_file(&f);
                     continue
                 }
@@ -1204,8 +1242,7 @@ fn add_upstream_rust_crates(cmd: &mut Linker,
 
             let mut any_objects = false;
             for f in archive.src_files() {
-                if f.ends_with("bytecode.deflate") ||
-                   f == sess.cstore.metadata_filename() {
+                if f.ends_with("bytecode.deflate") || f == METADATA_FILENAME {
                     archive.remove_file(&f);
                     continue
                 }

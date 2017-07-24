@@ -8,11 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(closure_to_fn_coercion)]
-
 fn main() {
-    let bar: fn(&mut u32) = |_| {}; //~ ERROR mismatched types
-    //~| expected concrete lifetime, found bound lifetime parameter
+    let bar: fn(&mut u32) = |_| {};
 
     fn foo(x: Box<Fn(&i32)>) {}
     let bar = Box::new(|x: &i32| {}) as Box<Fn(_)>;

@@ -13,7 +13,7 @@ use self::MapEntry::*;
 use self::collector::NodeCollector;
 pub use self::def_collector::{DefCollector, MacroInvocationData};
 pub use self::definitions::{Definitions, DefKey, DefPath, DefPathData,
-                            DisambiguatedDefPathData};
+                            DisambiguatedDefPathData, DefPathHash};
 
 use dep_graph::{DepGraph, DepNode};
 
@@ -442,25 +442,34 @@ impl<'hir> Map<'hir> {
         self.local_def_id(self.body_owner(id))
     }
 
-    /// Given a body owner's id, returns the `BodyId` associated with it.
-    pub fn body_owned_by(&self, id: NodeId) -> BodyId {
+    /// Given a node id, returns the `BodyId` associated with it,
+    /// if the node is a body owner, otherwise returns `None`.
+    pub fn maybe_body_owned_by(&self, id: NodeId) -> Option<BodyId> {
         if let Some(entry) = self.find_entry(id) {
             if let Some(body_id) = entry.associated_body() {
                 // For item-like things and closures, the associated
                 // body has its own distinct id, and that is returned
                 // by `associated_body`.
-                body_id
+                Some(body_id)
             } else {
                 // For some expressions, the expression is its own body.
                 if let EntryExpr(_, expr) = entry {
-                    BodyId { node_id: expr.id }
+                    Some(BodyId { node_id: expr.id })
                 } else {
-                    span_bug!(self.span(id), "id `{}` has no associated body", id);
+                    None
                 }
             }
         } else {
             bug!("no entry for id `{}`", id)
         }
+    }
+
+    /// Given a body owner's id, returns the `BodyId` associated with it.
+    pub fn body_owned_by(&self, id: NodeId) -> BodyId {
+        self.maybe_body_owned_by(id).unwrap_or_else(|| {
+            span_bug!(self.span(id), "body_owned_by: {} has no associated body",
+                      self.node_to_string(id));
+        })
     }
 
     pub fn ty_param_owner(&self, id: NodeId) -> NodeId {
@@ -488,7 +497,7 @@ impl<'hir> Map<'hir> {
     }
 
     pub fn trait_impls(&self, trait_did: DefId) -> &'hir [NodeId] {
-        self.dep_graph.read(DepNode::TraitImpls(trait_did));
+        self.dep_graph.read(DepNode::AllLocalTraitImpls);
 
         // NB: intentionally bypass `self.forest.krate()` so that we
         // do not trigger a read of the whole krate here
@@ -496,7 +505,7 @@ impl<'hir> Map<'hir> {
     }
 
     pub fn trait_default_impl(&self, trait_did: DefId) -> Option<NodeId> {
-        self.dep_graph.read(DepNode::TraitImpls(trait_did));
+        self.dep_graph.read(DepNode::AllLocalTraitImpls);
 
         // NB: intentionally bypass `self.forest.krate()` so that we
         // do not trigger a read of the whole krate here
@@ -628,14 +637,15 @@ impl<'hir> Map<'hir> {
 
     /// Returns the NodeId of `id`'s nearest module parent, or `id` itself if no
     /// module parent is in this map.
-    pub fn get_module_parent(&self, id: NodeId) -> NodeId {
-        match self.walk_parent_nodes(id, |node| match *node {
+    pub fn get_module_parent(&self, id: NodeId) -> DefId {
+        let id = match self.walk_parent_nodes(id, |node| match *node {
             NodeItem(&Item { node: Item_::ItemMod(_), .. }) => true,
             _ => false,
         }) {
             Ok(id) => id,
             Err(id) => id,
-        }
+        };
+        self.local_def_id(id)
     }
 
     /// Returns the nearest enclosing scope. A scope is an item or block.

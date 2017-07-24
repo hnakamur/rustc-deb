@@ -1,4 +1,4 @@
-error: `container` does not live long enough
+error[E0597]: `container` does not live long enough
   --> $DIR/issue-25199.rs:83:1
    |
 80 |     let test = Test{test: &container};
@@ -9,7 +9,7 @@ error: `container` does not live long enough
    |
    = note: values in a scope are dropped in the opposite order they are created
 
-error: `container` does not live long enough
+error[E0597]: `container` does not live long enough
   --> $DIR/issue-25199.rs:83:1
    |
 82 |     container.store(test);
@@ -19,5 +19,5 @@ error: `container` does not live long enough
    |
    = note: values in a scope are dropped in the opposite order they are created
 
-error: aborting due to 2 previous errors
+error: aborting due to previous error(s)
 

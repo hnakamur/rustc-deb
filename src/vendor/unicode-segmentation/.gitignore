@@ -2,4 +2,3 @@ target
 Cargo.lock
 scripts/tmp
 *.pyc
-*.txt

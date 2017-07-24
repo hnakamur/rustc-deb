@@ -319,7 +319,10 @@ pub fn from_utf8_mut(v: &mut [u8]) -> Result<&mut str, Utf8Error> {
 ///
 /// The data must be valid UTF-8
 ///
-/// `p` must be non-null, even for zero-length str.
+/// `p` must be non-null, even for zero-length strs, because non-zero bits
+/// are required to distinguish between a zero-length str within `Some()`
+/// from `None`. `p` can be a bogus non-dereferencable pointer, such as `0x1`,
+/// for zero-length strs, though.
 ///
 /// # Caveat
 ///
@@ -1594,7 +1597,7 @@ mod traits {
     /// byte offset of a character (as defined by `is_char_boundary`).
     /// Requires that `begin <= end` and `end <= len` where `len` is the
     /// length of the string.
-    #[stable(feature = "derefmut_for_string", since = "1.2.0")]
+    #[stable(feature = "derefmut_for_string", since = "1.3.0")]
     impl ops::IndexMut<ops::Range<usize>> for str {
         #[inline]
         fn index_mut(&mut self, index: ops::Range<usize>) -> &mut str {
@@ -1629,7 +1632,7 @@ mod traits {
     /// `end`.
     ///
     /// Equivalent to `&mut self[0 .. end]`.
-    #[stable(feature = "derefmut_for_string", since = "1.2.0")]
+    #[stable(feature = "derefmut_for_string", since = "1.3.0")]
     impl ops::IndexMut<ops::RangeTo<usize>> for str {
         #[inline]
         fn index_mut(&mut self, index: ops::RangeTo<usize>) -> &mut str {
@@ -1669,7 +1672,7 @@ mod traits {
     /// to the end of the string.
     ///
     /// Equivalent to `&mut self[begin .. len]`.
-    #[stable(feature = "derefmut_for_string", since = "1.2.0")]
+    #[stable(feature = "derefmut_for_string", since = "1.3.0")]
     impl ops::IndexMut<ops::RangeFrom<usize>> for str {
         #[inline]
         fn index_mut(&mut self, index: ops::RangeFrom<usize>) -> &mut str {
@@ -1705,7 +1708,7 @@ mod traits {
     /// never panic.
     ///
     /// Equivalent to `&mut self[0 .. len]`.
-    #[stable(feature = "derefmut_for_string", since = "1.2.0")]
+    #[stable(feature = "derefmut_for_string", since = "1.3.0")]
     impl ops::IndexMut<ops::RangeFull> for str {
         #[inline]
         fn index_mut(&mut self, _index: ops::RangeFull) -> &mut str {
@@ -1721,15 +1724,12 @@ mod traits {
 
         #[inline]
         fn index(&self, index: ops::RangeInclusive<usize>) -> &str {
-            match index {
-                ops::RangeInclusive::Empty { .. } => "",
-                ops::RangeInclusive::NonEmpty { end, .. } if end == usize::max_value() =>
-                    panic!("attempted to index slice up to maximum usize"),
-                ops::RangeInclusive::NonEmpty { start, end } =>
-                    self.index(start .. end+1)
-            }
+            assert!(index.end != usize::max_value(),
+                "attempted to index str up to maximum usize");
+            self.index(index.start .. index.end+1)
         }
     }
+
     #[unstable(feature = "inclusive_range",
                reason = "recently added, follows RFC",
                issue = "28237")]
@@ -1738,7 +1738,9 @@ mod traits {
 
         #[inline]
         fn index(&self, index: ops::RangeToInclusive<usize>) -> &str {
-            self.index(0...index.end)
+            assert!(index.end != usize::max_value(),
+                "attempted to index str up to maximum usize");
+            self.index(.. index.end+1)
         }
     }
 
@@ -1748,13 +1750,9 @@ mod traits {
     impl ops::IndexMut<ops::RangeInclusive<usize>> for str {
         #[inline]
         fn index_mut(&mut self, index: ops::RangeInclusive<usize>) -> &mut str {
-            match index {
-                ops::RangeInclusive::Empty { .. } => &mut self[0..0], // `&mut ""` doesn't work
-                ops::RangeInclusive::NonEmpty { end, .. } if end == usize::max_value() =>
-                    panic!("attempted to index str up to maximum usize"),
-                    ops::RangeInclusive::NonEmpty { start, end } =>
-                        self.index_mut(start .. end+1)
-            }
+            assert!(index.end != usize::max_value(),
+                "attempted to index str up to maximum usize");
+            self.index_mut(index.start .. index.end+1)
         }
     }
     #[unstable(feature = "inclusive_range",
@@ -1763,7 +1761,9 @@ mod traits {
     impl ops::IndexMut<ops::RangeToInclusive<usize>> for str {
         #[inline]
         fn index_mut(&mut self, index: ops::RangeToInclusive<usize>) -> &mut str {
-            self.index_mut(0...index.end)
+            assert!(index.end != usize::max_value(),
+                "attempted to index str up to maximum usize");
+            self.index_mut(.. index.end+1)
         }
     }
 
@@ -1945,45 +1945,27 @@ mod traits {
         type Output = str;
         #[inline]
         fn get(self, slice: &str) -> Option<&Self::Output> {
-            match self {
-                ops::RangeInclusive::Empty { .. } => 0..0,
-                ops::RangeInclusive::NonEmpty { start, end } => start..end+1,
-            }.get(slice)
+            (self.start..self.end+1).get(slice)
         }
         #[inline]
         fn get_mut(self, slice: &mut str) -> Option<&mut Self::Output> {
-            match self {
-                ops::RangeInclusive::Empty { .. } => 0..0,
-                ops::RangeInclusive::NonEmpty { start, end } => start..end+1,
-            }.get_mut(slice)
+            (self.start..self.end+1).get_mut(slice)
         }
         #[inline]
         unsafe fn get_unchecked(self, slice: &str) -> &Self::Output {
-            match self {
-                ops::RangeInclusive::Empty { .. } => 0..0,
-                ops::RangeInclusive::NonEmpty { start, end } => start..end+1,
-            }.get_unchecked(slice)
+            (self.start..self.end+1).get_unchecked(slice)
         }
         #[inline]
         unsafe fn get_unchecked_mut(self, slice: &mut str) -> &mut Self::Output {
-            match self {
-                ops::RangeInclusive::Empty { .. } => 0..0,
-                ops::RangeInclusive::NonEmpty { start, end } => start..end+1,
-            }.get_unchecked_mut(slice)
+            (self.start..self.end+1).get_unchecked_mut(slice)
         }
         #[inline]
         fn index(self, slice: &str) -> &Self::Output {
-            match self {
-                ops::RangeInclusive::Empty { .. } => 0..0,
-                ops::RangeInclusive::NonEmpty { start, end } => start..end+1,
-            }.index(slice)
+            (self.start..self.end+1).index(slice)
         }
         #[inline]
         fn index_mut(self, slice: &mut str) -> &mut Self::Output {
-            match self {
-                ops::RangeInclusive::Empty { .. } => 0..0,
-                ops::RangeInclusive::NonEmpty { start, end } => start..end+1,
-            }.index_mut(slice)
+            (self.start..self.end+1).index_mut(slice)
         }
     }
 

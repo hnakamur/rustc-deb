@@ -106,7 +106,9 @@ When `foo()` is called, a new stack frame is allocated:
 | 0       | x    | 42    |
 
 Because `0` was taken by the first frame, `1` and `2` are used for `foo()`’s
-stack frame. It grows upward, the more functions we call.
+stack frame. It grows upward, the more functions we call. Notice that we are **not**
+taking into account the size of each variable (for example, a 32 bit variable would
+use the memory addresses from 0 to 3, or 4 bytes).
 
 
 There are some important things we have to take note of here. The numbers 0, 1,
@@ -238,7 +240,7 @@ like this:
 | 1                    | y    | 42                     |
 | 0                    | x    | → (2<sup>30</sup>) - 1 |
 
-We have (2<sup>30</sup>) - 1 addresses in our hypothetical computer with 1GB of RAM. And since
+We have (2<sup>30</sup>) addresses in our hypothetical computer with 1GB of RAM. And since
 our stack grows from zero, the easiest place to allocate memory is from the
 other end. So our first value is at the highest place in memory. And the value
 of the struct at `x` has a [raw pointer][rawpointer] to the place we’ve

@@ -393,7 +393,12 @@ impl<T> [T] {
     }
 
     /// Returns a reference to an element or subslice, without doing bounds
-    /// checking. So use it very carefully!
+    /// checking.
+    ///
+    /// This is generally not recommended, use with caution! For a safe
+    /// alternative see [`get`].
+    ///
+    /// [`get`]: #method.get
     ///
     /// # Examples
     ///
@@ -413,7 +418,12 @@ impl<T> [T] {
     }
 
     /// Returns a mutable reference to an element or subslice, without doing
-    /// bounds checking. So use it very carefully!
+    /// bounds checking.
+    ///
+    /// This is generally not recommended, use with caution! For a safe
+    /// alternative see [`get_mut`].
+    ///
+    /// [`get_mut`]: #method.get_mut
     ///
     /// # Examples
     ///
@@ -1337,9 +1347,67 @@ impl<T> [T] {
         core_slice::SliceExt::sort_unstable_by_key(self, f);
     }
 
+    /// Permutes the slice in-place such that `self[mid..]` moves to the
+    /// beginning of the slice while `self[..mid]` moves to the end of the
+    /// slice.  Equivalently, rotates the slice `mid` places to the left
+    /// or `k = self.len() - mid` places to the right.
+    ///
+    /// This is a "k-rotation", a permutation in which item `i` moves to
+    /// position `i + k`, modulo the length of the slice.  See _Elements
+    /// of Programming_ [§10.4][eop].
+    ///
+    /// Rotation by `mid` and rotation by `k` are inverse operations.
+    ///
+    /// [eop]: https://books.google.com/books?id=CO9ULZGINlsC&pg=PA178&q=k-rotation
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if `mid` is greater than the length of the
+    /// slice.  (Note that `mid == self.len()` does _not_ panic; it's a nop
+    /// rotation with `k == 0`, the inverse of a rotation with `mid == 0`.)
+    ///
+    /// # Complexity
+    ///
+    /// Takes linear (in `self.len()`) time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(slice_rotate)]
+    ///
+    /// let mut a = [1, 2, 3, 4, 5, 6, 7];
+    /// let mid = 2;
+    /// a.rotate(mid);
+    /// assert_eq!(&a, &[3, 4, 5, 6, 7, 1, 2]);
+    /// let k = a.len() - mid;
+    /// a.rotate(k);
+    /// assert_eq!(&a, &[1, 2, 3, 4, 5, 6, 7]);
+    ///
+    /// use std::ops::Range;
+    /// fn slide<T>(slice: &mut [T], range: Range<usize>, to: usize) {
+    ///     if to < range.start {
+    ///         slice[to..range.end].rotate(range.start-to);
+    ///     } else if to > range.end {
+    ///         slice[range.start..to].rotate(range.end-range.start);
+    ///     }
+    /// }
+    /// let mut v: Vec<_> = (0..10).collect();
+    /// slide(&mut v, 1..4, 7);
+    /// assert_eq!(&v, &[0, 4, 5, 6, 1, 2, 3, 7, 8, 9]);
+    /// slide(&mut v, 6..8, 1);
+    /// assert_eq!(&v, &[0, 3, 7, 4, 5, 6, 1, 2, 8, 9]);
+    /// ```
+    #[unstable(feature = "slice_rotate", issue = "41891")]
+    pub fn rotate(&mut self, mid: usize) {
+        core_slice::SliceExt::rotate(self, mid);
+    }
+
     /// Copies the elements from `src` into `self`.
     ///
     /// The length of `src` must be the same as `self`.
+    ///
+    /// If `src` implements `Copy`, it can be more performant to use
+    /// [`copy_from_slice`].
     ///
     /// # Panics
     ///
@@ -1354,6 +1422,8 @@ impl<T> [T] {
     /// dst.clone_from_slice(&src);
     /// assert!(dst == [1, 2, 3]);
     /// ```
+    ///
+    /// [`copy_from_slice`]: #method.copy_from_slice
     #[stable(feature = "clone_from_slice", since = "1.7.0")]
     pub fn clone_from_slice(&mut self, src: &[T]) where T: Clone {
         core_slice::SliceExt::clone_from_slice(self, src)
@@ -1362,6 +1432,8 @@ impl<T> [T] {
     /// Copies all elements from `src` into `self`, using a memcpy.
     ///
     /// The length of `src` must be the same as `self`.
+    ///
+    /// If `src` does not implement `Copy`, use [`clone_from_slice`].
     ///
     /// # Panics
     ///
@@ -1376,6 +1448,8 @@ impl<T> [T] {
     /// dst.copy_from_slice(&src);
     /// assert_eq!(src, dst);
     /// ```
+    ///
+    /// [`clone_from_slice`]: #method.clone_from_slice
     #[stable(feature = "copy_from_slice", since = "1.9.0")]
     pub fn copy_from_slice(&mut self, src: &[T]) where T: Copy {
         core_slice::SliceExt::copy_from_slice(self, src)
@@ -1400,6 +1474,9 @@ impl<T> [T] {
     }
 
     /// Converts `self` into a vector without clones or allocation.
+    ///
+    /// The resulting vector can be converted back into a box via
+    /// `Vec<T>`'s `into_boxed_slice` method.
     ///
     /// # Examples
     ///
@@ -1438,6 +1515,7 @@ pub trait SliceConcatExt<T: ?Sized> {
     ///
     /// ```
     /// assert_eq!(["hello", "world"].concat(), "helloworld");
+    /// assert_eq!([[1, 2], [3, 4]].concat(), [1, 2, 3, 4]);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     fn concat(&self) -> Self::Output;
@@ -1449,6 +1527,7 @@ pub trait SliceConcatExt<T: ?Sized> {
     ///
     /// ```
     /// assert_eq!(["hello", "world"].join(" "), "hello world");
+    /// assert_eq!([[1, 2], [3, 4]].join(&0), [1, 2, 0, 3, 4]);
     /// ```
     #[stable(feature = "rename_connect_to_join", since = "1.3.0")]
     fn join(&self, sep: &T) -> Self::Output;
@@ -1519,13 +1598,9 @@ impl<T: Clone> ToOwned for [T] {
         self.to_vec()
     }
 
-    // HACK(japaric): with cfg(test) the inherent `[T]::to_vec`, which is required for this method
-    // definition, is not available. Since we don't require this method for testing purposes, I'll
-    // just stub it
-    // NB see the slice::hack module in slice.rs for more information
     #[cfg(test)]
     fn to_owned(&self) -> Vec<T> {
-        panic!("not available with cfg(test)")
+        hack::to_vec(self)
     }
 
     fn clone_into(&self, target: &mut Vec<T>) {

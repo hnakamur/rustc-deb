@@ -5,8 +5,18 @@ use ansi_term::ANSIString;
 use ansi_term::Colour::{Green, Red, Yellow};
 
 #[cfg(feature = "color")]
-use atty;
+use libc;
 use std::fmt;
+
+#[cfg(all(feature = "color", not(target_os = "windows")))]
+const STDERR: i32 = libc::STDERR_FILENO;
+#[cfg(all(feature = "color", not(target_os = "windows")))]
+const STDOUT: i32 = libc::STDOUT_FILENO;
+
+#[cfg(target_os = "windows")]
+const STDERR: i32 = 0;
+#[cfg(target_os = "windows")]
+const STDOUT: i32 = 0;
 
 #[doc(hidden)]
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -18,18 +28,15 @@ pub enum ColorWhen {
 
 #[cfg(feature = "color")]
 pub fn is_a_tty(stderr: bool) -> bool {
-    debugln!("is_a_tty: stderr={:?}", stderr);
-    let stream = if stderr {
-        atty::Stream::Stderr
-    } else {
-        atty::Stream::Stdout
-    };
-    atty::is(stream)
+    debugln!("fn=is_a_tty;");
+    debugln!("Use stderr...{:?}", stderr);
+    let fd = if stderr { STDERR } else { STDOUT };
+    unsafe { libc::isatty(fd) != 0 }
 }
 
 #[cfg(not(feature = "color"))]
 pub fn is_a_tty(_: bool) -> bool {
-    debugln!("is_a_tty;");
+    debugln!("fn=is_a_tty;");
     false
 }
 
@@ -57,28 +64,28 @@ impl Colorizer {
     pub fn good<T>(&self, msg: T) -> Format<T>
         where T: fmt::Display + AsRef<str>
     {
-        debugln!("Colorizer::good;");
+        debugln!("fn=good;");
         color!(self, Good, msg)
     }
 
     pub fn warning<T>(&self, msg: T) -> Format<T>
         where T: fmt::Display + AsRef<str>
     {
-        debugln!("Colorizer::warning;");
+        debugln!("fn=warning;");
         color!(self, Warning, msg)
     }
 
     pub fn error<T>(&self, msg: T) -> Format<T>
         where T: fmt::Display + AsRef<str>
     {
-        debugln!("Colorizer::error;");
+        debugln!("fn=error;");
         color!(self, Error, msg)
     }
 
     pub fn none<T>(&self, msg: T) -> Format<T>
         where T: fmt::Display + AsRef<str>
     {
-        debugln!("Colorizer::none;");
+        debugln!("fn=none;");
         Format::None(msg)
     }
 }

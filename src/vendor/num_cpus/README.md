@@ -1,14 +1,16 @@
 # num_cpus
 
-A replacement for the deprecated `std::os::num_cpus`.
+[![crates.io](http://meritbadge.herokuapp.com/num_cpus)](https://crates.io/crates/num_cpus)
+
+Count the number of CPUs on the current machine.
 
 ## Usage
 
 Add to Cargo.toml:
 
-```
+```toml
 [dependencies]
-num_cpus = "0.2"
+num_cpus = "1.0"
 ```
 
 In your `main.rs` or `lib.rs`:

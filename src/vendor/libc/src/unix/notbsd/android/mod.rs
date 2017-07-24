@@ -464,7 +464,6 @@ pub const TCSBRKP: ::c_int = 0x5425;
 pub const TCSANOW: ::c_int = 0;
 pub const TCSADRAIN: ::c_int = 0x1;
 pub const TCSAFLUSH: ::c_int = 0x2;
-pub const IUTF8: ::tcflag_t = 0x00004000;
 pub const VEOF: usize = 4;
 pub const VEOL: usize = 11;
 pub const VEOL2: usize = 16;
@@ -585,6 +584,7 @@ pub const MCL_CURRENT: ::c_int = 0x0001;
 pub const MCL_FUTURE: ::c_int = 0x0002;
 
 pub const SIGSTKSZ: ::size_t = 8192;
+pub const MINSIGSTKSZ: ::size_t = 2048;
 pub const CBAUD: ::tcflag_t = 0o0010017;
 pub const TAB1: ::c_int = 0x00000800;
 pub const TAB2: ::c_int = 0x00001000;

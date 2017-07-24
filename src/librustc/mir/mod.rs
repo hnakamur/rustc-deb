@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! MIR datatypes and passes. See [the README](README.md) for details.
+
 use graphviz::IntoCow;
 use middle::const_val::ConstVal;
 use rustc_const_math::{ConstUsize, ConstInt, ConstMathErr};
@@ -1015,7 +1017,7 @@ impl<'tcx> Operand<'tcx> {
     ) -> Self {
         Operand::Constant(box Constant {
             span: span,
-            ty: tcx.item_type(def_id).subst(tcx, substs),
+            ty: tcx.type_of(def_id).subst(tcx, substs),
             literal: Literal::Value { value: ConstVal::Function(def_id, substs) },
         })
     }
@@ -1034,7 +1036,7 @@ pub enum Rvalue<'tcx> {
     Repeat(Operand<'tcx>, ConstUsize),
 
     /// &x or &mut x
-    Ref(&'tcx Region, BorrowKind, Lvalue<'tcx>),
+    Ref(Region<'tcx>, BorrowKind, Lvalue<'tcx>),
 
     /// length of a [X] or [X;n] value
     Len(Lvalue<'tcx>),
@@ -1044,6 +1046,7 @@ pub enum Rvalue<'tcx> {
     BinaryOp(BinOp, Operand<'tcx>, Operand<'tcx>),
     CheckedBinaryOp(BinOp, Operand<'tcx>, Operand<'tcx>),
 
+    NullaryOp(NullOp, Ty<'tcx>),
     UnaryOp(UnOp, Operand<'tcx>),
 
     /// Read the discriminant of an ADT.
@@ -1051,9 +1054,6 @@ pub enum Rvalue<'tcx> {
     /// Undefined (i.e. no effort is made to make it defined, but there’s no reason why it cannot
     /// be defined to return, say, a 0) if ADT is not an enum.
     Discriminant(Lvalue<'tcx>),
-
-    /// Creates an *uninitialized* Box
-    Box(Ty<'tcx>),
 
     /// Create an aggregate value, like a tuple or struct.  This is
     /// only needed because we want to distinguish `dest = Foo { x:
@@ -1130,6 +1130,8 @@ pub enum BinOp {
     Ge,
     /// The `>` operator (greater than)
     Gt,
+    /// The `ptr.offset` operator
+    Offset,
 }
 
 impl BinOp {
@@ -1140,6 +1142,14 @@ impl BinOp {
             _ => false
         }
     }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+pub enum NullOp {
+    /// Return the size of a value of that type
+    SizeOf,
+    /// Create a new uninitialized box for a value of that type
+    Box,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, RustcEncodable, RustcDecodable)]
@@ -1165,7 +1175,7 @@ impl<'tcx> Debug for Rvalue<'tcx> {
             }
             UnaryOp(ref op, ref a) => write!(fmt, "{:?}({:?})", op, a),
             Discriminant(ref lval) => write!(fmt, "discriminant({:?})", lval),
-            Box(ref t) => write!(fmt, "Box({:?})", t),
+            NullaryOp(ref op, ref t) => write!(fmt, "{:?}({:?})", op, t),
             Ref(_, borrow_kind, ref lv) => {
                 let kind_str = match borrow_kind {
                     BorrowKind::Shared => "",
@@ -1599,7 +1609,7 @@ impl<'tcx> TypeFoldable<'tcx> for Rvalue<'tcx> {
                 CheckedBinaryOp(op, rhs.fold_with(folder), lhs.fold_with(folder)),
             UnaryOp(op, ref val) => UnaryOp(op, val.fold_with(folder)),
             Discriminant(ref lval) => Discriminant(lval.fold_with(folder)),
-            Box(ty) => Box(ty.fold_with(folder)),
+            NullaryOp(op, ty) => NullaryOp(op, ty.fold_with(folder)),
             Aggregate(ref kind, ref fields) => {
                 let kind = box match **kind {
                     AggregateKind::Array(ty) => AggregateKind::Array(ty.fold_with(folder)),
@@ -1627,7 +1637,7 @@ impl<'tcx> TypeFoldable<'tcx> for Rvalue<'tcx> {
                 rhs.visit_with(visitor) || lhs.visit_with(visitor),
             UnaryOp(_, ref val) => val.visit_with(visitor),
             Discriminant(ref lval) => lval.visit_with(visitor),
-            Box(ty) => ty.visit_with(visitor),
+            NullaryOp(_, ty) => ty.visit_with(visitor),
             Aggregate(ref kind, ref fields) => {
                 (match **kind {
                     AggregateKind::Array(ty) => ty.visit_with(visitor),

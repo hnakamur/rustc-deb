@@ -96,6 +96,7 @@ impl<'combine, 'infcx, 'gcx, 'tcx> TypeRelation<'infcx, 'gcx, 'tcx>
                 self.fields.obligations.push(
                     Obligation::new(
                         self.fields.trace.cause.clone(),
+                        self.fields.param_env,
                         ty::Predicate::Subtype(
                             ty::Binder(ty::SubtypePredicate {
                                 a_is_expected: self.a_is_expected,
@@ -127,8 +128,8 @@ impl<'combine, 'infcx, 'gcx, 'tcx> TypeRelation<'infcx, 'gcx, 'tcx>
         }
     }
 
-    fn regions(&mut self, a: &'tcx ty::Region, b: &'tcx ty::Region)
-               -> RelateResult<'tcx, &'tcx ty::Region> {
+    fn regions(&mut self, a: ty::Region<'tcx>, b: ty::Region<'tcx>)
+               -> RelateResult<'tcx, ty::Region<'tcx>> {
         debug!("{}.regions({:?}, {:?}) self.cause={:?}",
                self.tag(), a, b, self.fields.cause);
 

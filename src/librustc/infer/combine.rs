@@ -55,6 +55,7 @@ pub struct CombineFields<'infcx, 'gcx: 'infcx+'tcx, 'tcx: 'infcx> {
     pub infcx: &'infcx InferCtxt<'infcx, 'gcx, 'tcx>,
     pub trace: TypeTrace<'tcx>,
     pub cause: Option<ty::relate::Cause>,
+    pub param_env: ty::ParamEnv<'tcx>,
     pub obligations: PredicateObligations<'tcx>,
 }
 
@@ -215,6 +216,7 @@ impl<'infcx, 'gcx, 'tcx> CombineFields<'infcx, 'gcx, 'tcx> {
 
         if needs_wf {
             self.obligations.push(Obligation::new(self.trace.cause.clone(),
+                                                  self.param_env,
                                                   ty::Predicate::WellFormed(b_ty)));
         }
 
@@ -350,14 +352,8 @@ impl<'cx, 'gcx, 'tcx> TypeRelation<'cx, 'gcx, 'tcx> for Generalizer<'cx, 'gcx, '
             // (e.g. #41849).
             relate::relate_substs(self, None, a_subst, b_subst)
         } else {
-            let variances;
-            let opt_variances = if self.tcx().variance_computed.get() {
-                variances = self.tcx().item_variances(item_def_id);
-                Some(&*variances)
-            } else {
-                None
-            };
-            relate::relate_substs(self, opt_variances, a_subst, b_subst)
+            let opt_variances = self.tcx().variances_of(item_def_id);
+            relate::relate_substs(self, Some(&opt_variances), a_subst, b_subst)
         }
     }
 
@@ -436,8 +432,8 @@ impl<'cx, 'gcx, 'tcx> TypeRelation<'cx, 'gcx, 'tcx> for Generalizer<'cx, 'gcx, '
         }
     }
 
-    fn regions(&mut self, r: &'tcx ty::Region, r2: &'tcx ty::Region)
-               -> RelateResult<'tcx, &'tcx ty::Region> {
+    fn regions(&mut self, r: ty::Region<'tcx>, r2: ty::Region<'tcx>)
+               -> RelateResult<'tcx, ty::Region<'tcx>> {
         assert_eq!(r, r2); // we are abusing TypeRelation here; both LHS and RHS ought to be ==
 
         match *r {
@@ -446,15 +442,6 @@ impl<'cx, 'gcx, 'tcx> TypeRelation<'cx, 'gcx, 'tcx> for Generalizer<'cx, 'gcx, '
             ty::ReLateBound(..) |
             ty::ReErased => {
                 return Ok(r);
-            }
-
-            // Early-bound regions should really have been substituted away before
-            // we get to this point.
-            ty::ReEarlyBound(..) => {
-                span_bug!(
-                    self.span,
-                    "Encountered early bound region when generalizing: {:?}",
-                    r);
             }
 
             // Always make a fresh region variable for skolemized regions;
@@ -467,6 +454,7 @@ impl<'cx, 'gcx, 'tcx> TypeRelation<'cx, 'gcx, 'tcx> for Generalizer<'cx, 'gcx, '
             ty::ReStatic |
             ty::ReScope(..) |
             ty::ReVar(..) |
+            ty::ReEarlyBound(..) |
             ty::ReFree(..) => {
                 match self.ambient_variance {
                     ty::Invariant => return Ok(r),

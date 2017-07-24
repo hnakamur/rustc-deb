@@ -329,9 +329,11 @@ impl_stable_hash_for!(enum hir::QPath {
 
 impl_stable_hash_for!(struct hir::MacroDef {
     name,
+    vis,
     attrs,
     id,
     span,
+    legacy,
     body
 });
 
@@ -488,7 +490,8 @@ impl_stable_hash_for!(struct hir::Local {
     init,
     id,
     span,
-    attrs
+    attrs,
+    source
 });
 
 impl_stable_hash_for_spanned!(hir::Decl_);
@@ -636,6 +639,11 @@ impl_stable_hash_for!(enum hir::Expr_ {
     ExprInlineAsm(asm, inputs, outputs),
     ExprStruct(path, fields, base),
     ExprRepeat(val, times)
+});
+
+impl_stable_hash_for!(enum hir::LocalSource {
+    Normal,
+    ForLoopDesugar
 });
 
 impl_stable_hash_for!(enum hir::LoopSource {
@@ -933,7 +941,7 @@ impl_stable_hash_for!(enum hir::Item_ {
     ItemUnion(variant_data, generics),
     ItemTrait(unsafety, generics, bounds, item_refs),
     ItemDefaultImpl(unsafety, trait_ref),
-    ItemImpl(unsafety, impl_polarity, generics, trait_ref, ty, impl_item_refs)
+    ItemImpl(unsafety, impl_polarity, impl_defaultness, generics, trait_ref, ty, impl_item_refs)
 });
 
 impl_stable_hash_for!(struct hir::TraitItemRef {
@@ -1116,7 +1124,15 @@ impl<'a, 'tcx> HashStable<StableHashingContext<'a, 'tcx>> for hir::def_id::DefIn
 }
 
 impl_stable_hash_for!(struct hir::def::Export {
-    name,
+    ident,
     def,
     span
 });
+
+impl<'a, 'tcx> HashStable<StableHashingContext<'a, 'tcx>> for ::middle::lang_items::LangItem {
+    fn hash_stable<W: StableHasherResult>(&self,
+                                          _: &mut StableHashingContext<'a, 'tcx>,
+                                          hasher: &mut StableHasher<W>) {
+        ::std::hash::Hash::hash(self, hasher);
+    }
+}

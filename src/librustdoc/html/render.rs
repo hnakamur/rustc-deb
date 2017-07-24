@@ -660,8 +660,6 @@ fn write_shared(cx: &Context,
     // Add all the static files. These may already exist, but we just
     // overwrite them anyway to make sure that they're fresh and up-to-date.
 
-    write(cx.dst.join("jquery.js"),
-          include_bytes!("static/jquery-2.1.4.min.js"))?;
     write(cx.dst.join("main.js"),
           include_bytes!("static/main.js"))?;
     write(cx.dst.join("rustdoc.css"),
@@ -1664,9 +1662,9 @@ fn md_render_assoc_item(item: &clean::Item) -> String {
     match item.inner {
         clean::AssociatedConstItem(ref ty, ref default) => {
             if let Some(default) = default.as_ref() {
-                format!("```\n{}: {:?} = {}\n```\n\n", item.name.as_ref().unwrap(), ty, default)
+                format!("```\n{}: {:#} = {}\n```\n\n", item.name.as_ref().unwrap(), ty, default)
             } else {
-                format!("```\n{}: {:?}\n```\n\n", item.name.as_ref().unwrap(), ty)
+                format!("```\n{}: {:#}\n```\n\n", item.name.as_ref().unwrap(), ty)
             }
         }
         _ => String::new(),

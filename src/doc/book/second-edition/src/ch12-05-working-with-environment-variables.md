@@ -70,14 +70,12 @@ Trust me.";
 <span class="caption">Listing 12-20: Adding a new failing test for the case
 insensitive function we're about to add</span>
 
-Note that we've edited the old test's `query` and `contents` too: we changed
-the query to "duct", which will match the line with the word "productive".
-We've added a new line with the text "Duct tape", with a capital D, that
-shouldn't match the query "duct" when we're searching for the query in a case
-sensitive manner. We've changed this test to ensure that we don't accidentally
-break the case sensitive search functionality that we've already implemented;
-this test should pass now and should continue to pass as we work on the case
-insensitive search.
+Note that we've edited the old test's `contents` too. We've added a new line
+with the text "Duct tape", with a capital D, that shouldn't match the query
+"duct" when we're searching for the query in a case sensitive manner. We've
+changed this test to ensure that we don't accidentally break the case sensitive
+search functionality that we've already implemented; this test should pass now
+and should continue to pass as we work on the case insensitive search.
 
 The new test for the case insensitive search uses "rUsT" with some capital
 letters as its query. The expected return value from the
@@ -151,7 +149,7 @@ entered in the query.
 Let's see if this implementation passes the tests:
 
 ```text
-    Finished debug [unoptimized + debuginfo] target(s) in 0.0 secs
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0 secs
      Running target/debug/deps/greprs-e58e9b12d35dc861
 
 running 2 tests
@@ -307,7 +305,7 @@ the word "to" in all lowercase:
 
 ```text
 $ cargo run to poem.txt
-    Finished debug [unoptimized + debuginfo] target(s) in 0.0 secs
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0 secs
      Running `target/debug/greprs to poem.txt`
 Are you nobody, too?
 How dreary to be somebody!
@@ -319,7 +317,7 @@ set to 1 but with the same query "to", and we should get lines that contain
 
 ```text
 $ CASE_INSENSITIVE=1 cargo run to poem.txt
-    Finished debug [unoptimized + debuginfo] target(s) in 0.0 secs
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0 secs
      Running `target/debug/greprs to poem.txt`
 Are you nobody, too?
 How dreary to be somebody!
@@ -336,7 +334,7 @@ Some programs allow both arguments *and* environment variables for the same
 configuration. In those cases, the programs decide that one or the other takes
 precedence. For another exercise on your own, try controlling case
 insensitivity through a command line argument as well as through the
-environment variable, and decide which should take precedence the program is
+environment variable, and decide which should take precedence if the program is
 run with contradictory values.
 
 The `std::env` module contains many more useful features for dealing with

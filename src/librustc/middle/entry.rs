@@ -128,8 +128,8 @@ fn find_item(item: &Item, ctxt: &mut EntryContext, at_root: bool) {
             } else {
                 struct_span_err!(ctxt.session, item.span, E0137,
                           "multiple functions with a #[main] attribute")
-                .span_label(item.span, &format!("additional #[main] function"))
-                .span_label(ctxt.attr_main_fn.unwrap().1, &format!("first #[main] function"))
+                .span_label(item.span, "additional #[main] function")
+                .span_label(ctxt.attr_main_fn.unwrap().1, "first #[main] function")
                 .emit();
             }
         },
@@ -141,8 +141,8 @@ fn find_item(item: &Item, ctxt: &mut EntryContext, at_root: bool) {
                     ctxt.session, item.span, E0138,
                     "multiple 'start' functions")
                     .span_label(ctxt.start_fn.unwrap().1,
-                                &format!("previous `start` function here"))
-                    .span_label(item.span, &format!("multiple `start` functions"))
+                                "previous `start` function here")
+                    .span_label(item.span, "multiple `start` functions")
                     .emit();
             }
         },
@@ -162,7 +162,7 @@ fn configure_main(this: &mut EntryContext) {
         this.session.entry_type.set(Some(config::EntryMain));
     } else {
         // No main function
-        let mut err = this.session.struct_err("main function not found");
+        let mut err = struct_err!(this.session, E0601, "main function not found");
         if !this.non_main_fns.is_empty() {
             // There were some functions named 'main' though. Try to give the user a hint.
             err.note("the main function must be defined at the crate level \

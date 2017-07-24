@@ -120,7 +120,7 @@ pub trait Sized {
 /// [coerceunsized]: ../ops/trait.CoerceUnsized.html
 /// [rc]: ../../std/rc/struct.Rc.html
 /// [RFC982]: https://github.com/rust-lang/rfcs/blob/master/text/0982-dst-coercion.md
-
+/// [nomicon-coerce]: ../../nomicon/coercions.html
 #[unstable(feature = "unsize", issue = "27732")]
 #[lang="unsize"]
 pub trait Unsize<T: ?Sized> {
@@ -559,7 +559,7 @@ mod impls {
 /// any `UnsafeCell` internally, but not through an indirection.
 /// This affects, for example, whether a `static` of that type is
 /// placed in read-only static memory or writable static memory.
-#[cfg_attr(not(stage0), lang = "freeze")]
+#[lang = "freeze"]
 unsafe trait Freeze {}
 
 unsafe impl Freeze for .. {}

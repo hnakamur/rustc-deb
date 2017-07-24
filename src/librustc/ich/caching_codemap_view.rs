@@ -8,10 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ty::TyCtxt;
 use std::rc::Rc;
 use syntax::codemap::CodeMap;
 use syntax_pos::{BytePos, FileMap};
+use ty::TyCtxt;
 
 #[derive(Clone)]
 struct CacheEntry {
@@ -20,6 +20,7 @@ struct CacheEntry {
     line_start: BytePos,
     line_end: BytePos,
     file: Rc<FileMap>,
+    file_index: usize,
 }
 
 pub struct CachingCodemapView<'tcx> {
@@ -31,13 +32,15 @@ pub struct CachingCodemapView<'tcx> {
 impl<'tcx> CachingCodemapView<'tcx> {
     pub fn new<'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> CachingCodemapView<'tcx> {
         let codemap = tcx.sess.codemap();
-        let first_file = codemap.files.borrow()[0].clone();
+        let files = codemap.files();
+        let first_file = files[0].clone();
         let entry = CacheEntry {
             time_stamp: 0,
             line_number: 0,
             line_start: BytePos(0),
             line_end: BytePos(0),
             file: first_file,
+            file_index: 0,
         };
 
         CachingCodemapView {
@@ -56,6 +59,7 @@ impl<'tcx> CachingCodemapView<'tcx> {
         for cache_entry in self.line_cache.iter_mut() {
             if pos >= cache_entry.line_start && pos < cache_entry.line_end {
                 cache_entry.time_stamp = self.time_stamp;
+
                 return Some((cache_entry.file.clone(),
                              cache_entry.line_number,
                              pos - cache_entry.line_start));
@@ -75,7 +79,7 @@ impl<'tcx> CachingCodemapView<'tcx> {
         // If the entry doesn't point to the correct file, fix it up
         if pos < cache_entry.file.start_pos || pos >= cache_entry.file.end_pos {
             let file_valid;
-            let files = self.codemap.files.borrow();
+            let files = self.codemap.files();
 
             if files.len() > 0 {
                 let file_index = self.codemap.lookup_filemap_idx(pos);
@@ -83,6 +87,7 @@ impl<'tcx> CachingCodemapView<'tcx> {
 
                 if pos >= file.start_pos && pos < file.end_pos {
                     cache_entry.file = file;
+                    cache_entry.file_index = file_index;
                     file_valid = true;
                 } else {
                     file_valid = false;

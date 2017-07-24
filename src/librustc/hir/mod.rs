@@ -162,7 +162,7 @@ impl Lifetime {
     }
 
     pub fn is_static(&self) -> bool {
-        self.name == keywords::StaticLifetime.name()
+        self.name == "'static"
     }
 }
 
@@ -532,10 +532,12 @@ impl Crate {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct MacroDef {
     pub name: Name,
+    pub vis: Visibility,
     pub attrs: HirVec<Attribute>,
     pub id: NodeId,
     pub span: Span,
     pub body: TokenStream,
+    pub legacy: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
@@ -870,6 +872,7 @@ pub struct Local {
     pub id: NodeId,
     pub span: Span,
     pub attrs: ThinVec<Attribute>,
+    pub source: LocalSource,
 }
 
 pub type Decl = Spanned<Decl_>;
@@ -1076,6 +1079,15 @@ pub enum QPath {
     /// `<Vec>::new`, and `T::X::Y::method` into `<<<T>::X>::Y>::method`,
     /// the `X` and `Y` nodes each being a `TyPath(QPath::TypeRelative(..))`.
     TypeRelative(P<Ty>, P<PathSegment>)
+}
+
+/// Hints at the original code for a let statement
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
+pub enum LocalSource {
+    /// A `match _ { .. }`
+    Normal,
+    /// A desugared `for _ in _ { .. }` loop
+    ForLoopDesugar,
 }
 
 /// Hints at the original code for a `match _ { .. }`
@@ -1712,6 +1724,7 @@ pub enum Item_ {
     /// An implementation, eg `impl<A> Trait for Foo { .. }`
     ItemImpl(Unsafety,
              ImplPolarity,
+             Defaultness,
              Generics,
              Option<TraitRef>, // (optional) trait this impl implements
              P<Ty>, // self

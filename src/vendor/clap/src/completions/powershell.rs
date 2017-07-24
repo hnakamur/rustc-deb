@@ -19,7 +19,10 @@ impl<'a, 'b> PowerShellGen<'a, 'b> {
 
         let (subcommands_detection_cases, subcommands_cases) = generate_inner(self.p, "");
 
-        let mut bin_names = vec![bin_name.to_string(), format!("./{0}", bin_name)];
+        let mut bin_names = vec![
+            bin_name.to_string(),
+            format!("./{0}", bin_name),
+        ];
         if cfg!(windows) {
             bin_names.push(format!("{0}.exe", bin_name));
             bin_names.push(format!(r".\{0}", bin_name));
@@ -70,7 +73,6 @@ impl<'a, 'b> PowerShellGen<'a, 'b> {
 }
 
 fn generate_inner<'a, 'b>(p: &Parser<'a, 'b>, previous_command_name: &str) -> (String, String) {
-    debugln!("PowerShellGen::generate_inner;");
     let command_name = format!("{}_{}", previous_command_name, &p.meta.name);
 
     let mut subcommands_detection_cases = if previous_command_name == "" {
@@ -89,10 +91,10 @@ fn generate_inner<'a, 'b>(p: &Parser<'a, 'b>, previous_command_name: &str) -> (S
     for subcommand in &p.subcommands {
         completions.push_str(&format!("'{}', ", &subcommand.p.meta.name));
     }
-    for short in shorts!(p) {
+    for short in &p.short_list {
         completions.push_str(&format!("'-{}', ", short));
     }
-    for long in longs!(p) {
+    for long in &p.long_list {
         completions.push_str(&format!("'--{}', ", long));
     }
 

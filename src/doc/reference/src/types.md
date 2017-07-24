@@ -268,7 +268,7 @@ messages to indicate "the unique fn type for the function `foo`".
 
 ## Closure types
 
-A [lambda expression](expressions.html#lambda-expressions) produces a closure
+A [closure expression](expressions.html#closure-expressions) produces a closure
 value with a unique, anonymous type that cannot be written out.
 
 Depending on the requirements of the closure, its type implements one or
@@ -286,9 +286,22 @@ more of the closure traits:
 * `Fn`
   : The closure can be called multiple times through a shared reference.
     A closure called as `Fn` can neither move out from nor mutate values
-    from its environment. `Fn` inherits from `FnMut`, which itself
-    inherits from `FnOnce`.
+    from its environment, but read-only access to such values is allowed.
+    `Fn` inherits from `FnMut`, which itself inherits from `FnOnce`.
 
+Closures that don't use anything from their environment ("non capturing closures")
+can be coerced to function pointers (`fn`) with the matching signature.
+To adopt the example from the section above:
+
+```rust
+let add = |x, y| x + y;
+
+let mut x = add(5,7);
+
+type Binop = fn(i32, i32) -> i32;
+let bo: Binop = add;
+x = bo(5,7);
+```
 
 ## Trait objects
 
@@ -339,6 +352,52 @@ fn main() {
 
 In this example, the trait `Printable` occurs as a trait object in both the
 type signature of `print`, and the cast expression in `main`.
+
+Since a trait object can contain references, the lifetimes of those references
+need to be expressed as part of the trait object. The assumed lifetime of
+references held by a trait object is called its _default object lifetime bound_.
+These were defined in [RFC 599] and amended in [RFC 1156].
+
+[RFC 599]: https://github.com/rust-lang/rfcs/blob/master/text/0599-default-object-bound.md
+[RFC 1156]: https://github.com/rust-lang/rfcs/blob/master/text/1156-adjust-default-object-bounds.md
+
+For traits that themselves have no lifetime parameters, the default bound is
+based on what kind of trait object is used:
+
+```rust,ignore
+// For the following trait...
+trait Foo { }
+
+// ...these two are the same:
+Box<Foo>
+Box<Foo + 'static>
+
+// ...and so are these:
+&'a Foo
+&'a (Foo + 'a)
+```
+
+The `+ 'static` and `+ 'a` refer to the default bounds of those kinds of trait
+objects, and also to how you can directly override them. Note that the innermost
+object sets the bound, so `&'a Box<Foo>` is still `&'a Box<Foo + 'static>`.
+
+For traits that have lifetime parameters of their own, the default bound is
+based on that lifetime parameter:
+
+```rust,ignore
+// For the following trait...
+trait Bar<'a>: 'a { }
+
+// ...these two are the same:
+Box<Bar<'a>>
+Box<Bar<'a> + 'a>
+```
+
+The default for user-defined trait objects is based on the object type itself.
+If a type parameter has a lifetime bound, then that lifetime bound becomes the
+default bound for trait objects of that type. For example, `std::cell::Ref<'a,
+T>` contains a `T: 'a` bound, therefore trait objects of type `Ref<'a,
+SomeTrait>` are the same as `Ref<'a, (SomeTrait + 'a)>`.
 
 ### Type parameters
 

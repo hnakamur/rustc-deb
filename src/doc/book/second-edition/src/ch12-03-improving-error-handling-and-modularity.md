@@ -176,10 +176,7 @@ fn parse_config(args: &[String]) -> Config {
     let query = args[1].clone();
     let filename = args[2].clone();
 
-    Config {
-        query: query,
-        filename: filename,
-    }
+    Config { query, filename }
 }
 ```
 
@@ -212,7 +209,7 @@ trade-off.
 
 > #### The Tradeoffs of Using `clone`
 >
-> There's a tendency amongst many Rustaceans to avoid using `clone` to fix
+> There's a tendency among many Rustaceans to avoid using `clone` to fix
 > ownership problems because of its runtime cost. In Chapter 13 on iterators,
 > you'll learn how to use more efficient methods in this kind of situation, but
 > for now, it's okay to copy a few strings to keep making progress since we'll
@@ -290,10 +287,7 @@ impl Config {
         let query = args[1].clone();
         let filename = args[2].clone();
 
-        Config {
-            query: query,
-            filename: filename,
-        }
+        Config { query, filename }
     }
 }
 ```
@@ -317,7 +311,7 @@ running the program without any arguments; it will look like this:
 
 ```text
 $ cargo run
-    Finished debug [unoptimized + debuginfo] target(s) in 0.0 secs
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0 secs
      Running `target/debug/greprs`
 thread 'main' panicked at 'index out of bounds: the len is 1
 but the index is 1',  /stable-dist-rustc/build/src/libcollections/vec.rs:1307
@@ -364,7 +358,7 @@ without any arguments again and see what the error looks like now:
 
 ```bash
 $ cargo run
-    Finished debug [unoptimized + debuginfo] target(s) in 0.0 secs
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0 secs
      Running `target/debug/greprs`
 thread 'main' panicked at 'not enough arguments', src/main.rs:29
 note: Run with `RUST_BACKTRACE=1` for a backtrace.
@@ -407,10 +401,7 @@ impl Config {
         let query = args[1].clone();
         let filename = args[2].clone();
 
-        Ok(Config {
-            query: query,
-            filename: filename,
-        })
+        Ok(Config { query, filename })
     }
 }
 ```
@@ -505,7 +496,7 @@ the extra output. Let's try it:
 ```text
 $ cargo run
    Compiling greprs v0.1.0 (file:///projects/greprs)
-    Finished debug [unoptimized + debuginfo] target(s) in 0.48 secs
+    Finished dev [unoptimized + debuginfo] target(s) in 0.48 secs
      Running `target/debug/greprs`
 Problem parsing arguments: not enough arguments
 ```
@@ -715,10 +706,7 @@ impl Config {
         let query = args[1].clone();
         let filename = args[2].clone();
 
-        Ok(Config {
-            query: query,
-            filename: filename,
-        })
+        Ok(Config { query, filename })
     }
 }
 

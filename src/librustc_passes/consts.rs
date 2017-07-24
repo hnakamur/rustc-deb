@@ -58,7 +58,7 @@ struct CheckCrateVisitor<'a, 'tcx: 'a> {
     in_fn: bool,
     promotable: bool,
     mut_rvalue_borrows: NodeSet,
-    param_env: ty::ParameterEnvironment<'tcx>,
+    param_env: ty::ParamEnv<'tcx>,
     tables: &'a ty::TypeckTables<'tcx>,
 }
 
@@ -85,11 +85,11 @@ impl<'a, 'gcx> CheckCrateVisitor<'a, 'gcx> {
 
     // Adds the worst effect out of all the values of one type.
     fn add_type(&mut self, ty: Ty<'gcx>) {
-        if !ty.is_freeze(self.tcx, &self.param_env, DUMMY_SP) {
+        if !ty.is_freeze(self.tcx, self.param_env, DUMMY_SP) {
             self.promotable = false;
         }
 
-        if ty.needs_drop(self.tcx, &self.param_env) {
+        if ty.needs_drop(self.tcx, self.param_env) {
             self.promotable = false;
         }
     }
@@ -130,17 +130,19 @@ impl<'a, 'tcx> Visitor<'tcx> for CheckCrateVisitor<'a, 'tcx> {
         };
 
         let outer_tables = self.tables;
-        self.tables = self.tcx.item_tables(self.tcx.hir.local_def_id(item_id));
+        let item_def_id = self.tcx.hir.local_def_id(item_id);
+        self.tables = self.tcx.typeck_tables_of(item_def_id);
 
         let body = self.tcx.hir.body(body_id);
         if !self.in_fn {
             self.check_const_eval(&body.value);
         }
 
-        let outer_penv = self.tcx.infer_ctxt(body_id, Reveal::UserFacing).enter(|infcx| {
-            let param_env = infcx.parameter_environment.clone();
+        let outer_penv = self.tcx.infer_ctxt(body_id).enter(|infcx| {
+            let param_env = self.tcx.param_env(item_def_id);
             let outer_penv = mem::replace(&mut self.param_env, param_env);
-            euv::ExprUseVisitor::new(self, &infcx).consume_body(body);
+            let region_maps = &self.tcx.region_maps(item_def_id);
+            euv::ExprUseVisitor::new(self, region_maps, &infcx, param_env).consume_body(body);
             outer_penv
         });
 
@@ -178,7 +180,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CheckCrateVisitor<'a, 'tcx> {
                     Ok(Ordering::Greater) => {
                         struct_span_err!(self.tcx.sess, start.span, E0030,
                             "lower range bound must be less than or equal to upper")
-                            .span_label(start.span, &format!("lower bound larger than upper bound"))
+                            .span_label(start.span, "lower bound larger than upper bound")
                             .emit();
                     }
                     Err(ErrorReported) => {}
@@ -278,11 +280,10 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>, e: &hir::Expr, node
         _ => {}
     }
 
-    let method_call = ty::MethodCall::expr(e.id);
     match e.node {
         hir::ExprUnary(..) |
         hir::ExprBinary(..) |
-        hir::ExprIndex(..) if v.tables.method_map.contains_key(&method_call) => {
+        hir::ExprIndex(..) if v.tables.is_method_call(e) => {
             v.promotable = false;
         }
         hir::ExprBox(_) => {
@@ -336,7 +337,7 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>, e: &hir::Expr, node
                             _ => false
                         }
                     } else {
-                        v.tcx.sess.cstore.const_is_rvalue_promotable_to_static(did)
+                        v.tcx.const_is_rvalue_promotable_to_static(did)
                     };
                 }
                 _ => {
@@ -379,9 +380,9 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>, e: &hir::Expr, node
             }
         }
         hir::ExprMethodCall(..) => {
-            let method = v.tables.method_map[&method_call];
-            match v.tcx.associated_item(method.def_id).container {
-                ty::ImplContainer(_) => v.handle_const_fn_call(method.def_id, node_ty),
+            let def_id = v.tables.type_dependent_defs[&e.id].def_id();
+            match v.tcx.associated_item(def_id).container {
+                ty::ImplContainer(_) => v.handle_const_fn_call(def_id, node_ty),
                 ty::TraitContainer(_) => v.promotable = false
             }
         }
@@ -440,18 +441,21 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>, e: &hir::Expr, node
 fn check_adjustments<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>, e: &hir::Expr) {
     use rustc::ty::adjustment::*;
 
-    match v.tables.adjustments.get(&e.id).map(|adj| adj.kind) {
-        None |
-        Some(Adjust::NeverToAny) |
-        Some(Adjust::ReifyFnPointer) |
-        Some(Adjust::UnsafeFnPointer) |
-        Some(Adjust::ClosureFnPointer) |
-        Some(Adjust::MutToConstPointer) => {}
+    for adjustment in v.tables.expr_adjustments(e) {
+        match adjustment.kind {
+            Adjust::NeverToAny |
+            Adjust::ReifyFnPointer |
+            Adjust::UnsafeFnPointer |
+            Adjust::ClosureFnPointer |
+            Adjust::MutToConstPointer |
+            Adjust::Borrow(_) |
+            Adjust::Unsize => {}
 
-        Some(Adjust::DerefRef { autoderefs, .. }) => {
-            if (0..autoderefs as u32)
-                .any(|autoderef| v.tables.is_overloaded_autoderef(e.id, autoderef)) {
-                v.promotable = false;
+            Adjust::Deref(ref overloaded) => {
+                if overloaded.is_some() {
+                    v.promotable = false;
+                    break;
+                }
             }
         }
     }
@@ -464,7 +468,7 @@ pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
         in_fn: false,
         promotable: false,
         mut_rvalue_borrows: NodeSet(),
-        param_env: tcx.empty_parameter_environment(),
+        param_env: ty::ParamEnv::empty(Reveal::UserFacing),
     }.as_deep_visitor());
     tcx.sess.abort_if_errors();
 }
@@ -480,7 +484,7 @@ impl<'a, 'gcx, 'tcx> euv::Delegate<'tcx> for CheckCrateVisitor<'a, 'gcx> {
               borrow_id: ast::NodeId,
               _borrow_span: Span,
               cmt: mc::cmt<'tcx>,
-              _loan_region: &'tcx ty::Region,
+              _loan_region: ty::Region<'tcx>,
               bk: ty::BorrowKind,
               loan_cause: euv::LoanCause) {
         // Kind of hacky, but we allow Unsafe coercions in constants.
@@ -510,7 +514,7 @@ impl<'a, 'gcx, 'tcx> euv::Delegate<'tcx> for CheckCrateVisitor<'a, 'gcx> {
                 Categorization::StaticItem => {
                     break;
                 }
-                Categorization::Deref(ref cmt, ..) |
+                Categorization::Deref(ref cmt, _) |
                 Categorization::Downcast(ref cmt, _) |
                 Categorization::Interior(ref cmt, _) => {
                     cur = cmt;

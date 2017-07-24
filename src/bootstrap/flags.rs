@@ -61,6 +61,7 @@ pub enum Subcommand {
     Test {
         paths: Vec<PathBuf>,
         test_args: Vec<String>,
+        no_fail_fast: bool,
     },
     Bench {
         paths: Vec<PathBuf>,
@@ -69,7 +70,9 @@ pub enum Subcommand {
     Clean,
     Dist {
         paths: Vec<PathBuf>,
-        install: bool,
+    },
+    Install {
+        paths: Vec<PathBuf>,
     },
 }
 
@@ -85,7 +88,8 @@ Subcommands:
     bench       Build and run some benchmarks
     doc         Build documentation
     clean       Clean out build directories
-    dist        Build and/or install distribution artifacts
+    dist        Build distribution artifacts
+    install     Install distribution artifacts
 
 To learn more about a subcommand, run `./x.py <subcommand> -h`");
 
@@ -125,7 +129,8 @@ To learn more about a subcommand, run `./x.py <subcommand> -h`");
                                         || (s == "bench")
                                         || (s == "doc")
                                         || (s == "clean")
-                                        || (s == "dist"));
+                                        || (s == "dist")
+                                        || (s == "install"));
         let subcommand = match possible_subcommands.first() {
             Some(s) => s,
             None => {
@@ -137,9 +142,11 @@ To learn more about a subcommand, run `./x.py <subcommand> -h`");
 
         // Some subcommands get extra options
         match subcommand.as_str() {
-            "test"  => { opts.optmulti("", "test-args", "extra arguments", "ARGS"); },
+            "test"  => {
+                opts.optflag("", "no-fail-fast", "Run all tests regardless of failure");
+                opts.optmulti("", "test-args", "extra arguments", "ARGS");
+            },
             "bench" => { opts.optmulti("", "test-args", "extra arguments", "ARGS"); },
-            "dist"  => { opts.optflag("", "install", "run installer as well"); },
             _ => { },
         };
 
@@ -230,11 +237,18 @@ Arguments:
         let cwd = t!(env::current_dir());
         let paths = matches.free[1..].iter().map(|p| cwd.join(p)).collect::<Vec<_>>();
 
+        let cfg_file = matches.opt_str("config").map(PathBuf::from).or_else(|| {
+            if fs::metadata("config.toml").is_ok() {
+                Some(PathBuf::from("config.toml"))
+            } else {
+                None
+            }
+        });
 
         // All subcommands can have an optional "Available paths" section
         if matches.opt_present("verbose") {
             let flags = Flags::parse(&["build".to_string()]);
-            let mut config = Config::default();
+            let mut config = Config::parse(&flags.build, cfg_file.clone());
             config.build = flags.build.clone();
             let mut build = Build::new(flags, config);
             metadata::build(&mut build);
@@ -260,6 +274,7 @@ Arguments:
                 Subcommand::Test {
                     paths: paths,
                     test_args: matches.opt_strs("test-args"),
+                    no_fail_fast: matches.opt_present("no-fail-fast"),
                 }
             }
             "bench" => {
@@ -281,7 +296,11 @@ Arguments:
             "dist" => {
                 Subcommand::Dist {
                     paths: paths,
-                    install: matches.opt_present("install"),
+                }
+            }
+            "install" => {
+                Subcommand::Install {
+                    paths: paths,
                 }
             }
             _ => {
@@ -289,14 +308,6 @@ Arguments:
             }
         };
 
-
-        let cfg_file = matches.opt_str("config").map(PathBuf::from).or_else(|| {
-            if fs::metadata("config.toml").is_ok() {
-                Some(PathBuf::from("config.toml"))
-            } else {
-                None
-            }
-        });
 
         let mut stage = matches.opt_str("stage").map(|j| j.parse().unwrap());
 
@@ -333,6 +344,13 @@ impl Subcommand {
                 test_args.iter().flat_map(|s| s.split_whitespace()).collect()
             }
             _ => Vec::new(),
+        }
+    }
+
+    pub fn no_fail_fast(&self) -> bool {
+        match *self {
+            Subcommand::Test { no_fail_fast, .. } => no_fail_fast,
+            _ => false,
         }
     }
 }

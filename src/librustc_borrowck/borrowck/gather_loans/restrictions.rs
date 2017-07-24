@@ -31,7 +31,7 @@ pub fn compute_restrictions<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                       span: Span,
                                       cause: euv::LoanCause,
                                       cmt: mc::cmt<'tcx>,
-                                      loan_region: &'tcx ty::Region)
+                                      loan_region: ty::Region<'tcx>)
                                       -> RestrictionResult<'tcx> {
     let ctxt = RestrictionsContext {
         bccx: bccx,
@@ -49,7 +49,7 @@ pub fn compute_restrictions<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
 struct RestrictionsContext<'a, 'tcx: 'a> {
     bccx: &'a BorrowckCtxt<'a, 'tcx>,
     span: Span,
-    loan_region: &'tcx ty::Region,
+    loan_region: ty::Region<'tcx>,
     cause: euv::LoanCause,
 }
 
@@ -133,7 +133,7 @@ impl<'a, 'tcx> RestrictionsContext<'a, 'tcx> {
                 RestrictionResult::Safe
             }
 
-            Categorization::Deref(cmt_base, _, pk) => {
+            Categorization::Deref(cmt_base, pk) => {
                 match pk {
                     mc::Unique => {
                         // R-Deref-Send-Pointer

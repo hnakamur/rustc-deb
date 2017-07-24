@@ -57,7 +57,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         let trait_ref = ty::TraitRef::new(fn_once, fn_once_substs);
                         let poly_trait_ref = trait_ref.to_poly_trait_ref();
                         let obligation =
-                            Obligation::misc(span, self.body_id, poly_trait_ref.to_predicate());
+                            Obligation::misc(span,
+                                             self.body_id,
+                                             self.param_env,
+                                             poly_trait_ref.to_predicate());
                         SelectionContext::new(self).evaluate_obligation(&obligation)
                     })
                 })
@@ -165,18 +168,32 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                                .. }) => {
                 let tcx = self.tcx;
 
-                let mut err = self.type_error_struct(span,
-                                                     |actual| {
-                    format!("no {} named `{}` found for type `{}` in the current scope",
-                            if mode == Mode::MethodCall {
-                                "method"
-                            } else {
-                                "associated item"
-                            },
-                            item_name,
-                            actual)
-                },
-                                                     rcvr_ty);
+                let actual = self.resolve_type_vars_if_possible(&rcvr_ty);
+                let mut err = if !actual.references_error() {
+                    struct_span_err!(tcx.sess, span, E0599,
+                                     "no {} named `{}` found for type `{}` in the \
+                                      current scope",
+                                     if mode == Mode::MethodCall {
+                                         "method"
+                                     } else {
+                                         match item_name.as_str().chars().next() {
+                                             Some(name) => {
+                                                 if name.is_lowercase() {
+                                                     "function or associated item"
+                                                 } else {
+                                                     "associated item"
+                                                 }
+                                             },
+                                             None => {
+                                                 ""
+                                             },
+                                         }
+                                     },
+                                     item_name,
+                                     self.ty_to_string(actual))
+                } else {
+                    self.tcx.sess.diagnostic().struct_dummy()
+                };
 
                 // If the method name is the name of a field with a function or closure type,
                 // give a helping note that it has to be called as (x.f)(...).
@@ -195,8 +212,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                     };
 
                                     let field_ty = field.ty(tcx, substs);
-
-                                    if tcx.vis_is_accessible_from(field.vis, self.body_id) {
+                                    let scope = self.tcx.hir.get_module_parent(self.body_id);
+                                    if field.vis.is_accessible_from(scope, self.tcx) {
                                         if self.is_fn_ty(&field_ty, span) {
                                             err.help(&format!("use `({0}.{1})(...)` if you \
                                                                meant to call the function \
@@ -209,9 +226,9 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                                               expr_string,
                                                               item_name));
                                         }
-                                        err.span_label(span, &"field, not a method");
+                                        err.span_label(span, "field, not a method");
                                     } else {
-                                        err.span_label(span, &"private field, not a method");
+                                        err.span_label(span, "private field, not a method");
                                     }
                                     break;
                                 }
@@ -225,7 +242,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     macro_rules! report_function {
                         ($span:expr, $name:expr) => {
                             err.note(&format!("{} is a function, perhaps you wish to call it",
-                                         $name));
+                                              $name));
                         }
                     }
 
@@ -251,9 +268,9 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     let bound_list = unsatisfied_predicates.iter()
                         .map(|p| format!("`{} : {}`", p.self_ty(), p))
                         .collect::<Vec<_>>()
-                        .join(", ");
+                        .join("\n");
                     err.note(&format!("the method `{}` exists but the following trait bounds \
-                                       were not satisfied: {}",
+                                       were not satisfied:\n{}",
                                       item_name,
                                       bound_list));
                 }
@@ -272,7 +289,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                                span,
                                                E0034,
                                                "multiple applicable items in scope");
-                err.span_label(span, &format!("multiple `{}` found", item_name));
+                err.span_label(span, format!("multiple `{}` found", item_name));
 
                 report_candidates(&mut err, sources);
                 err.emit();
@@ -312,9 +329,9 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             let mut candidates = valid_out_of_scope_traits;
             candidates.sort();
             candidates.dedup();
-            let msg = format!("items from traits can only be used if the trait is in scope; the \
-                               following {traits_are} implemented but not in scope, perhaps add \
-                               a `use` for {one_of_them}:",
+            err.help("items from traits can only be used if the trait is in scope");
+            let mut msg = format!("the following {traits_are} implemented but not in scope, \
+                                   perhaps add a `use` for {one_of_them}:",
                               traits_are = if candidates.len() == 1 {
                                   "trait is"
                               } else {
@@ -326,17 +343,17 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                   "one of them"
                               });
 
-            err.help(&msg[..]);
-
             let limit = if candidates.len() == 5 { 5 } else { 4 };
             for (i, trait_did) in candidates.iter().take(limit).enumerate() {
-                err.help(&format!("candidate #{}: `use {};`",
-                                  i + 1,
-                                  self.tcx.item_path_str(*trait_did)));
+                msg.push_str(&format!("\ncandidate #{}: `use {};`",
+                                      i + 1,
+                                      self.tcx.item_path_str(*trait_did)));
             }
             if candidates.len() > limit {
-                err.note(&format!("and {} others", candidates.len() - limit));
+                msg.push_str(&format!("\nand {} others", candidates.len() - limit));
             }
+            err.note(&msg[..]);
+
             return;
         }
 
@@ -366,28 +383,27 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             // FIXME #21673 this help message could be tuned to the case
             // of a type parameter: suggest adding a trait bound rather
             // than implementing.
-            let msg = format!("items from traits can only be used if the trait is implemented \
-                               and in scope; the following {traits_define} an item `{name}`, \
-                               perhaps you need to implement {one_of_them}:",
-                              traits_define = if candidates.len() == 1 {
-                                  "trait defines"
-                              } else {
-                                  "traits define"
-                              },
-                              one_of_them = if candidates.len() == 1 {
-                                  "it"
-                              } else {
-                                  "one of them"
-                              },
-                              name = item_name);
-
-            err.help(&msg[..]);
+            err.help("items from traits can only be used if the trait is implemented and in scope");
+            let mut msg = format!("the following {traits_define} an item `{name}`, \
+                                   perhaps you need to implement {one_of_them}:",
+                                  traits_define = if candidates.len() == 1 {
+                                      "trait defines"
+                                  } else {
+                                      "traits define"
+                                  },
+                                  one_of_them = if candidates.len() == 1 {
+                                      "it"
+                                  } else {
+                                      "one of them"
+                                  },
+                                  name = item_name);
 
             for (i, trait_info) in candidates.iter().enumerate() {
-                err.help(&format!("candidate #{}: `{}`",
-                                  i + 1,
-                                  self.tcx.item_path_str(trait_info.def_id)));
+                msg.push_str(&format!("\ncandidate #{}: `{}`",
+                                      i + 1,
+                                      self.tcx.item_path_str(trait_info.def_id)));
             }
+            err.note(&msg[..]);
         }
     }
 

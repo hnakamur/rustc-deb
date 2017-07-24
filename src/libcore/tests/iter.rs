@@ -12,6 +12,15 @@ use core::iter::*;
 use core::{i8, i16, isize};
 use core::usize;
 
+// FIXME #27741: This is here to simplify calling Iterator::step_by. Remove
+// once Range::step_by is completely gone (not just deprecated).
+trait IterEx: Sized {
+    fn iter_step_by(self, n: usize) -> StepBy<Self>;
+}
+impl<I:Iterator> IterEx for I {
+    fn iter_step_by(self, n: usize) -> StepBy<Self> { self.step_by(n) }
+}
+
 #[test]
 fn test_lt() {
     let empty: [isize; 0] = [];
@@ -67,7 +76,7 @@ fn test_multi_iter() {
 
 #[test]
 fn test_counter_from_iter() {
-    let it = (0..).step_by(5).take(10);
+    let it = (0..).iter_step_by(5).take(10);
     let xs: Vec<isize> = FromIterator::from_iter(it);
     assert_eq!(xs, [0, 5, 10, 15, 20, 25, 30, 35, 40, 45]);
 }
@@ -85,7 +94,7 @@ fn test_iterator_chain() {
     }
     assert_eq!(i, expected.len());
 
-    let ys = (30..).step_by(10).take(4);
+    let ys = (30..).iter_step_by(10).take(4);
     let it = xs.iter().cloned().chain(ys);
     let mut i = 0;
     for x in it {
@@ -145,8 +154,105 @@ fn test_iterator_chain_find() {
 }
 
 #[test]
+fn test_iterator_step_by() {
+    // Identity
+    let mut it = (0..).iter_step_by(1).take(3);
+    assert_eq!(it.next(), Some(0));
+    assert_eq!(it.next(), Some(1));
+    assert_eq!(it.next(), Some(2));
+    assert_eq!(it.next(), None);
+
+    let mut it = (0..).iter_step_by(3).take(4);
+    assert_eq!(it.next(), Some(0));
+    assert_eq!(it.next(), Some(3));
+    assert_eq!(it.next(), Some(6));
+    assert_eq!(it.next(), Some(9));
+    assert_eq!(it.next(), None);
+}
+
+#[test]
+#[should_panic]
+fn test_iterator_step_by_zero() {
+    let mut it = (0..).iter_step_by(0);
+    it.next();
+}
+
+#[test]
+fn test_iterator_step_by_size_hint() {
+    struct StubSizeHint(usize, Option<usize>);
+    impl Iterator for StubSizeHint {
+        type Item = ();
+        fn next(&mut self) -> Option<()> {
+            self.0 -= 1;
+            if let Some(ref mut upper) = self.1 {
+                *upper -= 1;
+            }
+            Some(())
+        }
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            (self.0, self.1)
+        }
+    }
+
+    // The two checks in each case are needed because the logic
+    // is different before the first call to `next()`.
+
+    let mut it = StubSizeHint(10, Some(10)).step_by(1);
+    assert_eq!(it.size_hint(), (10, Some(10)));
+    it.next();
+    assert_eq!(it.size_hint(), (9, Some(9)));
+
+    // exact multiple
+    let mut it = StubSizeHint(10, Some(10)).step_by(3);
+    assert_eq!(it.size_hint(), (4, Some(4)));
+    it.next();
+    assert_eq!(it.size_hint(), (3, Some(3)));
+
+    // larger base range, but not enough to get another element
+    let mut it = StubSizeHint(12, Some(12)).step_by(3);
+    assert_eq!(it.size_hint(), (4, Some(4)));
+    it.next();
+    assert_eq!(it.size_hint(), (3, Some(3)));
+
+    // smaller base range, so fewer resulting elements
+    let mut it = StubSizeHint(9, Some(9)).step_by(3);
+    assert_eq!(it.size_hint(), (3, Some(3)));
+    it.next();
+    assert_eq!(it.size_hint(), (2, Some(2)));
+
+    // infinite upper bound
+    let mut it = StubSizeHint(usize::MAX, None).step_by(1);
+    assert_eq!(it.size_hint(), (usize::MAX, None));
+    it.next();
+    assert_eq!(it.size_hint(), (usize::MAX-1, None));
+
+    // still infinite with larger step
+    let mut it = StubSizeHint(7, None).step_by(3);
+    assert_eq!(it.size_hint(), (3, None));
+    it.next();
+    assert_eq!(it.size_hint(), (2, None));
+
+    // propagates ExactSizeIterator
+    let a = [1,2,3,4,5];
+    let it = a.iter().step_by(2);
+    assert_eq!(it.len(), 3);
+
+    // Cannot be TrustedLen as a step greater than one makes an iterator
+    // with (usize::MAX, None) no longer meet the safety requirements
+    trait TrustedLenCheck { fn test(self) -> bool; }
+    impl<T:Iterator> TrustedLenCheck for T {
+        default fn test(self) -> bool { false }
+    }
+    impl<T:TrustedLen> TrustedLenCheck for T {
+        fn test(self) -> bool { true }
+    }
+    assert!(TrustedLenCheck::test(a.iter()));
+    assert!(!TrustedLenCheck::test(a.iter().step_by(1)));
+}
+
+#[test]
 fn test_filter_map() {
-    let it = (0..).step_by(1).take(10)
+    let it = (0..).iter_step_by(1).take(10)
         .filter_map(|x| if x % 2 == 0 { Some(x*x) } else { None });
     assert_eq!(it.collect::<Vec<usize>>(), [0*0, 2*2, 4*4, 6*6, 8*8]);
 }
@@ -548,7 +654,7 @@ fn test_iterator_scan() {
 fn test_iterator_flat_map() {
     let xs = [0, 3, 6];
     let ys = [0, 1, 2, 3, 4, 5, 6, 7, 8];
-    let it = xs.iter().flat_map(|&x| (x..).step_by(1).take(3));
+    let it = xs.iter().flat_map(|&x| (x..).iter_step_by(1).take(3));
     let mut i = 0;
     for x in it {
         assert_eq!(x, ys[i]);
@@ -574,13 +680,13 @@ fn test_inspect() {
 #[test]
 fn test_cycle() {
     let cycle_len = 3;
-    let it = (0..).step_by(1).take(cycle_len).cycle();
+    let it = (0..).iter_step_by(1).take(cycle_len).cycle();
     assert_eq!(it.size_hint(), (usize::MAX, None));
     for (i, x) in it.take(100).enumerate() {
         assert_eq!(i % cycle_len, x);
     }
 
-    let mut it = (0..).step_by(1).take(0).cycle();
+    let mut it = (0..).iter_step_by(1).take(0).cycle();
     assert_eq!(it.size_hint(), (0, Some(0)));
     assert_eq!(it.next(), None);
 }
@@ -659,11 +765,12 @@ fn test_iterator_min() {
 
 #[test]
 fn test_iterator_size_hint() {
-    let c = (0..).step_by(1);
+    let c = (0..).iter_step_by(1);
     let v: &[_] = &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     let v2 = &[10, 11, 12];
     let vi = v.iter();
 
+    assert_eq!((0..).size_hint(), (usize::MAX, None));
     assert_eq!(c.size_hint(), (usize::MAX, None));
     assert_eq!(vi.clone().size_hint(), (10, Some(10)));
 
@@ -980,6 +1087,8 @@ fn test_range() {
 
 #[test]
 fn test_range_step() {
+    #![allow(deprecated)]
+
     assert_eq!((0..20).step_by(5).collect::<Vec<isize>>(), [0, 5, 10, 15]);
     assert_eq!((20..0).step_by(-5).collect::<Vec<isize>>(), [20, 15, 10, 5]);
     assert_eq!((20..0).step_by(-6).collect::<Vec<isize>>(), [20, 14, 8, 2]);
@@ -1082,3 +1191,41 @@ fn test_chain_fold() {
     assert_eq!(&[2, 3, 1, 2, 0], &result[..]);
 }
 
+#[test]
+fn test_step_replace_unsigned() {
+    let mut x = 4u32;
+    let y = x.replace_zero();
+    assert_eq!(x, 0);
+    assert_eq!(y, 4);
+
+    x = 5;
+    let y = x.replace_one();
+    assert_eq!(x, 1);
+    assert_eq!(y, 5);
+}
+
+#[test]
+fn test_step_replace_signed() {
+    let mut x = 4i32;
+    let y = x.replace_zero();
+    assert_eq!(x, 0);
+    assert_eq!(y, 4);
+
+    x = 5;
+    let y = x.replace_one();
+    assert_eq!(x, 1);
+    assert_eq!(y, 5);
+}
+
+#[test]
+fn test_step_replace_no_between() {
+    let mut x = 4u128;
+    let y = x.replace_zero();
+    assert_eq!(x, 0);
+    assert_eq!(y, 4);
+
+    x = 5;
+    let y = x.replace_one();
+    assert_eq!(x, 1);
+    assert_eq!(y, 5);
+}
