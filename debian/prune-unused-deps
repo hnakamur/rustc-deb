@@ -1,0 +1,29 @@
+#!/bin/bash
+# Run this after applying d/p/d-ignore-removed-submodules.patch
+# and then running the build far enough for it to update Cargo.lock.
+# Then put the output in d/copyright in Files-Excluded:
+
+set -e
+
+not_needed() {
+	git diff -- src/Cargo.lock | grep '^-"checksum' debian/TODO.Debian | cut '-d ' -f2-3
+}
+
+ghetto_parse_cargo() {
+	cat "$1" \
+	 | tr '\n' '\t' \
+	 | sed -e 's/\t\[/\n[/g' \
+	 | perl -ne 'print if s/^\[(?:package|project)\].*\tname\s*=\s*"(.*?)".*\tversion\s*=\s*"(.*?)".*/\1 \2/g'
+}
+
+for i in src/vendor/*/Cargo.toml; do
+	pkgnamever=
+	pkgnamever=$(ghetto_parse_cargo "$i")
+	if [ -z "$pkgnamever" ]; then
+		echo >&2 "failed to parse: $i"
+		exit 1
+	fi
+	echo "$pkgnamever $i"
+done | grep -F -f <(not_needed) | cut '-d ' -f3 | while read x; do
+	echo " $(dirname $x)/*"
+done
