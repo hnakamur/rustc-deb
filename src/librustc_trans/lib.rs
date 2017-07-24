@@ -15,7 +15,6 @@
 //! This API is completely unstable and subject to change.
 
 #![crate_name = "rustc_trans"]
-#![unstable(feature = "rustc_private", issue = "27812")]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -33,17 +32,20 @@
 #![feature(libc)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
-#![feature(rustc_private)]
 #![feature(slice_patterns)]
-#![feature(staged_api)]
 #![feature(unicode)]
 #![feature(conservative_impl_trait)]
+
+#![cfg_attr(stage0, unstable(feature = "rustc_private", issue = "27812"))]
+#![cfg_attr(stage0, feature(rustc_private))]
+#![cfg_attr(stage0, feature(staged_api))]
 
 use rustc::dep_graph::WorkProduct;
 use syntax_pos::symbol::Symbol;
 
 extern crate flate;
 extern crate libc;
+extern crate owning_ref;
 #[macro_use] extern crate rustc;
 extern crate rustc_back;
 extern crate rustc_data_structures;
@@ -60,32 +62,27 @@ extern crate rustc_bitflags;
 extern crate syntax_pos;
 extern crate rustc_errors as errors;
 extern crate serialize;
-
-pub use rustc::session;
-pub use rustc::middle;
-pub use rustc::lint;
-pub use rustc::util;
+#[cfg(windows)]
+extern crate gcc; // Used to locate MSVC, not gcc :)
 
 pub use base::trans_crate;
+pub use back::symbol_names::provide;
+
+pub use metadata::LlvmMetadataLoader;
+pub use llvm_util::{init, target_features, print_version, print_passes, print, enable_llvm_debug};
 
 pub mod back {
-    pub use rustc::hir::svh;
-
-    pub mod archive;
-    pub mod linker;
+    mod archive;
+    pub(crate) mod linker;
     pub mod link;
-    pub mod lto;
-    pub mod symbol_export;
-    pub mod symbol_names;
+    mod lto;
+    pub(crate) mod symbol_export;
+    pub(crate) mod symbol_names;
     pub mod write;
-    pub mod msvc;
     pub mod rpath;
 }
 
-pub mod diagnostics;
-
-#[macro_use]
-mod macros;
+mod diagnostics;
 
 mod abi;
 mod adt;
@@ -97,6 +94,7 @@ mod builder;
 mod cabi_aarch64;
 mod cabi_arm;
 mod cabi_asmjs;
+mod cabi_hexagon;
 mod cabi_mips;
 mod cabi_mips64;
 mod cabi_msp430;
@@ -119,13 +117,13 @@ mod debuginfo;
 mod declare;
 mod glue;
 mod intrinsic;
+mod llvm_util;
 mod machine;
+mod metadata;
 mod meth;
 mod mir;
 mod monomorphize;
 mod partitioning;
-mod symbol_cache;
-mod symbol_map;
 mod symbol_names_test;
 mod trans_item;
 mod tvec;
@@ -167,8 +165,8 @@ pub struct CrateTranslation {
     pub crate_name: Symbol,
     pub modules: Vec<ModuleTranslation>,
     pub metadata_module: ModuleTranslation,
-    pub link: middle::cstore::LinkMeta,
-    pub metadata: middle::cstore::EncodedMetadata,
+    pub link: rustc::middle::cstore::LinkMeta,
+    pub metadata: rustc::middle::cstore::EncodedMetadata,
     pub exported_symbols: back::symbol_export::ExportedSymbols,
     pub no_builtins: bool,
     pub windows_subsystem: Option<String>,

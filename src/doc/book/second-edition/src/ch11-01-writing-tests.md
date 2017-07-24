@@ -80,7 +80,7 @@ Listing 11-2:
 ```text
 $ cargo test
    Compiling adder v0.1.0 (file:///projects/adder)
-    Finished debug [unoptimized + debuginfo] target(s) in 0.22 secs
+    Finished dev [unoptimized + debuginfo] target(s) in 0.22 secs
      Running target/debug/deps/adder-ce99bcc2479f4607
 
 running 1 test
@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn smaller_can_hold_larger() {
+    fn smaller_can_not_hold_larger() {
         let larger = Rectangle { length: 8, width: 7 };
         let smaller = Rectangle { length: 5, width: 1 };
 
@@ -342,7 +342,7 @@ way, our test will pass if `can_hold` returns `false`:
 
 ```text
 running 2 tests
-test tests::smaller_can_hold_larger ... ok
+test tests::smaller_can_not_hold_larger ... ok
 test tests::larger_can_hold_smaller ... ok
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured
@@ -371,7 +371,7 @@ Running the tests now produces:
 
 ```text
 running 2 tests
-test tests::smaller_can_hold_larger ... ok
+test tests::smaller_can_not_hold_larger ... ok
 test tests::larger_can_hold_smaller ... FAILED
 
 failures:
@@ -594,7 +594,7 @@ Now if we run the test again, we'll get a much more informative error message:
 
 ```text
 ---- tests::greeting_contains_name stdout ----
-	thread 'tests::greeting_contains_name' panicked at 'Result did not contain
+	thread 'tests::greeting_contains_name' panicked at 'Greeting did not contain
     name, value was `Hello`', src/lib.rs:12
 note: Run with `RUST_BACKTRACE=1` for a backtrace.
 ```
@@ -614,7 +614,7 @@ outside that range panics.
 
 We can do this by adding another attribute, `should_panic`, to our test
 function. This attribute makes a test pass if the code inside the function
-panics, and the test will fail if the code inside the function does non panic.
+panics, and the test will fail if the code inside the function does not panic.
 
 Listing 11-8 shows how we'd write a test that checks the error conditions of
 `Guess::new` happen when we expect:
@@ -633,7 +633,7 @@ impl Guess {
         }
 
         Guess {
-            value: value,
+            value
         }
     }
 }
@@ -679,7 +679,7 @@ impl Guess {
         }
 
         Guess {
-            value: value,
+            value
         }
     }
 }
@@ -731,7 +731,7 @@ impl Guess {
         }
 
         Guess {
-            value: value,
+            value
         }
     }
 }

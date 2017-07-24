@@ -54,15 +54,32 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// exception. If you need to mutate through an `Arc`, use [`Mutex`][mutex],
 /// [`RwLock`][rwlock], or one of the [`Atomic`][atomic] types.
 ///
-/// `Arc` uses atomic operations for reference counting, so `Arc`s can be
-/// sent between threads. In other words, `Arc<T>` implements [`Send`]
-/// as long as `T` implements [`Send`] and [`Sync`][sync]. The disadvantage is
-/// that atomic operations are more expensive than ordinary memory accesses.
-/// If you are not sharing reference-counted values between threads, consider
-/// using [`rc::Rc`][`Rc`] for lower overhead. [`Rc`] is a safe default, because
-/// the compiler will catch any attempt to send an [`Rc`] between threads.
-/// However, a library might choose `Arc` in order to give library consumers
+/// ## Thread Safety
+///
+/// Unlike [`Rc<T>`], `Arc<T>` uses atomic operations for its reference
+/// counting  This means that it is thread-safe. The disadvantage is that
+/// atomic operations are more expensive than ordinary memory accesses. If you
+/// are not sharing reference-counted values between threads, consider using
+/// [`Rc<T>`] for lower overhead. [`Rc<T>`] is a safe default, because the
+/// compiler will catch any attempt to send an [`Rc<T>`] between threads.
+/// However, a library might choose `Arc<T>` in order to give library consumers
 /// more flexibility.
+///
+/// `Arc<T>` will implement [`Send`] and [`Sync`] as long as the `T` implements
+/// [`Send`] and [`Sync`]. Why can't you put a non-thread-safe type `T` in an
+/// `Arc<T>` to make it thread-safe? This may be a bit counter-intuitive at
+/// first: after all, isn't the point of `Arc<T>` thread safety? The key is
+/// this: `Arc<T>` makes it thread safe to have multiple ownership of the same
+/// data, but it  doesn't add thread safety to its data. Consider
+/// `Arc<RefCell<T>>`. `RefCell<T>` isn't [`Sync`], and if `Arc<T>` was always
+/// [`Send`], `Arc<RefCell<T>>` would be as well. But then we'd have a problem:
+/// `RefCell<T>` is not thread safe; it keeps track of the borrowing count using
+/// non-atomic operations.
+///
+/// In the end, this means that you may need to pair `Arc<T>` with some sort of
+/// `std::sync` type, usually `Mutex<T>`.
+///
+/// ## Breaking cycles with `Weak`
 ///
 /// The [`downgrade`][downgrade] method can be used to create a non-owning
 /// [`Weak`][weak] pointer. A [`Weak`][weak] pointer can be [`upgrade`][upgrade]d
@@ -73,6 +90,26 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// [`Weak`][weak] is used to break cycles. For example, a tree could have
 /// strong `Arc` pointers from parent nodes to children, and [`Weak`][weak]
 /// pointers from children back to their parents.
+///
+/// # Cloning references
+///
+/// Creating a new reference from an existing reference counted pointer is done using the
+/// `Clone` trait implemented for [`Arc<T>`][`arc`] and [`Weak<T>`][`weak`].
+///
+/// ```
+/// use std::sync::Arc;
+/// let foo = Arc::new(vec![1.0, 2.0, 3.0]);
+/// // The two syntaxes below are equivalent.
+/// let a = foo.clone();
+/// let b = Arc::clone(&foo);
+/// // a and b both point to the same memory location as foo.
+/// ```
+///
+/// The `Arc::clone(&from)` syntax is the most idiomatic because it conveys more explicitly
+/// the meaning of the code. In the example above, this syntax makes it easier to see that
+/// this code is creating a new reference rather than copying the whole content of foo.
+///
+/// ## `Deref` behavior
 ///
 /// `Arc<T>` automatically dereferences to `T` (via the [`Deref`][deref] trait),
 /// so you can call `T`'s methods on a value of type `Arc<T>`. To avoid name
@@ -91,13 +128,13 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 ///
 /// [arc]: struct.Arc.html
 /// [weak]: struct.Weak.html
-/// [`Rc`]: ../../std/rc/struct.Rc.html
+/// [`Rc<T>`]: ../../std/rc/struct.Rc.html
 /// [clone]: ../../std/clone/trait.Clone.html#tymethod.clone
 /// [mutex]: ../../std/sync/struct.Mutex.html
 /// [rwlock]: ../../std/sync/struct.RwLock.html
 /// [atomic]: ../../std/sync/atomic/index.html
 /// [`Send`]: ../../std/marker/trait.Send.html
-/// [sync]: ../../std/marker/trait.Sync.html
+/// [`Sync`]: ../../std/marker/trait.Sync.html
 /// [deref]: ../../std/ops/trait.Deref.html
 /// [downgrade]: struct.Arc.html#method.downgrade
 /// [upgrade]: struct.Weak.html#method.upgrade
@@ -119,7 +156,7 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// let five = Arc::new(5);
 ///
 /// for _ in 0..10 {
-///     let five = five.clone();
+///     let five = Arc::clone(&five);
 ///
 ///     thread::spawn(move || {
 ///         println!("{:?}", five);
@@ -139,7 +176,7 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// let val = Arc::new(AtomicUsize::new(5));
 ///
 /// for _ in 0..10 {
-///     let val = val.clone();
+///     let val = Arc::clone(&val);
 ///
 ///     thread::spawn(move || {
 ///         let v = val.fetch_add(1, Ordering::SeqCst);
@@ -263,7 +300,7 @@ impl<T> Arc<T> {
     /// assert_eq!(Arc::try_unwrap(x), Ok(3));
     ///
     /// let x = Arc::new(4);
-    /// let _y = x.clone();
+    /// let _y = Arc::clone(&x);
     /// assert_eq!(*Arc::try_unwrap(x).unwrap_err(), 4);
     /// ```
     #[inline]
@@ -277,8 +314,7 @@ impl<T> Arc<T> {
         atomic::fence(Acquire);
 
         unsafe {
-            let ptr = *this.ptr;
-            let elem = ptr::read(&(*ptr).data);
+            let elem = ptr::read(&this.ptr.as_ref().data);
 
             // Make a weak pointer to clean up the implicit strong-weak reference
             let _weak = Weak { ptr: this.ptr };
@@ -306,7 +342,7 @@ impl<T> Arc<T> {
     /// ```
     #[stable(feature = "rc_raw", since = "1.17.0")]
     pub fn into_raw(this: Self) -> *const T {
-        let ptr = unsafe { &(**this.ptr).data as *const _ };
+        let ptr: *const T = &*this;
         mem::forget(this);
         ptr
     }
@@ -345,7 +381,7 @@ impl<T> Arc<T> {
         // `data` field from the pointer.
         let ptr = (ptr as *const u8).offset(-offset_of!(ArcInner<T>, data));
         Arc {
-            ptr: Shared::new(ptr as *const _),
+            ptr: Shared::new(ptr as *mut u8 as *mut _),
         }
     }
 }
@@ -433,7 +469,7 @@ impl<T: ?Sized> Arc<T> {
     /// use std::sync::Arc;
     ///
     /// let five = Arc::new(5);
-    /// let _also_five = five.clone();
+    /// let _also_five = Arc::clone(&five);
     ///
     /// // This assertion is deterministic because we haven't shared
     /// // the `Arc` between threads.
@@ -452,17 +488,17 @@ impl<T: ?Sized> Arc<T> {
         // `ArcInner` structure itself is `Sync` because the inner data is
         // `Sync` as well, so we're ok loaning out an immutable pointer to these
         // contents.
-        unsafe { &**self.ptr }
+        unsafe { self.ptr.as_ref() }
     }
 
     // Non-inlined part of `drop`.
     #[inline(never)]
     unsafe fn drop_slow(&mut self) {
-        let ptr = self.ptr.as_mut_ptr();
+        let ptr = self.ptr.as_ptr();
 
         // Destroy the data at this time, even though we may not free the box
         // allocation itself (there may still be weak pointers lying around).
-        ptr::drop_in_place(&mut (*ptr).data);
+        ptr::drop_in_place(&mut self.ptr.as_mut().data);
 
         if self.inner().weak.fetch_sub(1, Release) == 1 {
             atomic::fence(Acquire);
@@ -481,16 +517,14 @@ impl<T: ?Sized> Arc<T> {
     /// use std::sync::Arc;
     ///
     /// let five = Arc::new(5);
-    /// let same_five = five.clone();
+    /// let same_five = Arc::clone(&five);
     /// let other_five = Arc::new(5);
     ///
     /// assert!(Arc::ptr_eq(&five, &same_five));
     /// assert!(!Arc::ptr_eq(&five, &other_five));
     /// ```
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
-        let this_ptr: *const ArcInner<T> = *this.ptr;
-        let other_ptr: *const ArcInner<T> = *other.ptr;
-        this_ptr == other_ptr
+        this.ptr.as_ptr() == other.ptr.as_ptr()
     }
 }
 
@@ -508,7 +542,7 @@ impl<T: ?Sized> Clone for Arc<T> {
     ///
     /// let five = Arc::new(5);
     ///
-    /// five.clone();
+    /// Arc::clone(&five);
     /// ```
     #[inline]
     fn clone(&self) -> Arc<T> {
@@ -575,7 +609,7 @@ impl<T: Clone> Arc<T> {
     /// let mut data = Arc::new(5);
     ///
     /// *Arc::make_mut(&mut data) += 1;         // Won't clone anything
-    /// let mut other_data = data.clone();      // Won't clone inner data
+    /// let mut other_data = Arc::clone(&data); // Won't clone inner data
     /// *Arc::make_mut(&mut data) += 1;         // Clones inner data
     /// *Arc::make_mut(&mut data) += 1;         // Won't clone anything
     /// *Arc::make_mut(&mut other_data) *= 2;   // Won't clone anything
@@ -621,7 +655,7 @@ impl<T: Clone> Arc<T> {
                 // here (due to zeroing) because data is no longer accessed by
                 // other threads (due to there being no more strong refs at this
                 // point).
-                let mut swap = Arc::new(ptr::read(&(**weak.ptr).data));
+                let mut swap = Arc::new(ptr::read(&weak.ptr.as_ref().data));
                 mem::swap(this, &mut swap);
                 mem::forget(swap);
             }
@@ -634,8 +668,7 @@ impl<T: Clone> Arc<T> {
         // As with `get_mut()`, the unsafety is ok because our reference was
         // either unique to begin with, or became one upon cloning the contents.
         unsafe {
-            let inner = &mut *this.ptr.as_mut_ptr();
-            &mut inner.data
+            &mut this.ptr.as_mut().data
         }
     }
 }
@@ -664,7 +697,7 @@ impl<T: ?Sized> Arc<T> {
     /// *Arc::get_mut(&mut x).unwrap() = 4;
     /// assert_eq!(*x, 4);
     ///
-    /// let _y = x.clone();
+    /// let _y = Arc::clone(&x);
     /// assert!(Arc::get_mut(&mut x).is_none());
     /// ```
     #[inline]
@@ -677,8 +710,7 @@ impl<T: ?Sized> Arc<T> {
             // the Arc itself to be `mut`, so we're returning the only possible
             // reference to the inner data.
             unsafe {
-                let inner = &mut *this.ptr.as_mut_ptr();
-                Some(&mut inner.data)
+                Some(&mut this.ptr.as_mut().data)
             }
         } else {
             None
@@ -737,7 +769,7 @@ unsafe impl<#[may_dangle] T: ?Sized> Drop for Arc<T> {
     /// }
     ///
     /// let foo  = Arc::new(Foo);
-    /// let foo2 = foo.clone();
+    /// let foo2 = Arc::clone(&foo);
     ///
     /// drop(foo);    // Doesn't print anything
     /// drop(foo2);   // Prints "dropped!"
@@ -767,7 +799,18 @@ unsafe impl<#[may_dangle] T: ?Sized> Drop for Arc<T> {
         // > through this reference must obviously happened before), and an
         // > "acquire" operation before deleting the object.
         //
+        // In particular, while the contents of an Arc are usually immutable, it's
+        // possible to have interior writes to something like a Mutex<T>. Since a
+        // Mutex is not acquired when it is deleted, we can't rely on its
+        // synchronization logic to make writes in thread A visible to a destructor
+        // running in thread B.
+        //
+        // Also note that the Acquire fence here could probably be replaced with an
+        // Acquire load, which could improve performance in highly-contended
+        // situations. See [2].
+        //
         // [1]: (www.boost.org/doc/libs/1_55_0/doc/html/atomic/usage_examples.html)
+        // [2]: (https://github.com/rust-lang/rust/pull/41714)
         atomic::fence(Acquire);
 
         unsafe {
@@ -867,7 +910,7 @@ impl<T: ?Sized> Weak<T> {
     #[inline]
     fn inner(&self) -> &ArcInner<T> {
         // See comments above for why this is "safe"
-        unsafe { &**self.ptr }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
@@ -878,11 +921,11 @@ impl<T: ?Sized> Clone for Weak<T> {
     /// # Examples
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use std::sync::{Arc, Weak};
     ///
     /// let weak_five = Arc::downgrade(&Arc::new(5));
     ///
-    /// weak_five.clone();
+    /// Weak::clone(&weak_five);
     /// ```
     #[inline]
     fn clone(&self) -> Weak<T> {
@@ -931,7 +974,7 @@ impl<T: ?Sized> Drop for Weak<T> {
     /// # Examples
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use std::sync::{Arc, Weak};
     ///
     /// struct Foo;
     ///
@@ -943,7 +986,7 @@ impl<T: ?Sized> Drop for Weak<T> {
     ///
     /// let foo = Arc::new(Foo);
     /// let weak_foo = Arc::downgrade(&foo);
-    /// let other_weak_foo = weak_foo.clone();
+    /// let other_weak_foo = Weak::clone(&weak_foo);
     ///
     /// drop(weak_foo);   // Doesn't print anything
     /// drop(foo);        // Prints "dropped!"
@@ -951,7 +994,7 @@ impl<T: ?Sized> Drop for Weak<T> {
     /// assert!(other_weak_foo.upgrade().is_none());
     /// ```
     fn drop(&mut self) {
-        let ptr = *self.ptr;
+        let ptr = self.ptr.as_ptr();
 
         // If we find out that we were the last weak pointer, then its time to
         // deallocate the data entirely. See the discussion in Arc::drop() about
@@ -1132,7 +1175,7 @@ impl<T: ?Sized + fmt::Debug> fmt::Debug for Arc<T> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: ?Sized> fmt::Pointer for Arc<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Pointer::fmt(&*self.ptr, f)
+        fmt::Pointer::fmt(&self.ptr, f)
     }
 }
 

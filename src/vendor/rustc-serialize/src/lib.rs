@@ -10,6 +10,13 @@
 
 //! Support code for encoding and decoding types.
 //!
+//! > **NOTE**: This crate is deprecated in favor of [`serde`]. No new feature
+//! > development will happen in this crate, although bug fixes proposed through
+//! > PRs will still be merged. It is very highly recommended by the Rust
+//! > Library Team that you use [`serde`], not this crate.
+//!
+//! [`serde`]: https://serde.rs
+//!
 //! # Usage
 //!
 //! This crate is [on crates.io](https://crates.io/crates/rustc-serialize) and

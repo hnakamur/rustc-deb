@@ -28,9 +28,7 @@
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <math.h>
 #include <stdlib.h>
-// Rust: need to upstream this
-// don't include ymath.h, it's not needed + pulls in the C++ stdlib for some reason
-// #include <ymath.h>
+#include <ymath.h>
 #endif
 
 #if defined(_MSC_VER) && !defined(__clang__)

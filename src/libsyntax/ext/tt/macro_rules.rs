@@ -27,8 +27,8 @@ use symbol::Symbol;
 use tokenstream::{TokenStream, TokenTree};
 
 use std::cell::RefCell;
-use std::collections::{HashMap};
-use std::collections::hash_map::{Entry};
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::rc::Rc;
 
 pub struct ParserAnyMacro<'a> {
@@ -84,8 +84,14 @@ impl TTMacroExpander for MacroRulesMacroExpander {
     }
 }
 
+fn trace_macros_note(cx: &mut ExtCtxt, sp: Span, message: String) {
+    let sp = sp.macro_backtrace().last().map(|trace| trace.call_site).unwrap_or(sp);
+    let mut values: &mut Vec<String> = cx.expansions.entry(sp).or_insert_with(Vec::new);
+    values.push(message);
+}
+
 /// Given `lhses` and `rhses`, this is the new macro we create
-fn generic_extension<'cx>(cx: &'cx ExtCtxt,
+fn generic_extension<'cx>(cx: &'cx mut ExtCtxt,
                           sp: Span,
                           name: ast::Ident,
                           arg: TokenStream,
@@ -93,7 +99,7 @@ fn generic_extension<'cx>(cx: &'cx ExtCtxt,
                           rhses: &[quoted::TokenTree])
                           -> Box<MacResult+'cx> {
     if cx.trace_macros() {
-        println!("{}! {{ {} }}", name, arg);
+        trace_macros_note(cx, sp, format!("expanding `{}! {{ {} }}`", name, arg));
     }
 
     // Which arm's failure should we report? (the one furthest along)
@@ -115,11 +121,16 @@ fn generic_extension<'cx>(cx: &'cx ExtCtxt,
                 };
                 // rhs has holes ( `$id` and `$(...)` that need filled)
                 let tts = transcribe(&cx.parse_sess.span_diagnostic, Some(named_matches), rhs);
+
+                if cx.trace_macros() {
+                    trace_macros_note(cx, sp, format!("to `{}`", tts));
+                }
+
                 let directory = Directory {
                     path: cx.current_expansion.module.directory.clone(),
                     ownership: cx.current_expansion.directory_ownership,
                 };
-                let mut p = Parser::new(cx.parse_sess(), tts, Some(directory), false);
+                let mut p = Parser::new(cx.parse_sess(), tts, Some(directory), true, false);
                 p.root_module_name = cx.current_expansion.module.mod_path.last()
                     .map(|id| id.name.as_str().to_string());
 
@@ -160,6 +171,12 @@ pub fn compile(sess: &ParseSess, features: &RefCell<Features>, def: &ast::Item) 
     let lhs_nm = ast::Ident::with_empty_ctxt(Symbol::gensym("lhs"));
     let rhs_nm = ast::Ident::with_empty_ctxt(Symbol::gensym("rhs"));
 
+    // Parse the macro_rules! invocation
+    let body = match def.node {
+        ast::ItemKind::MacroDef(ref body) => body,
+        _ => unreachable!(),
+    };
+
     // The pattern that macro_rules matches.
     // The grammar for macro_rules! is:
     // $( $lhs:tt => $rhs:tt );+
@@ -172,7 +189,7 @@ pub fn compile(sess: &ParseSess, features: &RefCell<Features>, def: &ast::Item) 
                 quoted::TokenTree::Token(DUMMY_SP, token::FatArrow),
                 quoted::TokenTree::MetaVarDecl(DUMMY_SP, rhs_nm, ast::Ident::from_str("tt")),
             ],
-            separator: Some(token::Semi),
+            separator: Some(if body.legacy { token::Semi } else { token::Comma }),
             op: quoted::KleeneOp::OneOrMore,
             num_captures: 2,
         })),
@@ -185,12 +202,7 @@ pub fn compile(sess: &ParseSess, features: &RefCell<Features>, def: &ast::Item) 
         })),
     ];
 
-    // Parse the macro_rules! invocation
-    let body = match def.node {
-        ast::ItemKind::MacroDef(ref body) => body.clone().into(),
-        _ => unreachable!(),
-    };
-    let argument_map = match parse(sess, body, &argument_gram, None) {
+    let argument_map = match parse(sess, body.stream(), &argument_gram, None, true) {
         Success(m) => m,
         Failure(sp, tok) => {
             let s = parse_failure_msg(tok);
@@ -204,7 +216,7 @@ pub fn compile(sess: &ParseSess, features: &RefCell<Features>, def: &ast::Item) 
     let mut valid = true;
 
     // Extract the arguments:
-    let lhses = match **argument_map.get(&lhs_nm).unwrap() {
+    let lhses = match *argument_map[&lhs_nm] {
         MatchedSeq(ref s, _) => {
             s.iter().map(|m| {
                 if let MatchedNonterminal(ref nt) = **m {
@@ -220,7 +232,7 @@ pub fn compile(sess: &ParseSess, features: &RefCell<Features>, def: &ast::Item) 
         _ => sess.span_diagnostic.span_bug(def.span, "wrong-structured lhs")
     };
 
-    let rhses = match **argument_map.get(&rhs_nm).unwrap() {
+    let rhses = match *argument_map[&rhs_nm] {
         MatchedSeq(ref s, _) => {
             s.iter().map(|m| {
                 if let MatchedNonterminal(ref nt) = **m {
@@ -250,7 +262,12 @@ pub fn compile(sess: &ParseSess, features: &RefCell<Features>, def: &ast::Item) 
         valid: valid,
     });
 
-    NormalTT(exp, Some(def.span), attr::contains_name(&def.attrs, "allow_internal_unstable"))
+    if body.legacy {
+        let allow_internal_unstable = attr::contains_name(&def.attrs, "allow_internal_unstable");
+        NormalTT(exp, Some((def.id, def.span)), allow_internal_unstable)
+    } else {
+        SyntaxExtension::DeclMacro(exp, Some((def.id, def.span)))
+    }
 }
 
 fn check_lhs_nt_follows(sess: &ParseSess,
@@ -258,13 +275,12 @@ fn check_lhs_nt_follows(sess: &ParseSess,
                         lhs: &quoted::TokenTree) -> bool {
     // lhs is going to be like TokenTree::Delimited(...), where the
     // entire lhs is those tts. Or, it can be a "bare sequence", not wrapped in parens.
-    match lhs {
-        &quoted::TokenTree::Delimited(_, ref tts) => check_matcher(sess, features, &tts.tts),
-        _ => {
-            let msg = "invalid macro matcher; matchers must be contained in balanced delimiters";
-            sess.span_diagnostic.span_err(lhs.span(), msg);
-            false
-        }
+    if let quoted::TokenTree::Delimited(_, ref tts) = *lhs {
+        check_matcher(sess, features, &tts.tts)
+    } else {
+        let msg = "invalid macro matcher; matchers must be contained in balanced delimiters";
+        sess.span_diagnostic.span_err(lhs.span(), msg);
+        false
     }
     // we don't abort on errors on rejection, the driver will do that for us
     // after parsing/expansion. we can report every error in every macro this way.
@@ -281,17 +297,15 @@ fn check_lhs_no_empty_seq(sess: &ParseSess, tts: &[quoted::TokenTree]) -> bool {
                 return false;
             },
             TokenTree::Sequence(span, ref seq) => {
-                if seq.separator.is_none() {
-                    if seq.tts.iter().all(|seq_tt| {
-                        match *seq_tt {
-                            TokenTree::Sequence(_, ref sub_seq) =>
-                                sub_seq.op == quoted::KleeneOp::ZeroOrMore,
-                            _ => false,
-                        }
-                    }) {
-                        sess.span_diagnostic.span_err(span, "repetition matches empty token tree");
-                        return false;
+                if seq.separator.is_none() && seq.tts.iter().all(|seq_tt| {
+                    match *seq_tt {
+                        TokenTree::Sequence(_, ref sub_seq) =>
+                            sub_seq.op == quoted::KleeneOp::ZeroOrMore,
+                        _ => false,
                     }
+                }) {
+                    sess.span_diagnostic.span_err(span, "repetition matches empty token tree");
+                    return false;
                 }
                 if !check_lhs_no_empty_seq(sess, &seq.tts) {
                     return false;
@@ -405,7 +419,7 @@ impl FirstSets {
                 }
             }
 
-            return first;
+            first
         }
     }
 
@@ -467,7 +481,7 @@ impl FirstSets {
         // we only exit the loop if `tts` was empty or if every
         // element of `tts` matches the empty sequence.
         assert!(first.maybe_empty);
-        return first;
+        first
     }
 }
 
@@ -577,7 +591,7 @@ fn check_matcher_core(sess: &ParseSess,
         let build_suffix_first = || {
             let mut s = first_sets.first(suffix);
             if s.maybe_empty { s.add_all(follow); }
-            return s;
+            s
         };
 
         // (we build `suffix_first` on demand below; you can tell
@@ -859,6 +873,7 @@ fn quoted_tt_to_string(tt: &quoted::TokenTree) -> String {
     match *tt {
         quoted::TokenTree::Token(_, ref tok) => ::print::pprust::token_to_string(tok),
         quoted::TokenTree::MetaVarDecl(_, name, kind) => format!("${}:{}", name, kind),
-        _ => panic!("unexpected quoted::TokenTree::{Sequence or Delimited} in follow set checker"),
+        _ => panic!("unexpected quoted::TokenTree::{{Sequence or Delimited}} \
+                     in follow set checker"),
     }
 }

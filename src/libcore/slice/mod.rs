@@ -51,6 +51,7 @@ use mem;
 use marker::{Copy, Send, Sync, Sized, self};
 use iter_private::TrustedRandomAccess;
 
+mod rotate;
 mod sort;
 
 #[repr(C)]
@@ -201,6 +202,9 @@ pub trait SliceExt {
 
     #[stable(feature = "core", since = "1.6.0")]
     fn ends_with(&self, needle: &[Self::Item]) -> bool where Self::Item: PartialEq;
+
+    #[unstable(feature = "slice_rotate", issue = "41891")]
+    fn rotate(&mut self, mid: usize);
 
     #[stable(feature = "clone_from_slice", since = "1.7.0")]
     fn clone_from_slice(&mut self, src: &[Self::Item]) where Self::Item: Clone;
@@ -539,6 +543,55 @@ impl<T> SliceExt for [T] {
     fn reverse(&mut self) {
         let mut i: usize = 0;
         let ln = self.len();
+
+        // For very small types, all the individual reads in the normal
+        // path perform poorly.  We can do better, given efficient unaligned
+        // load/store, by loading a larger chunk and reversing a register.
+
+        // Ideally LLVM would do this for us, as it knows better than we do
+        // whether unaligned reads are efficient (since that changes between
+        // different ARM versions, for example) and what the best chunk size
+        // would be.  Unfortunately, as of LLVM 4.0 (2017-05) it only unrolls
+        // the loop, so we need to do this ourselves.  (Hypothesis: reverse
+        // is troublesome because the sides can be aligned differently --
+        // will be, when the length is odd -- so there's no way of emitting
+        // pre- and postludes to use fully-aligned SIMD in the middle.)
+
+        let fast_unaligned =
+            cfg!(any(target_arch = "x86", target_arch = "x86_64"));
+
+        if fast_unaligned && mem::size_of::<T>() == 1 {
+            // Use the llvm.bswap intrinsic to reverse u8s in a usize
+            let chunk = mem::size_of::<usize>();
+            while i + chunk - 1 < ln / 2 {
+                unsafe {
+                    let pa: *mut T = self.get_unchecked_mut(i);
+                    let pb: *mut T = self.get_unchecked_mut(ln - i - chunk);
+                    let va = ptr::read_unaligned(pa as *mut usize);
+                    let vb = ptr::read_unaligned(pb as *mut usize);
+                    ptr::write_unaligned(pa as *mut usize, vb.swap_bytes());
+                    ptr::write_unaligned(pb as *mut usize, va.swap_bytes());
+                }
+                i += chunk;
+            }
+        }
+
+        if fast_unaligned && mem::size_of::<T>() == 2 {
+            // Use rotate-by-16 to reverse u16s in a u32
+            let chunk = mem::size_of::<u32>() / 2;
+            while i + chunk - 1 < ln / 2 {
+                unsafe {
+                    let pa: *mut T = self.get_unchecked_mut(i);
+                    let pb: *mut T = self.get_unchecked_mut(ln - i - chunk);
+                    let va = ptr::read_unaligned(pa as *mut u32);
+                    let vb = ptr::read_unaligned(pb as *mut u32);
+                    ptr::write_unaligned(pa as *mut u32, vb.rotate_left(16));
+                    ptr::write_unaligned(pb as *mut u32, va.rotate_left(16));
+                }
+                i += chunk;
+            }
+        }
+
         while i < ln / 2 {
             // Unsafe swap to avoid the bounds check in safe swap.
             unsafe {
@@ -584,6 +637,16 @@ impl<T> SliceExt for [T] {
               Q: Ord
     {
         self.binary_search_by(|p| p.borrow().cmp(x))
+    }
+
+    fn rotate(&mut self, mid: usize) {
+        assert!(mid <= self.len());
+        let k = self.len() - mid;
+
+        unsafe {
+            let p = self.as_mut_ptr();
+            rotate::ptr_rotate(mid, p.offset(mid as isize), k);
+        }
     }
 
     #[inline]
@@ -932,61 +995,48 @@ impl<T> SliceIndex<[T]> for ops::RangeInclusive<usize> {
 
     #[inline]
     fn get(self, slice: &[T]) -> Option<&[T]> {
-        match self {
-            ops::RangeInclusive::Empty { .. } => Some(&[]),
-            ops::RangeInclusive::NonEmpty { end, .. } if end == usize::max_value() => None,
-            ops::RangeInclusive::NonEmpty { start, end } => (start..end + 1).get(slice),
-        }
+        if self.end == usize::max_value() { None }
+        else { (self.start..self.end + 1).get(slice) }
     }
 
     #[inline]
     fn get_mut(self, slice: &mut [T]) -> Option<&mut [T]> {
-        match self {
-            ops::RangeInclusive::Empty { .. } => Some(&mut []),
-            ops::RangeInclusive::NonEmpty { end, .. } if end == usize::max_value() => None,
-            ops::RangeInclusive::NonEmpty { start, end } => (start..end + 1).get_mut(slice),
-        }
+        if self.end == usize::max_value() { None }
+        else { (self.start..self.end + 1).get_mut(slice) }
     }
 
     #[inline]
     unsafe fn get_unchecked(self, slice: &[T]) -> &[T] {
-        match self {
-            ops::RangeInclusive::Empty { .. } => &[],
-            ops::RangeInclusive::NonEmpty { start, end } => (start..end + 1).get_unchecked(slice),
-        }
+        (self.start..self.end + 1).get_unchecked(slice)
     }
 
     #[inline]
     unsafe fn get_unchecked_mut(self, slice: &mut [T]) -> &mut [T] {
-        match self {
-            ops::RangeInclusive::Empty { .. } => &mut [],
-            ops::RangeInclusive::NonEmpty { start, end } => {
-                (start..end + 1).get_unchecked_mut(slice)
-            }
-        }
+        (self.start..self.end + 1).get_unchecked_mut(slice)
     }
 
     #[inline]
     fn index(self, slice: &[T]) -> &[T] {
-        match self {
-            ops::RangeInclusive::Empty { .. } => &[],
-            ops::RangeInclusive::NonEmpty { end, .. } if end == usize::max_value() => {
-                panic!("attempted to index slice up to maximum usize");
-            },
-            ops::RangeInclusive::NonEmpty { start, end } => (start..end + 1).index(slice),
-        }
+        assert!(self.end != usize::max_value(),
+            "attempted to index slice up to maximum usize");
+        (self.start..self.end + 1).index(slice)
     }
 
     #[inline]
     fn index_mut(self, slice: &mut [T]) -> &mut [T] {
-        match self {
-            ops::RangeInclusive::Empty { .. } => &mut [],
-            ops::RangeInclusive::NonEmpty { end, .. } if end == usize::max_value() => {
-                panic!("attempted to index slice up to maximum usize");
-            },
-            ops::RangeInclusive::NonEmpty { start, end } => (start..end + 1).index_mut(slice),
-        }
+        assert!(self.end != usize::max_value(),
+            "attempted to index slice up to maximum usize");
+        (self.start..self.end + 1).index_mut(slice)
     }
+}
+
+#[cfg(stage0)] // The bootstrap compiler has a different `...` desugar
+fn inclusive(start: usize, end: usize) -> ops::RangeInclusive<usize> {
+    ops::RangeInclusive { start, end }
+}
+#[cfg(not(stage0))]
+fn inclusive(start: usize, end: usize) -> ops::RangeInclusive<usize> {
+    start...end
 }
 
 #[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
@@ -995,32 +1045,32 @@ impl<T> SliceIndex<[T]> for ops::RangeToInclusive<usize> {
 
     #[inline]
     fn get(self, slice: &[T]) -> Option<&[T]> {
-        (0...self.end).get(slice)
+        inclusive(0, self.end).get(slice)
     }
 
     #[inline]
     fn get_mut(self, slice: &mut [T]) -> Option<&mut [T]> {
-        (0...self.end).get_mut(slice)
+        inclusive(0, self.end).get_mut(slice)
     }
 
     #[inline]
     unsafe fn get_unchecked(self, slice: &[T]) -> &[T] {
-        (0...self.end).get_unchecked(slice)
+        inclusive(0, self.end).get_unchecked(slice)
     }
 
     #[inline]
     unsafe fn get_unchecked_mut(self, slice: &mut [T]) -> &mut [T] {
-        (0...self.end).get_unchecked_mut(slice)
+        inclusive(0, self.end).get_unchecked_mut(slice)
     }
 
     #[inline]
     fn index(self, slice: &[T]) -> &[T] {
-        (0...self.end).index(slice)
+        inclusive(0, self.end).index(slice)
     }
 
     #[inline]
     fn index_mut(self, slice: &mut [T]) -> &mut [T] {
-        (0...self.end).index_mut(slice)
+        inclusive(0, self.end).index_mut(slice)
     }
 }
 
@@ -1401,7 +1451,7 @@ impl<'a, T> Clone for Iter<'a, T> {
     fn clone(&self) -> Iter<'a, T> { Iter { ptr: self.ptr, end: self.end, _marker: self._marker } }
 }
 
-#[stable(feature = "slice_iter_as_ref", since = "1.12.0")]
+#[stable(feature = "slice_iter_as_ref", since = "1.13.0")]
 impl<'a, T> AsRef<[T]> for Iter<'a, T> {
     fn as_ref(&self) -> &[T] {
         self.as_slice()
@@ -2354,7 +2404,10 @@ impl<'a, T> FusedIterator for ChunksMut<'a, T> {}
 /// valid for `len` elements, nor whether the lifetime inferred is a suitable
 /// lifetime for the returned slice.
 ///
-/// `p` must be non-null, even for zero-length slices.
+/// `p` must be non-null, even for zero-length slices, because non-zero bits
+/// are required to distinguish between a zero-length slice within `Some()`
+/// from `None`. `p` can be a bogus non-dereferencable pointer, such as `0x1`,
+/// for zero-length slices, though.
 ///
 /// # Caveat
 ///
@@ -2387,7 +2440,8 @@ pub unsafe fn from_raw_parts<'a, T>(p: *const T, len: usize) -> &'a [T] {
 ///
 /// This function is unsafe for the same reasons as `from_raw_parts`, as well
 /// as not being able to provide a non-aliasing guarantee of the returned
-/// mutable slice.
+/// mutable slice. `p` must be non-null even for zero-length slices as with
+/// `from_raw_parts`.
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub unsafe fn from_raw_parts_mut<'a, T>(p: *mut T, len: usize) -> &'a mut [T] {

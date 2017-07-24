@@ -675,6 +675,7 @@ pub const IGNCR: ::tcflag_t = 0x00000080;
 pub const ICRNL: ::tcflag_t = 0x00000100;
 pub const IXANY: ::tcflag_t = 0x00000800;
 pub const IMAXBEL: ::tcflag_t = 0x00002000;
+pub const IUTF8: ::tcflag_t = 0x00004000;
 pub const OPOST: ::tcflag_t = 0x1;
 pub const CS5: ::tcflag_t = 0x00000000;
 pub const CRTSCTS: ::tcflag_t = 0x80000000;
@@ -728,6 +729,10 @@ pub const POSIX_FADV_WILLNEED: ::c_int = 3;
 
 pub const AT_FDCWD: ::c_int = -100;
 pub const AT_SYMLINK_NOFOLLOW: ::c_int = 0x100;
+pub const AT_REMOVEDIR: ::c_int = 0x200;
+pub const AT_SYMLINK_FOLLOW: ::c_int = 0x400;
+pub const AT_NO_AUTOMOUNT: ::c_int = 0x800;
+pub const AT_EMPTY_PATH: ::c_int = 0x1000;
 
 pub const LOG_CRON: ::c_int = 9 << 3;
 pub const LOG_AUTHPRIV: ::c_int = 10 << 3;
@@ -745,6 +750,9 @@ pub const SIGEV_THREAD: ::c_int = 2;
 pub const P_ALL: idtype_t = 0;
 pub const P_PID: idtype_t = 1;
 pub const P_PGID: idtype_t = 2;
+
+pub const UTIME_OMIT: c_long = 1073741822;
+pub const UTIME_NOW: c_long = 1073741823;
 
 f! {
     pub fn FD_CLR(fd: ::c_int, set: *mut fd_set) -> () {
@@ -917,44 +925,26 @@ extern {
                   offset: off64_t)
                   -> *mut ::c_void;
     pub fn open64(path: *const c_char, oflag: ::c_int, ...) -> ::c_int;
+    pub fn openat64(fd: ::c_int,
+                    path: *const c_char,
+                    oflag: ::c_int, ...) -> ::c_int;
     pub fn pread64(fd: ::c_int, buf: *mut ::c_void, count: ::size_t,
                    offset: off64_t) -> ::ssize_t;
     pub fn pwrite64(fd: ::c_int, buf: *const ::c_void, count: ::size_t,
                     offset: off64_t) -> ::ssize_t;
+    pub fn readdir64(dirp: *mut ::DIR) -> *mut ::dirent64;
     pub fn readdir64_r(dirp: *mut ::DIR, entry: *mut ::dirent64,
                        result: *mut *mut ::dirent64) -> ::c_int;
     pub fn setrlimit64(resource: ::c_int, rlim: *const rlimit64) -> ::c_int;
     pub fn stat64(path: *const c_char, buf: *mut stat64) -> ::c_int;
+    pub fn truncate64(path: *const c_char, length: off64_t) -> ::c_int;
     pub fn eventfd(init: ::c_uint, flags: ::c_int) -> ::c_int;
     pub fn sysinfo (info: *mut ::sysinfo) -> ::c_int;
 
-    pub fn openat(dirfd: ::c_int, pathname: *const ::c_char,
-                  flags: ::c_int, ...) -> ::c_int;
-    pub fn faccessat(dirfd: ::c_int, pathname: *const ::c_char,
-                     mode: ::c_int, flags: ::c_int) -> ::c_int;
-    pub fn fchmodat(dirfd: ::c_int, pathname: *const ::c_char,
-                    mode: ::mode_t, flags: ::c_int) -> ::c_int;
-    pub fn fchownat(dirfd: ::c_int, pathname: *const ::c_char,
-                    owner: ::uid_t, group: ::gid_t,
-                    flags: ::c_int) -> ::c_int;
-    pub fn fstatat(dirfd: ::c_int, pathname: *const ::c_char,
-                   buf: *mut stat, flags: ::c_int) -> ::c_int;
-    pub fn linkat(olddirfd: ::c_int, oldpath: *const ::c_char,
-                  newdirfd: ::c_int, newpath: *const ::c_char,
-                  flags: ::c_int) -> ::c_int;
-    pub fn mkdirat(dirfd: ::c_int, pathname: *const ::c_char,
-                   mode: ::mode_t) -> ::c_int;
+    pub fn fdopendir(fd: ::c_int) -> *mut ::DIR;
+
     pub fn mknodat(dirfd: ::c_int, pathname: *const ::c_char,
                    mode: ::mode_t, dev: dev_t) -> ::c_int;
-    pub fn readlinkat(dirfd: ::c_int, pathname: *const ::c_char,
-                      buf: *mut ::c_char, bufsiz: ::size_t) -> ::ssize_t;
-    pub fn renameat(olddirfd: ::c_int, oldpath: *const ::c_char,
-                    newdirfd: ::c_int, newpath: *const ::c_char)
-                    -> ::c_int;
-    pub fn symlinkat(target: *const ::c_char, newdirfd: ::c_int,
-                     linkpath: *const ::c_char) -> ::c_int;
-    pub fn unlinkat(dirfd: ::c_int, pathname: *const ::c_char,
-                    flags: ::c_int) -> ::c_int;
     pub fn ppoll(fds: *mut ::pollfd,
                  nfds: nfds_t,
                  timeout: *const ::timespec,

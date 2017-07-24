@@ -11,10 +11,8 @@
 use rustc::hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc::hir;
 use rustc::hir::itemlikevisit::ItemLikeVisitor;
-use rustc::traits::{self, Reveal};
+use rustc::traits;
 use rustc::ty::{self, TyCtxt};
-
-use syntax_pos::DUMMY_SP;
 
 pub fn crate_inherent_impls_overlap_check<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                                     crate_num: CrateNum) {
@@ -58,9 +56,9 @@ impl<'a, 'tcx> InherentOverlapChecker<'a, 'tcx> {
                                      "duplicate definitions with name `{}`",
                                      name)
                         .span_label(self.tcx.span_of_impl(item1).unwrap(),
-                                    &format!("duplicate definitions for `{}`", name))
+                                    format!("duplicate definitions for `{}`", name))
                         .span_label(self.tcx.span_of_impl(item2).unwrap(),
-                                    &format!("other definition for `{}`", name))
+                                    format!("other definition for `{}`", name))
                         .emit();
                 }
             }
@@ -68,11 +66,11 @@ impl<'a, 'tcx> InherentOverlapChecker<'a, 'tcx> {
     }
 
     fn check_for_overlapping_inherent_impls(&self, ty_def_id: DefId) {
-        let impls = ty::queries::inherent_impls::get(self.tcx, DUMMY_SP, ty_def_id);
+        let impls = self.tcx.inherent_impls(ty_def_id);
 
         for (i, &impl1_def_id) in impls.iter().enumerate() {
             for &impl2_def_id in &impls[(i + 1)..] {
-                self.tcx.infer_ctxt((), Reveal::UserFacing).enter(|infcx| {
+                self.tcx.infer_ctxt(()).enter(|infcx| {
                     if traits::overlapping_impls(&infcx, impl1_def_id, impl2_def_id).is_some() {
                         self.check_for_common_items_in_impls(impl1_def_id, impl2_def_id)
                     }

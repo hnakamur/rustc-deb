@@ -38,7 +38,31 @@ use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
 
 fn main() {
-    let args = env::args_os().skip(1).collect::<Vec<_>>();
+    let mut args = env::args_os().skip(1).collect::<Vec<_>>();
+
+    // Append metadata suffix for internal crates. See the corresponding entry
+    // in bootstrap/lib.rs for details.
+    if let Ok(s) = env::var("RUSTC_METADATA_SUFFIX") {
+        for i in 1..args.len() {
+            // Dirty code for borrowing issues
+            let mut new = None;
+            if let Some(current_as_str) = args[i].to_str() {
+                if (&*args[i - 1] == "-C" && current_as_str.starts_with("metadata")) ||
+                   current_as_str.starts_with("-Cmetadata") {
+                    new = Some(format!("{}-{}", current_as_str, s));
+                }
+            }
+            if let Some(new) = new { args[i] = new.into(); }
+        }
+    }
+
+    // Drop `--error-format json` because despite our desire for json messages
+    // from Cargo we don't want any from rustc itself.
+    if let Some(n) = args.iter().position(|n| n == "--error-format") {
+        args.remove(n);
+        args.remove(n);
+    }
+
     // Detect whether or not we're a build script depending on whether --target
     // is passed (a bit janky...)
     let target = args.windows(2)
@@ -194,6 +218,8 @@ fn main() {
                 // do that we pass a weird flag to the compiler to get it to do
                 // so. Note that this is definitely a hack, and we should likely
                 // flesh out rpath support more fully in the future.
+                //
+                // FIXME: remove condition after next stage0
                 if stage != "0" {
                     cmd.arg("-Z").arg("osx-rpath-install-name");
                 }
@@ -206,17 +232,22 @@ fn main() {
             if let Some(rpath) = rpath {
                 cmd.arg("-C").arg(format!("link-args={}", rpath));
             }
-
-            if let Ok(s) = env::var("RUSTFLAGS") {
-                for flag in s.split_whitespace() {
-                    cmd.arg(flag);
-                }
-            }
         }
 
         if target.contains("pc-windows-msvc") {
             cmd.arg("-Z").arg("unstable-options");
             cmd.arg("-C").arg("target-feature=+crt-static");
+        }
+
+        // Force all crates compiled by this compiler to (a) be unstable and (b)
+        // allow the `rustc_private` feature to link to other unstable crates
+        // also in the sysroot.
+        //
+        // FIXME: remove condition after next stage0
+        if env::var_os("RUSTC_FORCE_UNSTABLE").is_some() {
+            if stage != "0" {
+                cmd.arg("-Z").arg("force-unstable-if-unmarked");
+            }
         }
     }
 

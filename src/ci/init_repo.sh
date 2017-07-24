@@ -13,10 +13,10 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
-set -o xtrace
-
 ci_dir=$(cd $(dirname $0) && pwd)
 . "$ci_dir/shared.sh"
+
+travis_fold start init_repo
 
 REPO_DIR="$1"
 CACHE_DIR="$2"
@@ -38,6 +38,7 @@ fi
 
 # Wipe the cache if it's not valid, or mark it as invalid while we update it
 if [ ! -f "$cache_valid_file" ]; then
+    echo "Invalid cache, wiping ($cache_valid_file missing)"
     rm -rf "$CACHE_DIR"
     mkdir "$CACHE_DIR"
 else
@@ -54,9 +55,13 @@ else
         rm -rf "$CACHE_DIR"
         mkdir "$CACHE_DIR"
     else
+        echo "Valid cache ($cache_valid_file exists)"
         rm "$cache_valid_file"
     fi
 fi
+
+travis_fold start update_cache
+travis_time_start
 
 # Update the cache (a pristine copy of the rust source master)
 if [ ! -d "$cache_src_dir/.git" ]; then
@@ -64,11 +69,19 @@ if [ ! -d "$cache_src_dir/.git" ]; then
         git clone https://github.com/rust-lang/rust.git $cache_src_dir"
 fi
 retry sh -c "cd $cache_src_dir && git reset --hard && git pull"
+(cd $cache_src_dir && git rm src/llvm)
 retry sh -c "cd $cache_src_dir && \
     git submodule deinit -f . && git submodule sync && git submodule update --init"
 
 # Cache was updated without errors, mark it as valid
+echo "Refreshed cache (touch $cache_valid_file)"
 touch "$cache_valid_file"
+
+travis_fold end update_cache
+travis_time_finish
+
+travis_fold start update_submodules
+travis_time_start
 
 # Update the submodules of the repo we're in, using the pristine repo as
 # a cache for any object files
@@ -76,6 +89,15 @@ touch "$cache_valid_file"
 # http://stackoverflow.com/questions/12641469/list-submodules-in-a-git-repository
 modules="$(git config --file .gitmodules --get-regexp '\.path$' | cut -d' ' -f2)"
 for module in $modules; do
+    if [ "$module" = src/llvm ]; then
+        commit="$(git ls-tree HEAD src/llvm | awk '{print $3}')"
+        git rm src/llvm
+        curl -sSL -O "https://github.com/rust-lang/llvm/archive/$commit.tar.gz"
+        tar -C src/ -xf "$commit.tar.gz"
+        rm "$commit.tar.gz"
+        mv "src/llvm-$commit" src/llvm
+        continue
+    fi
     if [ ! -d "$cache_src_dir/$module" ]; then
         echo "WARNING: $module not found in pristine repo"
         retry sh -c "git submodule deinit -f $module && git submodule update --init $module"
@@ -84,3 +106,8 @@ for module in $modules; do
     retry sh -c "git submodule deinit -f $module && \
         git submodule update --init --reference $cache_src_dir/$module $module"
 done
+
+travis_fold end update_submodules
+travis_time_finish
+
+travis_fold end init_repo

@@ -36,6 +36,7 @@ use rustc::ty::subst::Substs;
 use rustc::ty::{self, AdtKind};
 use rustc::middle::stability;
 use rustc::util::nodemap::{FxHashMap, FxHashSet};
+use rustc_typeck::hir_ty_to_ty;
 
 use rustc::hir;
 
@@ -503,7 +504,7 @@ impl<'a> Iterator for ListAttributesIter<'a> {
 
 pub trait AttributesExt {
     /// Finds an attribute as List and returns the list of attributes nested inside.
-    fn lists<'a>(&'a self, &'a str) -> ListAttributesIter<'a>;
+    fn lists<'a>(&'a self, name: &'a str) -> ListAttributesIter<'a>;
 }
 
 impl AttributesExt for [ast::Attribute] {
@@ -518,7 +519,7 @@ impl AttributesExt for [ast::Attribute] {
 
 pub trait NestedAttributesExt {
     /// Returns whether the attribute list contains a specific `Word`
-    fn has_word(self, &str) -> bool;
+    fn has_word(self, word: &str) -> bool;
 }
 
 impl<I: IntoIterator<Item=ast::NestedMetaItem>> NestedAttributesExt for I {
@@ -606,7 +607,7 @@ impl<'tcx> Clean<TyParam> for ty::TypeParameterDef {
             did: self.def_id,
             bounds: vec![], // these are filled in from the where-clauses
             default: if self.has_default {
-                Some(cx.tcx.item_type(self.def_id).clean(cx))
+                Some(cx.tcx.type_of(self.def_id).clean(cx))
             } else {
                 None
             }
@@ -726,7 +727,7 @@ impl<'tcx> Clean<TyParamBound> for ty::TraitRef<'tcx> {
             if let ty::TyTuple(ts, _) = ty_s.sty {
                 for &ty_s in ts {
                     if let ty::TyRef(ref reg, _) = ty_s.sty {
-                        if let &ty::Region::ReLateBound(..) = *reg {
+                        if let &ty::RegionKind::ReLateBound(..) = *reg {
                             debug!("  hit an ReLateBound {:?}", reg);
                             if let Some(lt) = reg.clean(cx) {
                                 late_bounds.push(lt);
@@ -819,7 +820,7 @@ impl Clean<Lifetime> for ty::RegionParameterDef {
     }
 }
 
-impl Clean<Option<Lifetime>> for ty::Region {
+impl Clean<Option<Lifetime>> for ty::RegionKind {
     fn clean(&self, cx: &DocContext) -> Option<Lifetime> {
         match *self {
             ty::ReStatic => Some(Lifetime::statik()),
@@ -915,7 +916,7 @@ impl<'tcx> Clean<WherePredicate> for ty::SubtypePredicate<'tcx> {
     }
 }
 
-impl<'tcx> Clean<WherePredicate> for ty::OutlivesPredicate<&'tcx ty::Region, &'tcx ty::Region> {
+impl<'tcx> Clean<WherePredicate> for ty::OutlivesPredicate<ty::Region<'tcx>, ty::Region<'tcx>> {
     fn clean(&self, cx: &DocContext) -> WherePredicate {
         let ty::OutlivesPredicate(ref a, ref b) = *self;
         WherePredicate::RegionPredicate {
@@ -925,7 +926,7 @@ impl<'tcx> Clean<WherePredicate> for ty::OutlivesPredicate<&'tcx ty::Region, &'t
     }
 }
 
-impl<'tcx> Clean<WherePredicate> for ty::OutlivesPredicate<ty::Ty<'tcx>, &'tcx ty::Region> {
+impl<'tcx> Clean<WherePredicate> for ty::OutlivesPredicate<ty::Ty<'tcx>, ty::Region<'tcx>> {
     fn clean(&self, cx: &DocContext) -> WherePredicate {
         let ty::OutlivesPredicate(ref ty, ref lt) = *self;
 
@@ -954,7 +955,7 @@ impl<'tcx> Clean<Type> for ty::ProjectionTy<'tcx> {
             }
         };
         Type::QPath {
-            name: self.item_name.clean(cx),
+            name: self.item_name(cx.tcx).clean(cx),
             self_type: box self.trait_ref.self_ty().clean(cx),
             trait_: box trait_
         }
@@ -1179,7 +1180,7 @@ impl<'a, 'tcx> Clean<FnDecl> for (DefId, ty::PolyFnSig<'tcx>) {
         let mut names = if cx.tcx.hir.as_local_node_id(did).is_some() {
             vec![].into_iter()
         } else {
-            cx.tcx.sess.cstore.fn_arg_names(did).into_iter()
+            cx.tcx.fn_arg_names(did).into_iter()
         }.peekable();
         FnDecl {
             output: Return(sig.skip_binder().output().clean(cx)),
@@ -1356,19 +1357,19 @@ impl<'tcx> Clean<Item> for ty::AssociatedItem {
     fn clean(&self, cx: &DocContext) -> Item {
         let inner = match self.kind {
             ty::AssociatedKind::Const => {
-                let ty = cx.tcx.item_type(self.def_id);
+                let ty = cx.tcx.type_of(self.def_id);
                 AssociatedConstItem(ty.clean(cx), None)
             }
             ty::AssociatedKind::Method => {
-                let generics = (cx.tcx.item_generics(self.def_id),
-                                &cx.tcx.item_predicates(self.def_id)).clean(cx);
-                let sig = cx.tcx.item_type(self.def_id).fn_sig();
+                let generics = (cx.tcx.generics_of(self.def_id),
+                                &cx.tcx.predicates_of(self.def_id)).clean(cx);
+                let sig = cx.tcx.type_of(self.def_id).fn_sig();
                 let mut decl = (self.def_id, sig).clean(cx);
 
                 if self.method_has_self_argument {
                     let self_ty = match self.container {
                         ty::ImplContainer(def_id) => {
-                            cx.tcx.item_type(def_id)
+                            cx.tcx.type_of(def_id)
                         }
                         ty::TraitContainer(_) => cx.tcx.mk_self_type()
                     };
@@ -1418,8 +1419,8 @@ impl<'tcx> Clean<Item> for ty::AssociatedItem {
                     // are actually located on the trait/impl itself, so we need to load
                     // all of the generics from there and then look for bounds that are
                     // applied to this associated type in question.
-                    let predicates = cx.tcx.item_predicates(did);
-                    let generics = (cx.tcx.item_generics(did), &predicates).clean(cx);
+                    let predicates = cx.tcx.predicates_of(did);
+                    let generics = (cx.tcx.generics_of(did), &predicates).clean(cx);
                     generics.where_predicates.iter().filter_map(|pred| {
                         let (name, self_type, trait_, bounds) = match *pred {
                             WherePredicate::BoundPredicate {
@@ -1454,7 +1455,7 @@ impl<'tcx> Clean<Item> for ty::AssociatedItem {
                 }
 
                 let ty = if self.defaultness.has_value() {
-                    Some(cx.tcx.item_type(self.def_id))
+                    Some(cx.tcx.type_of(self.def_id))
                 } else {
                     None
                 };
@@ -1486,7 +1487,7 @@ pub struct PolyTrait {
 /// A representation of a Type suitable for hyperlinking purposes. Ideally one can get the original
 /// type out of the AST/TyCtxt given one of these, if more information is needed. Most importantly
 /// it does not preserve mutability or boxes.
-#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq)]
+#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Debug)]
 pub enum Type {
     /// structs/enums/traits (most that'd be an hir::TyPath)
     ResolvedPath {
@@ -1505,8 +1506,8 @@ pub enum Type {
     /// extern "ABI" fn
     BareFunction(Box<BareFunctionDecl>),
     Tuple(Vec<Type>),
-    Vector(Box<Type>),
-    FixedVector(Box<Type>, String),
+    Slice(Box<Type>),
+    Array(Box<Type>, usize),
     Never,
     Unique(Box<Type>),
     RawPointer(Mutability, Box<Type>),
@@ -1572,10 +1573,8 @@ impl Type {
     pub fn primitive_type(&self) -> Option<PrimitiveType> {
         match *self {
             Primitive(p) | BorrowedRef { type_: box Primitive(p), ..} => Some(p),
-            Vector(..) | BorrowedRef{ type_: box Vector(..), ..  } => Some(PrimitiveType::Slice),
-            FixedVector(..) | BorrowedRef { type_: box FixedVector(..), .. } => {
-                Some(PrimitiveType::Array)
-            }
+            Slice(..) | BorrowedRef { type_: box Slice(..), .. } => Some(PrimitiveType::Slice),
+            Array(..) | BorrowedRef { type_: box Array(..), .. } => Some(PrimitiveType::Array),
             Tuple(..) => Some(PrimitiveType::Tuple),
             RawPointer(..) => Some(PrimitiveType::RawPointer),
             _ => None,
@@ -1716,11 +1715,11 @@ impl Clean<Type> for hir::Ty {
                 BorrowedRef {lifetime: lifetime, mutability: m.mutbl.clean(cx),
                              type_: box m.ty.clean(cx)}
             }
-            TySlice(ref ty) => Vector(box ty.clean(cx)),
+            TySlice(ref ty) => Slice(box ty.clean(cx)),
             TyArray(ref ty, length) => {
                 use rustc::middle::const_val::eval_length;
                 let n = eval_length(cx.tcx, length, "array length").unwrap();
-                FixedVector(box ty.clean(cx), n.to_string())
+                Array(box ty.clean(cx), n)
             },
             TyTup(ref tys) => Tuple(tys.clean(cx)),
             TyPath(hir::QPath::Resolved(None, ref path)) => {
@@ -1779,10 +1778,9 @@ impl Clean<Type> for hir::Ty {
             }
             TyPath(hir::QPath::TypeRelative(ref qself, ref segment)) => {
                 let mut def = Def::Err;
-                if let Some(ty) = cx.tcx.ast_ty_to_ty_cache.borrow().get(&self.id) {
-                    if let ty::TyProjection(proj) = ty.sty {
-                        def = Def::Trait(proj.trait_ref.def_id);
-                    }
+                let ty = hir_ty_to_ty(cx.tcx, self);
+                if let ty::TyProjection(proj) = ty.sty {
+                    def = Def::Trait(proj.trait_ref.def_id);
                 }
                 let trait_path = hir::Path {
                     span: self.span,
@@ -1832,9 +1830,8 @@ impl<'tcx> Clean<Type> for ty::Ty<'tcx> {
             ty::TyUint(uint_ty) => Primitive(uint_ty.into()),
             ty::TyFloat(float_ty) => Primitive(float_ty.into()),
             ty::TyStr => Primitive(PrimitiveType::Str),
-            ty::TySlice(ty) => Vector(box ty.clean(cx)),
-            ty::TyArray(ty, i) => FixedVector(box ty.clean(cx),
-                                              format!("{}", i)),
+            ty::TySlice(ty) => Slice(box ty.clean(cx)),
+            ty::TyArray(ty, n) => Array(box ty.clean(cx), n),
             ty::TyRawPtr(mt) => RawPointer(mt.mutbl.clean(cx), box mt.ty.clean(cx)),
             ty::TyRef(r, mt) => BorrowedRef {
                 lifetime: r.clean(cx),
@@ -1922,9 +1919,9 @@ impl<'tcx> Clean<Type> for ty::Ty<'tcx> {
             ty::TyAnon(def_id, substs) => {
                 // Grab the "TraitA + TraitB" from `impl TraitA + TraitB`,
                 // by looking up the projections associated with the def_id.
-                let item_predicates = cx.tcx.item_predicates(def_id);
+                let predicates_of = cx.tcx.predicates_of(def_id);
                 let substs = cx.tcx.lift(&substs).unwrap();
-                let bounds = item_predicates.instantiate(cx.tcx, substs);
+                let bounds = predicates_of.instantiate(cx.tcx, substs);
                 ImplTrait(bounds.predicates.into_iter().filter_map(|predicate| {
                     predicate.to_opt_poly_trait_ref().clean(cx)
                 }).collect())
@@ -1963,7 +1960,7 @@ impl<'tcx> Clean<Item> for ty::FieldDef {
             stability: get_stability(cx, self.did),
             deprecation: get_deprecation(cx, self.did),
             def_id: self.did,
-            inner: StructFieldItem(cx.tcx.item_type(self.did).clean(cx)),
+            inner: StructFieldItem(cx.tcx.type_of(self.did).clean(cx)),
         }
     }
 }
@@ -2116,7 +2113,7 @@ impl<'tcx> Clean<Item> for ty::VariantDef {
             CtorKind::Const => VariantKind::CLike,
             CtorKind::Fn => {
                 VariantKind::Tuple(
-                    self.fields.iter().map(|f| cx.tcx.item_type(f.did).clean(cx)).collect()
+                    self.fields.iter().map(|f| cx.tcx.type_of(f.did).clean(cx)).collect()
                 )
             }
             CtorKind::Fictive => {
@@ -2132,7 +2129,7 @@ impl<'tcx> Clean<Item> for ty::VariantDef {
                             def_id: field.did,
                             stability: get_stability(cx, field.did),
                             deprecation: get_deprecation(cx, field.did),
-                            inner: StructFieldItem(cx.tcx.item_type(field.did).clean(cx))
+                            inner: StructFieldItem(cx.tcx.type_of(field.did).clean(cx))
                         }
                     }).collect()
                 })
@@ -2618,7 +2615,7 @@ impl Clean<Vec<Item>> for doctree::Import {
         } else {
             let name = self.name;
             if !denied {
-                if let Some(items) = inline::try_inline(cx, path.def, Some(name)) {
+                if let Some(items) = inline::try_inline(cx, path.def, name) {
                     return items;
                 }
             }

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! The `DepGraphSafe` trait
+
 use hir::BodyId;
 use hir::def_id::DefId;
 use syntax::ast::NodeId;
@@ -47,6 +49,12 @@ impl<'a, 'gcx, 'tcx> DepGraphSafe for TyCtxt<'a, 'gcx, 'tcx> {
 /// Tuples make it easy to build up state.
 impl<A, B> DepGraphSafe for (A, B)
     where A: DepGraphSafe, B: DepGraphSafe
+{
+}
+
+/// Shared ref to dep-graph-safe stuff should still be dep-graph-safe.
+impl<'a, A> DepGraphSafe for &'a A
+    where A: DepGraphSafe,
 {
 }
 

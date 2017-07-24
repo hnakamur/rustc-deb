@@ -4,12 +4,11 @@ mod macros;
 pub mod parser;
 mod meta;
 mod help;
-mod validator;
-mod usage;
 
 // Std
+use std::borrow::Borrow;
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::Path;
@@ -18,14 +17,15 @@ use std::rc::Rc;
 use std::result::Result as StdResult;
 
 // Third Party
-use vec_map::{self, VecMap};
+use vec_map::VecMap;
 #[cfg(feature = "yaml")]
 use yaml_rust::Yaml;
 
 // Internal
 use app::help::Help;
 use app::parser::Parser;
-use args::{AnyArg, Arg, ArgGroup, ArgMatcher, ArgMatches, ArgSettings};
+use args::{ArgKind, AnyArg, Arg, ArgGroup, ArgMatcher, ArgMatches, ArgSettings};
+use errors::Error;
 use errors::Result as ClapResult;
 pub use self::settings::AppSettings;
 use completions::Shell;
@@ -51,7 +51,7 @@ use completions::Shell;
 ///     .arg(
 ///         Arg::with_name("in_file").index(1)
 ///     )
-///     .after_help("Longer explanation to appear after the options when \
+///     .after_help("Longer explaination to appear after the options when \
 ///                  displaying the help information from --help or -h")
 ///     .get_matches();
 ///
@@ -104,12 +104,12 @@ impl<'a, 'b> App<'a, 'b> {
     #[deprecated(since="2.14.1", note="Can never work; use explicit App::author() and App::version() calls instead")]
     pub fn with_defaults<S: Into<String>>(n: S) -> Self {
         let mut a = App { p: Parser::with_name(n.into()) };
-        a.p.meta.author = Some("Kevin K. <kbknapp@gmail.com>");
-        a.p.meta.version = Some("2.19.2");
+        a.p.meta.author = Some(crate_authors!());
+        a.p.meta.version = Some(crate_version!());
         a
     }
 
-    /// Creates a new instance of [`App`] from a .yml (YAML) file. A full example of supported YAML
+    /// Creates a new instace of [`App`] from a .yml (YAML) file. A full example of supported YAML
     /// objects can be found in [`examples/17_yaml.rs`] and [`examples/17_yaml.yml`]. One great use
     /// for using YAML is when supporting multiple languages and dialects, as each language could
     /// be a distinct YAML file and determined at compiletime via `cargo` "features" in your
@@ -177,7 +177,7 @@ impl<'a, 'b> App<'a, 'b> {
     }
 
     /// Overrides the system-determined binary name. This should only be used when absolutely
-    /// necessary, such as when the binary name for your application is misleading, or perhaps
+    /// neccessary, such as when the binary name for your application is misleading, or perhaps
     /// *not* how the user should invoke your program.
     ///
     /// **Pro-tip:** When building things such as third party `cargo` subcommands, this setting
@@ -212,33 +212,6 @@ impl<'a, 'b> App<'a, 'b> {
     /// ```
     pub fn about<S: Into<&'b str>>(mut self, about: S) -> Self {
         self.p.meta.about = Some(about.into());
-        self
-    }
-
-    /// Sets the program's name. This will be displayed when displaying help information.
-    ///
-    /// **Pro-top:** This function is particularly useful when configuring a program via
-    /// [`App::from_yaml`] in conjunction with the [`crate_name!`] macro to derive the program's
-    /// name from its `Cargo.toml`.
-    ///
-    /// # Examples
-    /// ```ignore
-    /// # #[macro_use]
-    /// # extern crate clap;
-    /// # use clap::App;
-    /// # fn main() {
-    /// let yml = load_yaml!("app.yml");
-    /// let app = App::from_yaml(yml)
-    ///     .name(crate_name!());
-    ///
-    /// // continued logic goes here, such as `app.get_matches()` etc.
-    /// # }
-    /// ```
-    ///
-    /// [`App::from_yaml`]: ./struct.App.html#method.from_yaml
-    /// [`crate_name!`]: ./macro.crate_name.html
-    pub fn name<S: Into<String>>(mut self, name: S) -> Self {
-        self.p.meta.name = name.into();
         self
     }
 
@@ -418,44 +391,6 @@ impl<'a, 'b> App<'a, 'b> {
         self
     }
 
-    /// Sets the help text for the auto-generated `help` argument.
-    ///
-    /// By default `clap` sets this to `"Prints help information"`, but if you're using a
-    /// different convention for your help messages and would prefer a different phrasing you can
-    /// override it.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use clap::{App, Arg};
-    /// App::new("myprog")
-    ///     .help_message("Print help information") // Perhaps you want imperative help messages
-    ///
-    /// # ;
-    /// ```
-    pub fn help_message<S: Into<&'a str>>(mut self, s: S) -> Self {
-        self.p.help_message = Some(s.into());
-        self
-    }
-
-    /// Sets the help text for the auto-generated `version` argument.
-    ///
-    /// By default `clap` sets this to `"Prints version information"`, but if you're using a
-    /// different convention for your help messages and would prefer a different phrasing then you
-    /// can change it.
-    ///
-    /// # Examples
-    /// ```no_run
-    /// # use clap::{App, Arg};
-    /// App::new("myprog")
-    ///     .version_message("Print version information") // Perhaps you want imperative help messages
-    /// # ;
-    /// ```
-    pub fn version_message<S: Into<&'a str>>(mut self, s: S) -> Self {
-        self.p.version_message = Some(s.into());
-        self
-    }
-
     /// Sets the help template to be used, overriding the default format.
     ///
     /// Tags arg given inside curly brackets.
@@ -465,7 +400,6 @@ impl<'a, 'b> App<'a, 'b> {
     ///   * `{bin}`         - Binary name.
     ///   * `{version}`     - Version number.
     ///   * `{author}`      - Author information.
-    ///   * `{about}`       - General description (from [`App::about`])
     ///   * `{usage}`       - Automatically generated or given usage string.
     ///   * `{all-args}`    - Help for all arguments (options, flags, positionals arguments,
     ///                       and subcommands) including titles.
@@ -474,8 +408,7 @@ impl<'a, 'b> App<'a, 'b> {
     ///   * `{options}`     - Help for options.
     ///   * `{positionals}` - Help for positionals arguments.
     ///   * `{subcommands}` - Help for subcommands.
-    ///   * `{after-help}`  - Help from [`App::after_help`]
-    ///   * `{before-help}`  - Help from [`App::before_help`]
+    ///   * `{after-help}`  - Help for flags.
     ///
     /// # Examples
     ///
@@ -488,9 +421,6 @@ impl<'a, 'b> App<'a, 'b> {
     /// ```
     /// **NOTE:**The template system is, on purpose, very simple. Therefore the tags have to writen
     /// in the lowercase and without spacing.
-    /// [`App::about`]: ./struct.App.html#method.about
-    /// [`App::after_help`]: ./struct.App.html#method.after_help
-    /// [`App::before_help`]: ./struct.App.html#method.before_help
     pub fn template<S: Into<&'b str>>(mut self, s: S) -> Self {
         self.p.meta.template = Some(s.into());
         self
@@ -556,7 +486,7 @@ impl<'a, 'b> App<'a, 'b> {
     /// [`AppSettings`]: ./enum.AppSettings.html
     pub fn global_setting(mut self, setting: AppSettings) -> Self {
         self.p.set(setting);
-        self.p.g_settings.set(setting);
+        self.p.g_settings.push(setting);
         self
     }
 
@@ -580,7 +510,7 @@ impl<'a, 'b> App<'a, 'b> {
     pub fn global_settings(mut self, settings: &[AppSettings]) -> Self {
         for s in settings {
             self.p.set(*s);
-            self.p.g_settings.set(*s)
+            self.p.g_settings.push(*s)
         }
         self
     }
@@ -684,7 +614,7 @@ impl<'a, 'b> App<'a, 'b> {
         self
     }
 
-    /// Adds an [argument] to the list of valid possibilities.
+    /// Adds an [argument] to the list of valid possibilties.
     ///
     /// # Examples
     ///
@@ -705,8 +635,8 @@ impl<'a, 'b> App<'a, 'b> {
     /// # ;
     /// ```
     /// [argument]: ./struct.Arg.html
-    pub fn arg<A: Into<Arg<'a, 'b>>>(mut self, a: A) -> Self {
-        self.p.add_arg(a.into());
+    pub fn arg<A: Borrow<Arg<'a, 'b>> + 'a>(mut self, a: A) -> Self {
+        self.p.add_arg(a.borrow());
         self
     }
 
@@ -726,7 +656,7 @@ impl<'a, 'b> App<'a, 'b> {
     /// [arguments]: ./struct.Arg.html
     pub fn args(mut self, args: &[Arg<'a, 'b>]) -> Self {
         for arg in args {
-            self.p.add_arg_ref(arg);
+            self.p.add_arg(arg);
         }
         self
     }
@@ -749,7 +679,7 @@ impl<'a, 'b> App<'a, 'b> {
     /// [`Arg`]: ./struct.Arg.html
     /// [`Arg::from_usage`]: ./struct.Arg.html#method.from_usage
     pub fn arg_from_usage(mut self, usage: &'a str) -> Self {
-        self.p.add_arg(Arg::from_usage(usage));
+        self.p.add_arg(&Arg::from_usage(usage));
         self
     }
 
@@ -781,7 +711,7 @@ impl<'a, 'b> App<'a, 'b> {
             if l.is_empty() {
                 continue;
             }
-            self.p.add_arg(Arg::from_usage(l));
+            self.p.add_arg(&Arg::from_usage(l));
         }
         self
     }
@@ -963,7 +893,7 @@ impl<'a, 'b> App<'a, 'b> {
         self
     }
 
-    /// Adds a [`SubCommand`] to the list of valid possibilities. Subcommands are effectively
+    /// Adds a [`SubCommand`] to the list of valid possibilties. Subcommands are effectively
     /// sub-[`App`]s, because they can contain their own arguments, subcommands, version, usage,
     /// etc. They also function just like [`App`]s, in that they get their own auto generated help,
     /// version, and usage.
@@ -985,7 +915,7 @@ impl<'a, 'b> App<'a, 'b> {
         self
     }
 
-    /// Adds multiple subcommands to the list of valid possibilities by iterating over an
+    /// Adds multiple subcommands to the list of valid possibilties by iterating over an
     /// [`IntoIterator`] of [`SubCommand`]s
     ///
     /// # Examples
@@ -1074,12 +1004,6 @@ impl<'a, 'b> App<'a, 'b> {
     /// [`io::stdout()`]: https://doc.rust-lang.org/std/io/fn.stdout.html
     /// [`BufWriter`]: https://doc.rust-lang.org/std/io/struct.BufWriter.html
     pub fn print_help(&mut self) -> ClapResult<()> {
-        // If there are global arguments, or settings we need to propgate them down to subcommands
-        // before parsing incase we run into a subcommand
-        self.p.propogate_globals();
-        self.p.propogate_settings();
-        self.p.derive_display_order();
-
         self.p.create_help_and_version();
         let out = io::stdout();
         let mut buf_w = BufWriter::new(out.lock());
@@ -1099,15 +1023,6 @@ impl<'a, 'b> App<'a, 'b> {
     /// ```
     /// [`io::Write`]: https://doc.rust-lang.org/std/io/trait.Write.html
     pub fn write_help<W: Write>(&self, w: &mut W) -> ClapResult<()> {
-        // PENDING ISSUE: 808
-        //      https://github.com/kbknapp/clap-rs/issues/808
-        // If there are global arguments, or settings we need to propgate them down to subcommands
-        // before parsing incase we run into a subcommand
-        // self.p.propogate_globals();
-        // self.p.propogate_settings();
-        // self.p.derive_display_order();
-        // self.p.create_help_and_version();
-
         Help::write_app_help(w, self)
     }
 
@@ -1137,9 +1052,9 @@ impl<'a, 'b> App<'a, 'b> {
     /// The following example generates a bash completion script via a `build.rs` script. In this
     /// simple example, we'll demo a very small application with only a single subcommand and two
     /// args. Real applications could be many multiple levels deep in subcommands, and have tens or
-    /// potentially hundreds of arguments.
+    /// potentiall hundreds of arguments.
     ///
-    /// First, it helps if we separate out our `App` definition into a separate file. Whether you
+    /// First, it helps if we separate out our `App` definition into a seperate file. Whether you
     /// do this as a function, or bare App definition is a matter of personal preference.
     ///
     /// ```
@@ -1333,21 +1248,7 @@ impl<'a, 'b> App<'a, 'b> {
     {
         self.get_matches_from_safe_borrow(itr).unwrap_or_else(|e| {
             // Otherwise, write to stderr and exit
-            if e.use_stderr() {
-                wlnerr!("{}", e.message);
-                if self.p.is_set(AppSettings::WaitOnError) {
-                    wlnerr!("\nPress [ENTER] / [RETURN] to continue...");
-                    let mut s = String::new();
-                    let i = io::stdin();
-                    i.lock().read_line(&mut s).unwrap();
-                }
-                drop(self);
-                drop(e);
-                process::exit(1);
-            }
-
-            drop(self);
-            e.exit()
+            self.maybe_wait_for_exit(e);
         })
     }
 
@@ -1450,13 +1351,24 @@ impl<'a, 'b> App<'a, 'b> {
             return Err(e);
         }
 
-        if self.p.is_set(AppSettings::PropagateGlobalValuesDown) {
-            for a in &self.p.global_args {
-                matcher.propagate(a.b.name);
+        Ok(matcher.into())
+    }
+
+    // Re-implements ClapError::exit except it checks if we should wait for input before exiting
+    // since ClapError doesn't have that info and the error message must be printed before exiting
+    fn maybe_wait_for_exit(&self, e: Error) -> ! {
+        if e.use_stderr() {
+            wlnerr!("{}", e.message);
+            if self.p.is_set(AppSettings::WaitOnError) {
+                wlnerr!("\nPress [ENTER] / [RETURN] to continue...");
+                let mut s = String::new();
+                let i = io::stdin();
+                i.lock().read_line(&mut s).unwrap();
             }
+            process::exit(1);
         }
 
-        Ok(matcher.into())
+        e.exit()
     }
 }
 
@@ -1487,7 +1399,6 @@ impl<'a> From<&'a Yaml> for App<'a, 'a> {
         }
 
         yaml_str!(a, yaml, version);
-        yaml_str!(a, yaml, author);
         yaml_str!(a, yaml, bin_name);
         yaml_str!(a, yaml, about);
         yaml_str!(a, yaml, before_help);
@@ -1497,8 +1408,6 @@ impl<'a> From<&'a Yaml> for App<'a, 'a> {
         yaml_str!(a, yaml, help);
         yaml_str!(a, yaml, help_short);
         yaml_str!(a, yaml, version_short);
-        yaml_str!(a, yaml, help_message);
-        yaml_str!(a, yaml, version_message);
         yaml_str!(a, yaml, alias);
         yaml_str!(a, yaml, visible_alias);
 
@@ -1600,13 +1509,14 @@ impl<'n, 'e> AnyArg<'n, 'e> for App<'n, 'e> {
     fn name(&self) -> &'n str {
         unreachable!("App struct does not support AnyArg::name, this is a bug!")
     }
+    fn id(&self) -> usize { self.p.id }
+    fn kind(&self) -> ArgKind { ArgKind::Subcmd }
     fn overrides(&self) -> Option<&[&'e str]> { None }
-    fn requires(&self) -> Option<&[(Option<&'e str>, &'n str)]> { None }
+    fn requires(&self) -> Option<&[&'e str]> { None }
     fn blacklist(&self) -> Option<&[&'e str]> { None }
     fn required_unless(&self) -> Option<&[&'e str]> { None }
     fn val_names(&self) -> Option<&VecMap<&'e str>> { None }
     fn is_set(&self, _: ArgSettings) -> bool { false }
-    fn val_terminator(&self) -> Option<&'e str> { None }
     fn set(&mut self, _: ArgSettings) {
         unreachable!("App struct does not support AnyArg::set, this is a bug!")
     }
@@ -1615,17 +1525,13 @@ impl<'n, 'e> AnyArg<'n, 'e> for App<'n, 'e> {
     fn num_vals(&self) -> Option<u64> { None }
     fn possible_vals(&self) -> Option<&[&'e str]> { None }
     fn validator(&self) -> Option<&Rc<Fn(String) -> StdResult<(), String>>> { None }
-    fn validator_os(&self) -> Option<&Rc<Fn(&OsStr) -> StdResult<(), OsString>>> { None }
     fn min_vals(&self) -> Option<u64> { None }
     fn short(&self) -> Option<char> { None }
     fn long(&self) -> Option<&'e str> { None }
     fn val_delim(&self) -> Option<char> { None }
     fn takes_value(&self) -> bool { true }
     fn help(&self) -> Option<&'e str> { self.p.meta.about }
-    fn default_val(&self) -> Option<&'e OsStr> { None }
-    fn default_vals_ifs(&self) -> Option<vec_map::Values<(&'n str, Option<&'e OsStr>, &'e OsStr)>> {
-        None
-    }
+    fn default_val(&self) -> Option<&'n str> { None }
     fn longest_filter(&self) -> bool { true }
     fn aliases(&self) -> Option<Vec<&'e str>> {
         if let Some(ref aliases) = self.p.meta.aliases {

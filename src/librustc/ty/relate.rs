@@ -65,14 +65,8 @@ pub trait TypeRelation<'a, 'gcx: 'a+'tcx, 'tcx: 'a> : Sized {
                a_subst,
                b_subst);
 
-        let variances;
-        let opt_variances = if self.tcx().variance_computed.get() {
-            variances = self.tcx().item_variances(item_def_id);
-            Some(&*variances)
-        } else {
-            None
-        };
-        relate_substs(self, opt_variances, a_subst, b_subst)
+        let opt_variances = self.tcx().variances_of(item_def_id);
+        relate_substs(self, Some(&opt_variances), a_subst, b_subst)
     }
 
     /// Switch variance for the purpose of relating `a` and `b`.
@@ -91,8 +85,8 @@ pub trait TypeRelation<'a, 'gcx: 'a+'tcx, 'tcx: 'a> : Sized {
     fn tys(&mut self, a: Ty<'tcx>, b: Ty<'tcx>)
            -> RelateResult<'tcx, Ty<'tcx>>;
 
-    fn regions(&mut self, a: &'tcx ty::Region, b: &'tcx ty::Region)
-               -> RelateResult<'tcx, &'tcx ty::Region>;
+    fn regions(&mut self, a: ty::Region<'tcx>, b: ty::Region<'tcx>)
+               -> RelateResult<'tcx, ty::Region<'tcx>>;
 
     fn binders<T>(&mut self, a: &ty::Binder<T>, b: &ty::Binder<T>)
                   -> RelateResult<'tcx, ty::Binder<T>>
@@ -231,12 +225,13 @@ impl<'tcx> Relate<'tcx> for ty::ProjectionTy<'tcx> {
                            -> RelateResult<'tcx, ty::ProjectionTy<'tcx>>
         where R: TypeRelation<'a, 'gcx, 'tcx>, 'gcx: 'a+'tcx, 'tcx: 'a
     {
-        if a.item_name != b.item_name {
+        let tcx = relation.tcx();
+        if a.item_name(tcx) != b.item_name(tcx) {
             Err(TypeError::ProjectionNameMismatched(
-                expected_found(relation, &a.item_name, &b.item_name)))
+                expected_found(relation, &a.item_name(tcx), &b.item_name(tcx))))
         } else {
             let trait_ref = relation.relate(&a.trait_ref, &b.trait_ref)?;
-            Ok(ty::ProjectionTy { trait_ref: trait_ref, item_name: a.item_name })
+            Ok(ty::ProjectionTy::from_ref_and_name(tcx, trait_ref, a.item_name(tcx)))
         }
     }
 }
@@ -463,7 +458,7 @@ pub fn super_relate_tys<'a, 'gcx, 'tcx, R>(relation: &mut R,
         (&ty::TyProjection(ref a_data), &ty::TyProjection(ref b_data)) =>
         {
             let projection_ty = relation.relate(a_data, b_data)?;
-            Ok(tcx.mk_projection(projection_ty.trait_ref, projection_ty.item_name))
+            Ok(tcx.mk_projection(projection_ty.trait_ref, projection_ty.item_name(tcx)))
         }
 
         (&ty::TyAnon(a_def_id, a_substs), &ty::TyAnon(b_def_id, b_substs))
@@ -528,11 +523,11 @@ impl<'tcx> Relate<'tcx> for &'tcx Substs<'tcx> {
     }
 }
 
-impl<'tcx> Relate<'tcx> for &'tcx ty::Region {
+impl<'tcx> Relate<'tcx> for ty::Region<'tcx> {
     fn relate<'a, 'gcx, R>(relation: &mut R,
-                           a: &&'tcx ty::Region,
-                           b: &&'tcx ty::Region)
-                           -> RelateResult<'tcx, &'tcx ty::Region>
+                           a: &ty::Region<'tcx>,
+                           b: &ty::Region<'tcx>)
+                           -> RelateResult<'tcx, ty::Region<'tcx>>
         where R: TypeRelation<'a, 'gcx, 'tcx>, 'gcx: 'a+'tcx, 'tcx: 'a
     {
         relation.regions(*a, *b)

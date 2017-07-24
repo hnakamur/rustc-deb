@@ -25,19 +25,32 @@ fn parse_json_visitor_inner<'a>(path_stack: &mut VecDeque<&'a str>, path: &'a st
     let path_in = StringInput::new(path);
     let mut parser = Rdp::new(path_in);
 
+    let mut seg_stack: VecDeque<&Token<Rule>> = VecDeque::new();
     if parser.path() {
         for seg in parser.queue().iter() {
             match seg.rule {
                 Rule::path_var | Rule::path_idx | Rule::path_key => {}
                 Rule::path_up => {
                     path_stack.pop_back();
+                    if let Some(p) = seg_stack.pop_back() {
+                        // also pop array index like [1]
+                        if p.rule == Rule::path_raw_id {
+                            seg_stack.pop_back();
+                        }
+                    }
                 }
-                Rule::path_id | Rule::path_raw_id | Rule::path_num_id => {
-                    let id = &path[seg.start..seg.end];
-                    path_stack.push_back(id);
+                Rule::path_id |
+                Rule::path_raw_id |
+                Rule::path_num_id => {
+                    seg_stack.push_back(seg);
                 }
                 _ => {}
             }
+        }
+
+        for i in seg_stack.iter() {
+            let id = &path[i.start..i.end];
+            path_stack.push_back(id);
         }
     }
 }
@@ -159,8 +172,8 @@ impl Context {
             data = match *data {
                 Json::Array(ref l) => {
                     p.parse::<usize>()
-                     .and_then(|idx_u| Ok(l.get(idx_u).unwrap_or(&DEFAULT_VALUE)))
-                     .unwrap_or(&DEFAULT_VALUE)
+                        .and_then(|idx_u| Ok(l.get(idx_u).unwrap_or(&DEFAULT_VALUE)))
+                        .unwrap_or(&DEFAULT_VALUE)
                 }
                 Json::Object(ref m) => m.get(*p).unwrap_or(&DEFAULT_VALUE),
                 _ => &DEFAULT_VALUE,

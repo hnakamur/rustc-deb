@@ -230,8 +230,6 @@ impl OsString {
     /// # Examples
     ///
     /// ```
-    /// #![feature(osstring_shrink_to_fit)]
-    ///
     /// use std::ffi::OsString;
     ///
     /// let mut s = OsString::from("foo");
@@ -242,12 +240,14 @@ impl OsString {
     /// s.shrink_to_fit();
     /// assert_eq!(3, s.capacity());
     /// ```
-    #[unstable(feature = "osstring_shrink_to_fit", issue = "40421")]
+    #[stable(feature = "osstring_shrink_to_fit", since = "1.19.0")]
     pub fn shrink_to_fit(&mut self) {
         self.inner.shrink_to_fit()
     }
 
-    /// Converts this `OsString` into a boxed `OsStr`.
+    /// Converts this `OsString` into a boxed [`OsStr`].
+    ///
+    /// [`OsStr`]: struct.OsStr.html
     ///
     /// # Examples
     ///
@@ -482,12 +482,13 @@ impl OsStr {
     /// Returns the length of this `OsStr`.
     ///
     /// Note that this does **not** return the number of bytes in this string
-    /// as, for example, OS strings on Windows are encoded as a list of `u16`
+    /// as, for example, OS strings on Windows are encoded as a list of [`u16`]
     /// rather than a list of bytes. This number is simply useful for passing to
     /// other methods like [`OsString::with_capacity`] to avoid reallocations.
     ///
     /// See `OsStr` introduction for more information about encoding.
     ///
+    /// [`u16`]: ../primitive.u16.html
     /// [`OsString::with_capacity`]: struct.OsString.html#method.with_capacity
     ///
     /// # Examples
@@ -506,7 +507,10 @@ impl OsStr {
         self.inner.inner.len()
     }
 
-    /// Converts a `Box<OsStr>` into an `OsString` without copying or allocating.
+    /// Converts a [`Box`]`<OsStr>` into an [`OsString`] without copying or allocating.
+    ///
+    /// [`Box`]: ../boxed/struct.Box.html
+    /// [`OsString`]: struct.OsString.html
     #[unstable(feature = "into_boxed_os_str", issue = "40380")]
     pub fn into_os_string(self: Box<OsStr>) -> OsString {
         let inner: Box<Slice> = unsafe { mem::transmute(self) };
@@ -529,14 +533,14 @@ impl<'a> From<&'a OsStr> for Box<OsStr> {
     }
 }
 
-#[stable(feature = "os_string_from_box", since = "1.17.0")]
-impl<'a> From<Box<OsStr>> for OsString {
+#[stable(feature = "os_string_from_box", since = "1.18.0")]
+impl From<Box<OsStr>> for OsString {
     fn from(boxed: Box<OsStr>) -> OsString {
         boxed.into_os_string()
     }
 }
 
-#[stable(feature = "box_from_c_string", since = "1.17.0")]
+#[stable(feature = "box_from_os_string", since = "1.18.0")]
 impl Into<Box<OsStr>> for OsString {
     fn into(self) -> Box<OsStr> {
         self.into_boxed_os_str()

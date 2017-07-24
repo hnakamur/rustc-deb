@@ -191,10 +191,13 @@
 //! {
 //!     let result = match IntoIterator::into_iter(values) {
 //!         mut iter => loop {
+//!             let next;
 //!             match iter.next() {
-//!                 Some(x) => { println!("{}", x); },
+//!                 Some(val) => next = val,
 //!                 None => break,
-//!             }
+//!             };
+//!             let x = next;
+//!             let () = { println!("{}", x); };
 //!         },
 //!     };
 //!     result
@@ -309,11 +312,14 @@ pub use self::iterator::Iterator;
 
 #[unstable(feature = "step_trait",
            reason = "likely to be replaced by finer-grained traits",
-           issue = "27741")]
+           issue = "42168")]
 pub use self::range::Step;
 #[unstable(feature = "step_by", reason = "recent addition",
            issue = "27741")]
-pub use self::range::StepBy;
+#[rustc_deprecated(since = "1.19.0",
+                   reason = "replaced by `iter::StepBy`")]
+#[allow(deprecated)]
+pub use self::range::StepBy as DeprecatedStepBy;
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use self::sources::{Repeat, repeat};
@@ -519,6 +525,60 @@ impl<I> Iterator for Cycle<I> where I: Clone + Iterator {
 
 #[unstable(feature = "fused", issue = "35602")]
 impl<I> FusedIterator for Cycle<I> where I: Clone + Iterator {}
+
+/// An adapter for stepping iterators by a custom amount.
+///
+/// This `struct` is created by the [`step_by`] method on [`Iterator`]. See
+/// its documentation for more.
+///
+/// [`step_by`]: trait.Iterator.html#method.step_by
+/// [`Iterator`]: trait.Iterator.html
+#[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
+#[unstable(feature = "iterator_step_by",
+           reason = "unstable replacement of Range::step_by",
+           issue = "27741")]
+#[derive(Clone, Debug)]
+pub struct StepBy<I> {
+    iter: I,
+    step: usize,
+    first_take: bool,
+}
+
+#[unstable(feature = "iterator_step_by",
+           reason = "unstable replacement of Range::step_by",
+           issue = "27741")]
+impl<I> Iterator for StepBy<I> where I: Iterator {
+    type Item = I::Item;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.first_take {
+            self.first_take = false;
+            self.iter.next()
+        } else {
+            self.iter.nth(self.step)
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let inner_hint = self.iter.size_hint();
+
+        if self.first_take {
+            let f = |n| if n == 0 { 0 } else { 1 + (n-1)/(self.step+1) };
+            (f(inner_hint.0), inner_hint.1.map(f))
+        } else {
+            let f = |n| n / (self.step+1);
+            (f(inner_hint.0), inner_hint.1.map(f))
+        }
+    }
+}
+
+// StepBy can only make the iterator shorter, so the len will still fit.
+#[unstable(feature = "iterator_step_by",
+           reason = "unstable replacement of Range::step_by",
+           issue = "27741")]
+impl<I> ExactSizeIterator for StepBy<I> where I: ExactSizeIterator {}
 
 /// An iterator that strings two iterators together.
 ///
@@ -1655,7 +1715,7 @@ impl<I> Iterator for Skip<I> where I: Iterator {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<I> ExactSizeIterator for Skip<I> where I: ExactSizeIterator {}
 
-#[stable(feature = "double_ended_skip_iterator", since = "1.8.0")]
+#[stable(feature = "double_ended_skip_iterator", since = "1.9.0")]
 impl<I> DoubleEndedIterator for Skip<I> where I: DoubleEndedIterator + ExactSizeIterator {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.len() > 0 {
@@ -1777,10 +1837,6 @@ impl<B, I, St, F> Iterator for Scan<I, St, F> where
         (0, upper) // can't know a lower bound, due to the scan function
     }
 }
-
-#[unstable(feature = "fused", issue = "35602")]
-impl<B, I, St, F> FusedIterator for Scan<I, St, F>
-    where I: FusedIterator, F: FnMut(&mut St, I::Item) -> Option<B> {}
 
 /// An iterator that maps each element to an iterator, and yields the elements
 /// of the produced iterators.

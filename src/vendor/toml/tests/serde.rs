@@ -130,8 +130,8 @@ fn nested() {
 fn application_decode_error() {
     #[derive(PartialEq, Debug)]
     struct Range10(usize);
-    impl Deserialize for Range10 {
-         fn deserialize<D: Deserializer>(d: D) -> Result<Range10, D::Error> {
+    impl<'de> Deserialize<'de> for Range10 {
+         fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Range10, D::Error> {
              let x: usize = try!(Deserialize::deserialize(d));
              if x > 10 {
                  Err(serde::de::Error::custom("more than 10"))
@@ -327,6 +327,25 @@ fn parse_enum() {
         Foo { a: E::Last(Foo2 { test: "test".to_string() }) },
         Table(map! { a: Table(map! { test: Value::String("test".to_string()) }) }),
     }
+}
+
+#[test]
+fn parse_enum_string() {
+    #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+    struct Foo { a: Sort }
+
+    #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+    #[serde(rename_all = "lowercase")]
+    enum Sort {
+        Asc,
+        Desc,
+    }
+
+    equivalent! {
+        Foo { a: Sort::Desc },
+        Table(map! { a: Value::String("desc".to_string()) }),
+    }
+
 }
 
 // #[test]

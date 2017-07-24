@@ -21,11 +21,34 @@ root_dir="`dirname $src_dir`"
 
 source "$ci_dir/shared.sh"
 
-retry docker \
-  build \
-  --rm \
-  -t rust-ci \
-  "`dirname "$script"`/$image"
+travis_fold start build_docker
+travis_time_start
+
+if [ -f "$docker_dir/$image/Dockerfile" ]; then
+    retry docker \
+      build \
+      --rm \
+      -t rust-ci \
+      -f "$docker_dir/$image/Dockerfile" \
+      "$docker_dir"
+elif [ -f "$docker_dir/disabled/$image/Dockerfile" ]; then
+    if [ -n "$TRAVIS_OS_NAME" ]; then
+        echo Cannot run disabled images on travis!
+        exit 1
+    fi
+    retry docker \
+      build \
+      --rm \
+      -t rust-ci \
+      -f "$docker_dir/disabled/$image/Dockerfile" \
+      "$docker_dir"
+else
+    echo Invalid image: $image
+    exit 1
+fi
+
+travis_fold end build_docker
+travis_time_finish
 
 objdir=$root_dir/obj
 
@@ -55,6 +78,8 @@ exec docker \
   --env DEPLOY=$DEPLOY \
   --env DEPLOY_ALT=$DEPLOY_ALT \
   --env LOCAL_USER_ID=`id -u` \
+  --env TRAVIS=${TRAVIS-false} \
+  --env TRAVIS_BRANCH \
   --volume "$HOME/.cargo:/cargo" \
   --volume "$HOME/rustsrc:$HOME/rustsrc" \
   --privileged \

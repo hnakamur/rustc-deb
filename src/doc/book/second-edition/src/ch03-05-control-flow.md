@@ -230,12 +230,12 @@ error[E0308]: if and else have incompatible types
  --> src/main.rs:4:18
   |
 4 |       let number = if condition {
-  |  __________________^ starting here...
+  |  __________________^
 5 | |         5
 6 | |     } else {
 7 | |         "six"
 8 | |     };
-  | |_____^ ...ending here: expected integral variable, found reference
+  | |_____^ expected integral variable, found reference
   |
   = note: expected type `{integer}`
              found type `&'static str`
@@ -438,7 +438,7 @@ This code is a bit nicer, isn’t it?
 ## Summary
 
 You made it! That was a sizable chapter: you learned about variables, scalar
-and`if` expressions, and loops! If you want to practice with the concepts
+and `if` expressions, and loops! If you want to practice with the concepts
 discussed in this chapter, try building programs to do the following:
 
 * Convert temperatures between Fahrenheit and Celsius.

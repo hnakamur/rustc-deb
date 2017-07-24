@@ -19,3 +19,13 @@ mod arg_builder;
 mod matched_arg;
 mod group;
 pub mod settings;
+
+#[doc(hidden)]
+#[derive(Copy, Clone, Debug)]
+pub enum ArgKind {
+    Flag,
+    Opt,
+    Pos,
+    Subcmd,
+    Group,
+}

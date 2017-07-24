@@ -46,15 +46,13 @@ pub fn needs_drop_glue<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>, t: Ty<'tcx>
         ty::TyAdt(def, _) if def.is_box() => {
             let typ = t.boxed_ty();
             if !scx.type_needs_drop(typ) && scx.type_is_sized(typ) {
-                scx.tcx().infer_ctxt((), traits::Reveal::All).enter(|infcx| {
-                    let layout = t.layout(&infcx).unwrap();
-                    if layout.size(scx).bytes() == 0 {
-                        // `Box<ZeroSizeType>` does not allocate.
-                        false
-                    } else {
-                        true
-                    }
-                })
+                let layout = t.layout(scx.tcx(), ty::ParamEnv::empty(traits::Reveal::All)).unwrap();
+                if layout.size(scx).bytes() == 0 {
+                    // `Box<ZeroSizeType>` does not allocate.
+                    false
+                } else {
+                    true
+                }
             } else {
                 true
             }
@@ -76,6 +74,7 @@ pub fn size_and_align_of_dst<'a, 'tcx>(bcx: &Builder<'a, 'tcx>, t: Ty<'tcx>, inf
         let align = C_uint(bcx.ccx, align);
         return (size, align);
     }
+    assert!(!info.is_null());
     match t.sty {
         ty::TyAdt(def, substs) => {
             let ccx = bcx.ccx;

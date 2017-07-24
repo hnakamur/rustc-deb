@@ -13,10 +13,10 @@ use check::regionck::RegionCtxt;
 use hir::def_id::DefId;
 use middle::free_region::FreeRegionMap;
 use rustc::infer::{self, InferOk};
-use middle::region;
+use rustc::middle::region::{self, RegionMaps};
 use rustc::ty::subst::{Subst, Substs};
 use rustc::ty::{self, Ty, TyCtxt};
-use rustc::traits::{self, ObligationCause, Reveal};
+use rustc::traits::{self, ObligationCause};
 use util::common::ErrorReported;
 use util::nodemap::FxHashSet;
 
@@ -42,8 +42,8 @@ use syntax_pos::Span;
 pub fn check_drop_impl<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                  drop_impl_did: DefId)
                                  -> Result<(), ErrorReported> {
-    let dtor_self_type = tcx.item_type(drop_impl_did);
-    let dtor_predicates = tcx.item_predicates(drop_impl_did);
+    let dtor_self_type = tcx.type_of(drop_impl_did);
+    let dtor_predicates = tcx.predicates_of(drop_impl_did);
     match dtor_self_type.sty {
         ty::TyAdt(adt_def, self_to_impl_substs) => {
             ensure_drop_params_and_item_params_correspond(tcx,
@@ -76,17 +76,15 @@ fn ensure_drop_params_and_item_params_correspond<'a, 'tcx>(
     -> Result<(), ErrorReported>
 {
     let drop_impl_node_id = tcx.hir.as_local_node_id(drop_impl_did).unwrap();
-    let self_type_node_id = tcx.hir.as_local_node_id(self_type_did).unwrap();
 
     // check that the impl type can be made to match the trait type.
 
-    let impl_param_env = ty::ParameterEnvironment::for_item(tcx, self_type_node_id);
-    tcx.infer_ctxt(impl_param_env, Reveal::UserFacing).enter(|ref infcx| {
+    tcx.infer_ctxt(()).enter(|ref infcx| {
+        let impl_param_env = tcx.param_env(self_type_did);
         let tcx = infcx.tcx;
         let mut fulfillment_cx = traits::FulfillmentContext::new();
 
-        let named_type = tcx.item_type(self_type_did);
-        let named_type = named_type.subst(tcx, &infcx.parameter_environment.free_substs);
+        let named_type = tcx.type_of(self_type_did);
 
         let drop_impl_span = tcx.def_span(drop_impl_did);
         let fresh_impl_substs =
@@ -94,12 +92,12 @@ fn ensure_drop_params_and_item_params_correspond<'a, 'tcx>(
         let fresh_impl_self_ty = drop_impl_ty.subst(tcx, fresh_impl_substs);
 
         let cause = &ObligationCause::misc(drop_impl_span, drop_impl_node_id);
-        match infcx.eq_types(true, cause, named_type, fresh_impl_self_ty) {
+        match infcx.at(cause, impl_param_env).eq(named_type, fresh_impl_self_ty) {
             Ok(InferOk { obligations, .. }) => {
                 fulfillment_cx.register_predicate_obligations(infcx, obligations);
             }
             Err(_) => {
-                let item_span = tcx.hir.span(self_type_node_id);
+                let item_span = tcx.def_span(self_type_did);
                 struct_span_err!(tcx.sess, drop_impl_span, E0366,
                                  "Implementations of Drop cannot be specialized")
                     .span_note(item_span,
@@ -116,8 +114,9 @@ fn ensure_drop_params_and_item_params_correspond<'a, 'tcx>(
             return Err(ErrorReported);
         }
 
+        let region_maps = RegionMaps::new();
         let free_regions = FreeRegionMap::new();
-        infcx.resolve_regions_and_report_errors(&free_regions, drop_impl_node_id);
+        infcx.resolve_regions_and_report_errors(drop_impl_did, &region_maps, &free_regions);
         Ok(())
     })
 }
@@ -175,7 +174,7 @@ fn ensure_drop_predicates_are_implied_by_item_defn<'a, 'tcx>(
 
     // We can assume the predicates attached to struct/enum definition
     // hold.
-    let generic_assumptions = tcx.item_predicates(self_type_did);
+    let generic_assumptions = tcx.predicates_of(self_type_did);
 
     let assumptions_in_impl_context = generic_assumptions.instantiate(tcx, &self_to_impl_substs);
     let assumptions_in_impl_context = assumptions_in_impl_context.predicates;
@@ -278,7 +277,7 @@ pub fn check_safety_of_destructor_if_necessary<'a, 'gcx, 'tcx>(
            ty, scope);
 
 
-    let parent_scope = match rcx.tcx.region_maps.opt_encl_scope(scope) {
+    let parent_scope = match rcx.region_maps.opt_encl_scope(scope) {
         Some(parent_scope) => parent_scope,
         // If no enclosing scope, then it must be the root scope
         // which cannot be outlived.

@@ -23,6 +23,7 @@ use hir::def::Def;
 use hir::def_id::{DefId};
 use infer::InferCtxt;
 use middle::mem_categorization as mc;
+use middle::region::RegionMaps;
 use ty::{self, TyCtxt, adjustment};
 
 use hir::{self, PatKind};
@@ -75,7 +76,7 @@ pub trait Delegate<'tcx> {
               borrow_id: ast::NodeId,
               borrow_span: Span,
               cmt: mc::cmt<'tcx>,
-              loan_region: &'tcx ty::Region,
+              loan_region: ty::Region<'tcx>,
               bk: ty::BorrowKind,
               loan_cause: LoanCause);
 
@@ -241,6 +242,7 @@ impl OverloadedCallType {
 pub struct ExprUseVisitor<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     mc: mc::MemCategorizationContext<'a, 'gcx, 'tcx>,
     delegate: &'a mut Delegate<'tcx>,
+    param_env: ty::ParamEnv<'tcx>,
 }
 
 // If the TYPER results in an error, it's because the type check
@@ -262,28 +264,31 @@ macro_rules! return_if_err {
     )
 }
 
-/// Whether the elements of an overloaded operation are passed by value or by reference
-enum PassArgs {
-    ByValue,
-    ByRef,
-}
-
 impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
     pub fn new(delegate: &'a mut (Delegate<'tcx>+'a),
-               infcx: &'a InferCtxt<'a, 'gcx, 'tcx>)
+               region_maps: &'a RegionMaps,
+               infcx: &'a InferCtxt<'a, 'gcx, 'tcx>,
+               param_env: ty::ParamEnv<'tcx>)
                -> Self
     {
-        ExprUseVisitor::with_options(delegate, infcx, mc::MemCategorizationOptions::default())
+        ExprUseVisitor::with_options(delegate,
+                                     infcx,
+                                     param_env,
+                                     region_maps,
+                                     mc::MemCategorizationOptions::default())
     }
 
     pub fn with_options(delegate: &'a mut (Delegate<'tcx>+'a),
                         infcx: &'a InferCtxt<'a, 'gcx, 'tcx>,
+                        param_env: ty::ParamEnv<'tcx>,
+                        region_maps: &'a RegionMaps,
                         options: mc::MemCategorizationOptions)
                -> Self
     {
         ExprUseVisitor {
-            mc: mc::MemCategorizationContext::with_options(infcx, options),
-            delegate: delegate
+            mc: mc::MemCategorizationContext::with_options(infcx, region_maps, options),
+            delegate,
+            param_env,
         }
     }
 
@@ -298,7 +303,6 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 arg.id,
                 arg.pat.span,
                 fn_body_scope_r, // Args live only as long as the fn body.
-                fn_body_scope_r,
                 arg_ty);
 
             self.walk_irrefutable_pat(arg_cmt, &arg.pat);
@@ -318,7 +322,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         debug!("delegate_consume(consume_id={}, cmt={:?})",
                consume_id, cmt);
 
-        let mode = copy_or_move(self.mc.infcx, &cmt, DirectRefMove);
+        let mode = copy_or_move(self.mc.infcx, self.param_env, &cmt, DirectRefMove);
         self.delegate.consume(consume_id, consume_span, cmt, mode);
     }
 
@@ -347,7 +351,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
 
     fn borrow_expr(&mut self,
                    expr: &hir::Expr,
-                   r: &'tcx ty::Region,
+                   r: ty::Region<'tcx>,
                    bk: ty::BorrowKind,
                    cause: LoanCause) {
         debug!("borrow_expr(expr={:?}, r={:?}, bk={:?})",
@@ -376,9 +380,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
             }
 
             hir::ExprUnary(hir::UnDeref, ref base) => {      // *base
-                if !self.walk_overloaded_operator(expr, &base, Vec::new(), PassArgs::ByRef) {
-                    self.select_from_expr(&base);
-                }
+                self.select_from_expr(&base);
             }
 
             hir::ExprField(ref base, _) => {         // base.f
@@ -390,13 +392,8 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
             }
 
             hir::ExprIndex(ref lhs, ref rhs) => {       // lhs[rhs]
-                if !self.walk_overloaded_operator(expr,
-                                                  &lhs,
-                                                  vec![&rhs],
-                                                  PassArgs::ByValue) {
-                    self.select_from_expr(&lhs);
-                    self.consume_expr(&rhs);
-                }
+                self.select_from_expr(&lhs);
+                self.consume_expr(&rhs);
             }
 
             hir::ExprCall(ref callee, ref args) => {    // callee(args)
@@ -479,29 +476,13 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 self.walk_block(&blk);
             }
 
-            hir::ExprUnary(op, ref lhs) => {
-                let pass_args = if op.is_by_value() {
-                    PassArgs::ByValue
-                } else {
-                    PassArgs::ByRef
-                };
-
-                if !self.walk_overloaded_operator(expr, &lhs, Vec::new(), pass_args) {
-                    self.consume_expr(&lhs);
-                }
+            hir::ExprUnary(_, ref lhs) => {
+                self.consume_expr(&lhs);
             }
 
-            hir::ExprBinary(op, ref lhs, ref rhs) => {
-                let pass_args = if op.node.is_by_value() {
-                    PassArgs::ByValue
-                } else {
-                    PassArgs::ByRef
-                };
-
-                if !self.walk_overloaded_operator(expr, &lhs, vec![&rhs], pass_args) {
-                    self.consume_expr(&lhs);
-                    self.consume_expr(&rhs);
-                }
+            hir::ExprBinary(_, ref lhs, ref rhs) => {
+                self.consume_expr(&lhs);
+                self.consume_expr(&rhs);
             }
 
             hir::ExprBlock(ref blk) => {
@@ -523,14 +504,13 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 self.consume_expr(&base);
             }
 
-            hir::ExprAssignOp(op, ref lhs, ref rhs) => {
-                // NB All our assignment operations take the RHS by value
-                assert!(op.node.is_by_value());
-
-                if !self.walk_overloaded_operator(expr, lhs, vec![rhs], PassArgs::ByValue) {
+            hir::ExprAssignOp(_, ref lhs, ref rhs) => {
+                if self.mc.infcx.tables.borrow().is_method_call(expr) {
+                    self.consume_expr(lhs);
+                } else {
                     self.mutate_expr(expr, &lhs, MutateMode::WriteAndRead);
-                    self.consume_expr(&rhs);
                 }
+                self.consume_expr(&rhs);
             }
 
             hir::ExprRepeat(ref base, _) => {
@@ -557,19 +537,8 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
             }
             ty::TyError => { }
             _ => {
-                let overloaded_call_type =
-                    match self.mc.infcx.node_method_id(ty::MethodCall::expr(call.id)) {
-                        Some(method_id) => {
-                            OverloadedCallType::from_method_id(self.tcx(), method_id)
-                        }
-                        None => {
-                            span_bug!(
-                                callee.span,
-                                "unexpected callee type {}",
-                                callee_ty)
-                        }
-                    };
-                match overloaded_call_type {
+                let def_id = self.mc.infcx.tables.borrow().type_dependent_defs[&call.id].def_id();
+                match OverloadedCallType::from_method_id(self.tcx(), def_id) {
                     FnMutOverloadedCall => {
                         let call_scope_r = self.tcx().node_scope_region(call.id);
                         self.borrow_expr(callee,
@@ -709,102 +678,55 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
     // consumed or borrowed as part of the automatic adjustment
     // process.
     fn walk_adjustment(&mut self, expr: &hir::Expr) {
-        let infcx = self.mc.infcx;
         //NOTE(@jroesch): mixed RefCell borrow causes crash
-        let adj = infcx.tables.borrow().adjustments.get(&expr.id).map(|x| x.clone());
-        if let Some(adjustment) = adj {
+        let adjustments = self.mc.infcx.tables.borrow().expr_adjustments(expr).to_vec();
+        let mut cmt = return_if_err!(self.mc.cat_expr_unadjusted(expr));
+        for adjustment in adjustments {
+            debug!("walk_adjustment expr={:?} adj={:?}", expr, adjustment);
             match adjustment.kind {
                 adjustment::Adjust::NeverToAny |
                 adjustment::Adjust::ReifyFnPointer |
                 adjustment::Adjust::UnsafeFnPointer |
                 adjustment::Adjust::ClosureFnPointer |
-                adjustment::Adjust::MutToConstPointer => {
+                adjustment::Adjust::MutToConstPointer |
+                adjustment::Adjust::Unsize => {
                     // Creating a closure/fn-pointer or unsizing consumes
                     // the input and stores it into the resulting rvalue.
-                    debug!("walk_adjustment: trivial adjustment");
-                    let cmt_unadjusted =
-                        return_if_err!(self.mc.cat_expr_unadjusted(expr));
-                    self.delegate_consume(expr.id, expr.span, cmt_unadjusted);
+                    self.delegate_consume(expr.id, expr.span, cmt.clone());
                 }
-                adjustment::Adjust::DerefRef { autoderefs, autoref, unsize } => {
-                    debug!("walk_adjustment expr={:?} adj={:?}", expr, adjustment);
 
-                    self.walk_autoderefs(expr, autoderefs);
+                adjustment::Adjust::Deref(None) => {}
 
-                    let cmt_derefd =
-                        return_if_err!(self.mc.cat_expr_autoderefd(expr, autoderefs));
+                // Autoderefs for overloaded Deref calls in fact reference
+                // their receiver. That is, if we have `(*x)` where `x`
+                // is of type `Rc<T>`, then this in fact is equivalent to
+                // `x.deref()`. Since `deref()` is declared with `&self`,
+                // this is an autoref of `x`.
+                adjustment::Adjust::Deref(Some(ref deref)) => {
+                    let bk = ty::BorrowKind::from_mutbl(deref.mutbl);
+                    self.delegate.borrow(expr.id, expr.span, cmt.clone(),
+                                         deref.region, bk, AutoRef);
+                }
 
-                    let cmt_refd =
-                        self.walk_autoref(expr, cmt_derefd, autoref);
-
-                    if unsize {
-                        // Unsizing consumes the thin pointer and produces a fat one.
-                        self.delegate_consume(expr.id, expr.span, cmt_refd);
-                    }
+                adjustment::Adjust::Borrow(ref autoref) => {
+                    self.walk_autoref(expr, cmt.clone(), autoref);
                 }
             }
+            cmt = return_if_err!(self.mc.cat_expr_adjusted(expr, cmt, &adjustment));
         }
     }
 
-    /// Autoderefs for overloaded Deref calls in fact reference their receiver. That is, if we have
-    /// `(*x)` where `x` is of type `Rc<T>`, then this in fact is equivalent to `x.deref()`. Since
-    /// `deref()` is declared with `&self`, this is an autoref of `x`.
-    fn walk_autoderefs(&mut self,
-                       expr: &hir::Expr,
-                       autoderefs: usize) {
-        debug!("walk_autoderefs expr={:?} autoderefs={}", expr, autoderefs);
-
-        for i in 0..autoderefs {
-            let deref_id = ty::MethodCall::autoderef(expr.id, i as u32);
-            if let Some(method_ty) = self.mc.infcx.node_method_ty(deref_id) {
-                let cmt = return_if_err!(self.mc.cat_expr_autoderefd(expr, i));
-
-                // the method call infrastructure should have
-                // replaced all late-bound regions with variables:
-                let self_ty = method_ty.fn_sig().input(0);
-                let self_ty = self.tcx().no_late_bound_regions(&self_ty).unwrap();
-
-                let (m, r) = match self_ty.sty {
-                    ty::TyRef(r, ref m) => (m.mutbl, r),
-                    _ => span_bug!(expr.span,
-                                   "bad overloaded deref type {:?}",
-                                   method_ty)
-                };
-                let bk = ty::BorrowKind::from_mutbl(m);
-                self.delegate.borrow(expr.id, expr.span, cmt,
-                                     r, bk, AutoRef);
-            }
-        }
-    }
-
-    /// Walks the autoref `opt_autoref` applied to the autoderef'd
-    /// `expr`. `cmt_derefd` is the mem-categorized form of `expr`
-    /// after all relevant autoderefs have occurred. Because AutoRefs
-    /// can be recursive, this function is recursive: it first walks
-    /// deeply all the way down the autoref chain, and then processes
-    /// the autorefs on the way out. At each point, it returns the
-    /// `cmt` for the rvalue that will be produced by introduced an
-    /// autoref.
+    /// Walks the autoref `autoref` applied to the autoderef'd
+    /// `expr`. `cmt_base` is the mem-categorized form of `expr`
+    /// after all relevant autoderefs have occurred.
     fn walk_autoref(&mut self,
                     expr: &hir::Expr,
                     cmt_base: mc::cmt<'tcx>,
-                    opt_autoref: Option<adjustment::AutoBorrow<'tcx>>)
-                    -> mc::cmt<'tcx>
-    {
-        debug!("walk_autoref(expr.id={} cmt_derefd={:?} opt_autoref={:?})",
+                    autoref: &adjustment::AutoBorrow<'tcx>) {
+        debug!("walk_autoref(expr.id={} cmt_base={:?} autoref={:?})",
                expr.id,
                cmt_base,
-               opt_autoref);
-
-        let cmt_base_ty = cmt_base.ty;
-
-        let autoref = match opt_autoref {
-            Some(ref autoref) => autoref,
-            None => {
-                // No AutoRef.
-                return cmt_base;
-            }
-        };
+               autoref);
 
         match *autoref {
             adjustment::AutoBorrow::Ref(r, m) => {
@@ -834,58 +756,6 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                                      AutoUnsafe);
             }
         }
-
-        // Construct the categorization for the result of the autoref.
-        // This is always an rvalue, since we are producing a new
-        // (temporary) indirection.
-
-        let adj_ty = cmt_base_ty.adjust_for_autoref(self.tcx(), opt_autoref);
-
-        self.mc.cat_rvalue_node(expr.id, expr.span, adj_ty)
-    }
-
-
-    // When this returns true, it means that the expression *is* a
-    // method-call (i.e. via the operator-overload).  This true result
-    // also implies that walk_overloaded_operator already took care of
-    // recursively processing the input arguments, and thus the caller
-    // should not do so.
-    fn walk_overloaded_operator(&mut self,
-                                expr: &hir::Expr,
-                                receiver: &hir::Expr,
-                                rhs: Vec<&hir::Expr>,
-                                pass_args: PassArgs)
-                                -> bool
-    {
-        if !self.mc.infcx.is_method_call(expr.id) {
-            return false;
-        }
-
-        match pass_args {
-            PassArgs::ByValue => {
-                self.consume_expr(receiver);
-                for &arg in &rhs {
-                    self.consume_expr(arg);
-                }
-
-                return true;
-            },
-            PassArgs::ByRef => {},
-        }
-
-        self.walk_expr(receiver);
-
-        // Arguments (but not receivers) to overloaded operator
-        // methods are implicitly autoref'd which sadly does not use
-        // adjustments, so we must hardcode the borrow here.
-
-        let r = self.tcx().node_scope_region(expr.id);
-        let bk = ty::ImmBorrow;
-
-        for &arg in &rhs {
-            self.borrow_expr(arg, r, bk, OverloadedOperator);
-        }
-        return true;
     }
 
     fn arm_move_mode(&mut self, discr_cmt: mc::cmt<'tcx>, arm: &hir::Arm) -> TrackMatchMode {
@@ -931,7 +801,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 PatKind::Binding(hir::BindByRef(..), ..) =>
                     mode.lub(BorrowingMatch),
                 PatKind::Binding(hir::BindByValue(..), ..) => {
-                    match copy_or_move(self.mc.infcx, &cmt_pat, PatBindingMove) {
+                    match copy_or_move(self.mc.infcx, self.param_env, &cmt_pat, PatBindingMove) {
                         Copy => mode.lub(CopyingMatch),
                         Move(..) => mode.lub(MovingMatch),
                     }
@@ -947,10 +817,9 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
     fn walk_pat(&mut self, cmt_discr: mc::cmt<'tcx>, pat: &hir::Pat, match_mode: MatchMode) {
         debug!("walk_pat cmt_discr={:?} pat={:?}", cmt_discr, pat);
 
-        let tcx = &self.tcx();
-        let mc = &self.mc;
+        let tcx = self.tcx();
         let infcx = self.mc.infcx;
-        let delegate = &mut self.delegate;
+        let ExprUseVisitor { ref mc, ref mut delegate, param_env } = *self;
         return_if_err!(mc.cat_pattern(cmt_discr.clone(), pat, |mc, cmt_pat, pat| {
             if let PatKind::Binding(bmode, def_id, ..) = pat.node {
                 debug!("binding cmt_pat={:?} pat={:?} match_mode={:?}", cmt_pat, pat, match_mode);
@@ -974,7 +843,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                         }
                     }
                     hir::BindByValue(..) => {
-                        let mode = copy_or_move(infcx, &cmt_pat, PatBindingMove);
+                        let mode = copy_or_move(infcx, param_env, &cmt_pat, PatBindingMove);
                         debug!("walk_pat binding consuming pat");
                         delegate.consume_pat(pat, cmt_pat, mode);
                     }
@@ -998,7 +867,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 Def::Variant(variant_did) |
                 Def::VariantCtor(variant_did, ..) => {
                     let enum_did = tcx.parent_def_id(variant_did).unwrap();
-                    let downcast_cmt = if tcx.lookup_adt_def(enum_did).is_univariant() {
+                    let downcast_cmt = if tcx.adt_def(enum_did).is_univariant() {
                         cmt_pat
                     } else {
                         let cmt_pat_ty = cmt_pat.ty;
@@ -1033,7 +902,10 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                                                                    freevar.def));
                 match upvar_capture {
                     ty::UpvarCapture::ByValue => {
-                        let mode = copy_or_move(self.mc.infcx, &cmt_var, CaptureMove);
+                        let mode = copy_or_move(self.mc.infcx,
+                                                self.param_env,
+                                                &cmt_var,
+                                                CaptureMove);
                         self.delegate.consume(closure_expr.id, freevar.span, cmt_var, mode);
                     }
                     ty::UpvarCapture::ByRef(upvar_borrow) => {
@@ -1063,11 +935,12 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
 }
 
 fn copy_or_move<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
+                                param_env: ty::ParamEnv<'tcx>,
                                 cmt: &mc::cmt<'tcx>,
                                 move_reason: MoveReason)
                                 -> ConsumeMode
 {
-    if infcx.type_moves_by_default(cmt.ty, cmt.span) {
+    if infcx.type_moves_by_default(param_env, cmt.ty, cmt.span) {
         Move(move_reason)
     } else {
         Copy

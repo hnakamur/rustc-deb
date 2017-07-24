@@ -46,7 +46,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! unicode-segmentation = "1.1.0"
+//! unicode-segmentation = "0.1.0"
 //! ```
 
 #![deny(missing_docs, unsafe_code)]
@@ -58,10 +58,6 @@
 #[cfg(test)]
 #[macro_use]
 extern crate std;
-
-#[cfg(test)]
-#[macro_use]
-extern crate quickcheck;
 
 pub use grapheme::{Graphemes, GraphemeIndices};
 pub use tables::UNICODE_VERSION;
@@ -100,7 +96,7 @@ pub trait UnicodeSegmentation {
     /// assert_eq!(&gr1[..], b);
     ///
     /// let gr2 = UnicodeSegmentation::graphemes("a\r\nb🇷🇺🇸🇹", true).collect::<Vec<&str>>();
-    /// let b: &[_] = &["a", "\r\n", "b", "🇷🇺", "🇸🇹"];
+    /// let b: &[_] = &["a", "\r\n", "b", "🇷🇺🇸🇹"];
     ///
     /// assert_eq!(&gr2[..], b);
     /// ```

@@ -11,7 +11,7 @@
 use llvm::{self, ValueRef, AttributePlace};
 use base;
 use builder::Builder;
-use common::{type_is_fat_ptr, C_uint};
+use common::{instance_ty, ty_fn_sig, type_is_fat_ptr, C_uint};
 use context::CrateContext;
 use cabi_x86;
 use cabi_x86_64;
@@ -29,6 +29,7 @@ use cabi_sparc;
 use cabi_sparc64;
 use cabi_nvptx;
 use cabi_nvptx64;
+use cabi_hexagon;
 use machine::llalign_of_min;
 use type_::Type;
 use type_of;
@@ -609,6 +610,14 @@ pub struct FnType<'tcx> {
 }
 
 impl<'a, 'tcx> FnType<'tcx> {
+    pub fn of_instance(ccx: &CrateContext<'a, 'tcx>, instance: &ty::Instance<'tcx>)
+                       -> Self {
+        let fn_ty = instance_ty(ccx.shared(), &instance);
+        let sig = ty_fn_sig(ccx, fn_ty);
+        let sig = ccx.tcx().erase_late_bound_regions_and_normalize(&sig);
+        Self::new(ccx, sig, &[])
+    }
+
     pub fn new(ccx: &CrateContext<'a, 'tcx>,
                sig: ty::FnSig<'tcx>,
                extra_args: &[Ty<'tcx>]) -> FnType<'tcx> {
@@ -630,6 +639,8 @@ impl<'a, 'tcx> FnType<'tcx> {
     pub fn unadjusted(ccx: &CrateContext<'a, 'tcx>,
                       sig: ty::FnSig<'tcx>,
                       extra_args: &[Ty<'tcx>]) -> FnType<'tcx> {
+        debug!("FnType::unadjusted({:?}, {:?})", sig, extra_args);
+
         use self::Abi::*;
         let cconv = match ccx.sess().target.target.adjust_abi(sig.abi) {
             RustIntrinsic | PlatformIntrinsic |
@@ -641,6 +652,7 @@ impl<'a, 'tcx> FnType<'tcx> {
             Stdcall => llvm::X86StdcallCallConv,
             Fastcall => llvm::X86FastcallCallConv,
             Vectorcall => llvm::X86_VectorCall,
+            Thiscall => llvm::X86_ThisCall,
             C => llvm::CCallConv,
             Unadjusted => llvm::CCallConv,
             Win64 => llvm::X86_64_Win64,
@@ -896,6 +908,7 @@ impl<'a, 'tcx> FnType<'tcx> {
             "sparc64" => cabi_sparc64::compute_abi_info(ccx, self),
             "nvptx" => cabi_nvptx::compute_abi_info(ccx, self),
             "nvptx64" => cabi_nvptx64::compute_abi_info(ccx, self),
+            "hexagon" => cabi_hexagon::compute_abi_info(ccx, self),
             a => ccx.sess().fatal(&format!("unrecognized arch \"{}\" in target specification", a))
         }
 

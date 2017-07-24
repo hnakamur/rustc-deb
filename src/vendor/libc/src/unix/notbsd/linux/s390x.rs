@@ -339,6 +339,7 @@ pub const SA_ONSTACK: ::c_int = 0x08000000;
 pub const SA_SIGINFO: ::c_int = 4;
 pub const SIGBUS: ::c_int = 7;
 pub const SIGSTKSZ: ::size_t = 0x2000;
+pub const MINSIGSTKSZ: ::size_t = 2048;
 pub const SIG_SETMASK: ::c_int = 2;
 pub const SOCK_DGRAM: ::c_int = 2;
 pub const SOCK_STREAM: ::c_int = 1;
@@ -576,7 +577,6 @@ pub const VMIN: usize = 6;
 pub const IEXTEN: ::tcflag_t = 0x00008000;
 pub const TOSTOP: ::tcflag_t = 0x00000100;
 pub const FLUSHO: ::tcflag_t = 0x00001000;
-pub const IUTF8: ::tcflag_t = 0x00004000;
 
 pub const CPU_SETSIZE: ::c_int = 0x400;
 

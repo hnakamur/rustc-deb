@@ -12,6 +12,64 @@ pub fn get() -> usize {
     get_num_cpus()
 }
 
+/// Returns the number of physical cores of the current machine.
+/// If not possible on the particular architecture returns same as get() which
+/// is the logical CPUs.
+#[inline]
+pub fn get_physical() -> usize {
+    get_num_physical_cpus()
+}
+
+
+#[cfg(not(target_os = "linux"))]
+#[inline]
+fn get_num_physical_cpus() -> usize {
+    // Not implemented, fallback
+    get_num_cpus()
+}
+
+#[cfg(target_os = "linux")]
+fn get_num_physical_cpus() -> usize {
+    use std::io::BufReader;
+    use std::io::BufRead;
+    use std::fs::File;
+    use std::collections::HashSet;
+
+    let file = match File::open("/proc/cpuinfo") {
+        Ok(val) => val,
+        Err(_) => {return get_num_cpus()},
+    };
+    let reader = BufReader::new(file);
+    let mut set = HashSet::new();
+    let mut coreid: u32 = 0;
+    let mut physid: u32 = 0;
+    let mut chgcount = 0;
+    for line in reader.lines().filter_map(|result| result.ok()) {
+        let parts: Vec<&str> = line.split(':').map(|s| s.trim()).collect();
+        if parts.len() != 2 {
+            continue
+        }
+        if parts[0] == "core id" || parts[0] == "physical id" {
+            let value = match parts[1].trim().parse() {
+              Ok(val) => val,
+              Err(_) => break,
+            };
+            match parts[0] {
+                "core id"     => coreid = value,
+                "physical id" => physid = value,
+                _ => {},
+            }
+            chgcount += 1;
+        }
+        if chgcount == 2 {
+            set.insert((physid, coreid));
+            chgcount = 0;
+        }
+    }
+    let count = set.len();
+    if count == 0 { get_num_cpus() } else { count }
+}
+
 #[cfg(windows)]
 fn get_num_cpus() -> usize {
     #[repr(C)]
@@ -96,6 +154,7 @@ fn get_num_cpus() -> usize {
         target_os = "ios",
         target_os = "android",
         target_os = "solaris",
+        target_os = "fuchsia",
     )
 )]
 fn get_num_cpus() -> usize {
@@ -103,14 +162,20 @@ fn get_num_cpus() -> usize {
         libc::sysconf(libc::_SC_NPROCESSORS_ONLN) as usize
     }
 }
+#[cfg(any(target_os = "emscripten", target_os = "redox", target_os = "haiku"))]
+fn get_num_cpus() -> usize {
+    1
+}
 
 #[test]
 fn lower_bound() {
     assert!(get() > 0);
+    assert!(get_physical() > 0);
 }
 
 
 #[test]
 fn upper_bound() {
     assert!(get() < 236_451);
+    assert!(get_physical() < 236_451);
 }

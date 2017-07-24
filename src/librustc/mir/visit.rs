@@ -509,7 +509,7 @@ macro_rules! make_mir_visitor {
                         self.visit_lvalue(lvalue, LvalueContext::Inspect, location);
                     }
 
-                    Rvalue::Box(ref $($mutability)* ty) => {
+                    Rvalue::NullaryOp(_op, ref $($mutability)* ty) => {
                         self.visit_ty(ty);
                     }
 
@@ -748,7 +748,7 @@ pub enum LvalueContext<'tcx> {
     Inspect,
 
     // Being borrowed
-    Borrow { region: &'tcx Region, kind: BorrowKind },
+    Borrow { region: Region<'tcx>, kind: BorrowKind },
 
     // Used as base for another lvalue, e.g. `x` in `x.y`.
     //

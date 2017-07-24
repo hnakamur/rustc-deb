@@ -4,8 +4,8 @@ Back in Chapter 10, we learned how to annotate references with lifetime
 parameters to help Rust understand how the lifetimes of different references
 relate. We saw how most of the time, Rust will let you elide lifetimes, but
 every reference has a lifetime. There are three advanced features of lifetimes
-that we haven't covered though: *lifetime subtyping*, *trait object lifetimes*,
-and *higher ranked trait bounds*.
+that we haven't covered though: *lifetime subtyping*, *lifetime
+bounds*, and *trait object lifetimes*.
 
 ### Lifetime Subtyping
 
@@ -96,10 +96,10 @@ body at 15:55...
   --> <anon>:15:56
    |
 15 |   fn parse_context(context: Context) -> Result<(), &str> {
-   |  ________________________________________________________^ starting here...
+   |  ________________________________________________________^
 16 | |     Parser { context: &context }.parse()
 17 | | }
-   | |_^ ...ending here
+   | |_^
 
 error: `context` does not live long enough
   --> <anon>:16:24
@@ -114,10 +114,10 @@ body at 15:55...
   --> <anon>:15:56
    |
 15 |   fn parse_context(context: Context) -> Result<(), &str> {
-   |  ________________________________________________________^ starting here...
+   |  ________________________________________________________^
 16 | |     Parser { context: &context }.parse()
 17 | | }
-   | |_^ ...ending here
+   | |_^
 ```
 
 These errors are saying that both the `Parser` instance we're creating and the
@@ -226,19 +226,17 @@ error[E0491]: in type `&'c Context<'s>`, reference has a longer lifetime than th
 note: the pointer is valid for the lifetime 'c as defined on the struct at 3:0
  --> src/main.rs:3:1
   |
-3 |   struct Parser<'c, 's> {
-  |  _^ starting here...
+3 | / struct Parser<'c, 's> {
 4 | |     context: &'c Context<'s>,
 5 | | }
-  | |_^ ...ending here
+  | |_^
 note: but the referenced data is only valid for the lifetime 's as defined on the struct at 3:0
  --> src/main.rs:3:1
   |
-3 |   struct Parser<'c, 's> {
-  |  _^ starting here...
+3 | / struct Parser<'c, 's> {
 4 | |     context: &'c Context<'s>,
 5 | | }
-  | |_^ ...ending here
+  | |_^
 ```
 
 Rust doesn't know of any relationship between `'c` and `'s`. In order to be
@@ -360,7 +358,7 @@ references that live forever; both of them are the same for the purpose of
 determining whether or not a reference has a shorter lifetime than what it
 refers to.
 
-### Lifetimes in Trait Objects
+### Trait Object Lifetimes
 
 In Chapter 17, we learned about trait objects that consist of putting a trait
 behind a reference in order to use dynamic dispatch. However, we didn't discuss

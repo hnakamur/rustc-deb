@@ -164,9 +164,9 @@ another `Result<T, E>`, which means we can use any methods that work on
 ### The Never Type, `!`, that Never Returns
 
 Rust has a special type named `!`. In type theory lingo, it's called the
-*bottom type*, but we prefer the name *never*. The name describes what it does:
-it stands in the place of the return type when a function will never return.
-For example:
+*bottom type*, but we prefer to call it the *never type*. The name describes
+what it does: it stands in the place of the return type when a function will
+never return. For example:
 
 ```rust,ignore
 fn bar() -> ! {
@@ -203,7 +203,7 @@ let guess = match guess.trim().parse()  {
 ```
 
 What would the type of `guess` be here? It'd have to be both an integer and a
-string, and Rust requires that `guess` can only have one type. So what
+string, and Rust requires that `guess` can only have one type. So what does
 `continue` return? Why are we allowed to return a `u32` from one arm in Listing
 19-33 and have another arm that ends with `continue`?
 

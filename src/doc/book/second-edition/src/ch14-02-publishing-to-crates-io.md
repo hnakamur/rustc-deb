@@ -99,8 +99,8 @@ internal organization: you can choose to re-export items to make a different
 public structure with `pub use`.
 
 For example, say that we made a library named `art` consisting of a `kinds`
-module containing an enum named `Color` and a `utils` module containing a
-function named `mix` as shown in Listing 14-2:
+module containing two enums named `PrimaryColor` and `SecondaryColor`, and a
+`utils` module containing a function named `mix` as shown in Listing 14-2:
 
 <span class="filename">Filename: src/lib.rs</span>
 
@@ -320,7 +320,7 @@ Packaging guessing_game v0.1.0 (file:///projects/guessing_game)
 Verifying guessing_game v0.1.0 (file:///projects/guessing_game)
 Compiling guessing_game v0.1.0
 (file:///projects/guessing_game/target/package/guessing_game-0.1.0)
- Finished debug [unoptimized + debuginfo] target(s) in 0.19 secs
+ Finished dev [unoptimized + debuginfo] target(s) in 0.19 secs
 Uploading guessing_game v0.1.0 (file:///projects/guessing_game)
 ```
 

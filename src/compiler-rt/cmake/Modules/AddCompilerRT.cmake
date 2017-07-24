@@ -77,6 +77,15 @@ macro(format_object_libs output suffix)
   endforeach()
 endmacro()
 
+function(add_compiler_rt_component name)
+  add_custom_target(${name})
+  set_target_properties(${name} PROPERTIES FOLDER "Compiler-RT Misc")
+  if(COMMAND runtime_register_component)
+    runtime_register_component(${name})
+  endif()
+  add_dependencies(compiler-rt ${name})
+endfunction()
+
 # Adds static or shared runtime for a list of architectures and operating
 # systems and puts it in the proper directory in the build and install trees.
 # add_compiler_rt_runtime(<name>
@@ -85,7 +94,7 @@ endmacro()
 #                         OS <os list>
 #                         SOURCES <source files>
 #                         CFLAGS <compile flags>
-#                         LINKFLAGS <linker flags>
+#                         LINK_FLAGS <linker flags>
 #                         DEFS <compile definitions>
 #                         LINK_LIBS <linked libraries> (only for shared library)
 #                         OBJECT_LIBS <object libraries to use as sources>
@@ -98,7 +107,7 @@ function(add_compiler_rt_runtime name type)
   cmake_parse_arguments(LIB
     ""
     "PARENT_TARGET"
-    "OS;ARCHS;SOURCES;CFLAGS;LINKFLAGS;DEFS;LINK_LIBS;OBJECT_LIBS"
+    "OS;ARCHS;SOURCES;CFLAGS;LINK_FLAGS;DEFS;LINK_LIBS;OBJECT_LIBS"
     ${ARGN})
   set(libnames)
   if(APPLE)
@@ -107,7 +116,7 @@ function(add_compiler_rt_runtime name type)
         set(libname "${name}_${os}")
       else()
         set(libname "${name}_${os}_dynamic")
-        set(extra_linkflags_${libname} ${DARWIN_${os}_LINKFLAGS} ${LIB_LINKFLAGS})
+        set(extra_link_flags_${libname} ${DARWIN_${os}_LINK_FLAGS} ${LIB_LINK_FLAGS})
       endif()
       list_intersect(LIB_ARCHS_${libname} DARWIN_${os}_ARCHS LIB_ARCHS)
       if(LIB_ARCHS_${libname})
@@ -130,7 +139,7 @@ function(add_compiler_rt_runtime name type)
       else()
         set(libname "${name}-dynamic-${arch}")
         set(extra_cflags_${libname} ${TARGET_${arch}_CFLAGS} ${LIB_CFLAGS})
-        set(extra_linkflags_${libname} ${TARGET_${arch}_LINKFLAGS} ${LIB_LINKFLAGS})
+        set(extra_link_flags_${libname} ${TARGET_${arch}_LINK_FLAGS} ${LIB_LINK_FLAGS})
         if(WIN32)
           set(output_name_${libname} ${name}_dynamic-${arch}${COMPILER_RT_OS_SUFFIX})
         else()
@@ -164,6 +173,7 @@ function(add_compiler_rt_runtime name type)
                                 -P "${CMAKE_BINARY_DIR}/cmake_install.cmake")
       set_target_properties(install-${LIB_PARENT_TARGET} PROPERTIES
                             FOLDER "Compiler-RT Misc")
+      add_dependencies(install-compiler-rt install-${LIB_PARENT_TARGET})
     endif()
   endif()
 
@@ -178,15 +188,21 @@ function(add_compiler_rt_runtime name type)
 
     add_library(${libname} ${type} ${sources_${libname}})
     set_target_compile_flags(${libname} ${extra_cflags_${libname}})
-    set_target_link_flags(${libname} ${extra_linkflags_${libname}})
+    set_target_link_flags(${libname} ${extra_link_flags_${libname}})
     set_property(TARGET ${libname} APPEND PROPERTY
                 COMPILE_DEFINITIONS ${LIB_DEFS})
     set_target_output_directories(${libname} ${COMPILER_RT_LIBRARY_OUTPUT_DIR})
     set_target_properties(${libname} PROPERTIES
         OUTPUT_NAME ${output_name_${libname}})
     set_target_properties(${libname} PROPERTIES FOLDER "Compiler-RT Runtime")
-    if(LIB_LINK_LIBS AND ${type} STREQUAL "SHARED")
-      target_link_libraries(${libname} ${LIB_LINK_LIBS})
+    if(${type} STREQUAL "SHARED")
+      if(LIB_LINK_LIBS)
+        target_link_libraries(${libname} ${LIB_LINK_LIBS})
+      endif()
+      if(WIN32 AND NOT CYGWIN AND NOT MINGW)
+        set_target_properties(${libname} PROPERTIES IMPORT_PREFIX "")
+        set_target_properties(${libname} PROPERTIES IMPORT_SUFFIX ".lib")
+      endif()
     endif()
     install(TARGETS ${libname}
       ARCHIVE DESTINATION ${COMPILER_RT_LIBRARY_INSTALL_DIR}
@@ -227,7 +243,7 @@ endfunction()
 # when cross compiling, COMPILER_RT_TEST_COMPILER_CFLAGS help
 # in compilation and linking of unittests.
 string(REPLACE " " ";" COMPILER_RT_UNITTEST_CFLAGS "${COMPILER_RT_TEST_COMPILER_CFLAGS}")
-set(COMPILER_RT_UNITTEST_LINKFLAGS ${COMPILER_RT_UNITTEST_CFLAGS})
+set(COMPILER_RT_UNITTEST_LINK_FLAGS ${COMPILER_RT_UNITTEST_CFLAGS})
 
 # Unittests support.
 set(COMPILER_RT_GTEST_PATH ${LLVM_MAIN_SRC_DIR}/utils/unittest/googletest)
@@ -240,6 +256,7 @@ set(COMPILER_RT_GTEST_CFLAGS
 )
 
 append_list_if(COMPILER_RT_DEBUG -DSANITIZER_DEBUG=1 COMPILER_RT_UNITTEST_CFLAGS)
+append_list_if(COMPILER_RT_HAS_WCOVERED_SWITCH_DEFAULT_FLAG -Wno-covered-switch-default COMPILER_RT_UNITTEST_CFLAGS)
 
 if(MSVC)
   # clang doesn't support exceptions on Windows yet.
@@ -253,12 +270,6 @@ if(MSVC)
 
   # gtest use a lot of stuff marked as deprecated on Windows.
   list(APPEND COMPILER_RT_GTEST_CFLAGS -Wno-deprecated-declarations)
-
-  # Visual Studio 2012 only supports up to 8 template parameters in
-  # std::tr1::tuple by default, but gtest requires 10
-  if(MSVC_VERSION EQUAL 1700)
-    list(APPEND COMPILER_RT_GTEST_CFLAGS -D_VARIADIC_MAX=10)
-  endif()
 endif()
 
 # Link objects into a single executable with COMPILER_RT_TEST_COMPILER,

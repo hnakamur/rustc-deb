@@ -379,6 +379,16 @@ fn test_reverse() {
     let mut v3 = Vec::<i32>::new();
     v3.reverse();
     assert!(v3.is_empty());
+
+    // check the 1-byte-types path
+    let mut v = (-50..51i8).collect::<Vec<_>>();
+    v.reverse();
+    assert_eq!(v, (-50..51i8).rev().collect::<Vec<_>>());
+
+    // check the 2-byte-types path
+    let mut v = (-50..51i16).collect::<Vec<_>>();
+    v.reverse();
+    assert_eq!(v, (-50..51i16).rev().collect::<Vec<_>>());
 }
 
 #[test]
@@ -454,6 +464,41 @@ fn test_sort_stability() {
             assert!(v.windows(2).all(|w| w[0] <= w[1]));
         }
     }
+}
+
+#[test]
+fn test_rotate() {
+    let expected: Vec<_> = (0..13).collect();
+    let mut v = Vec::new();
+
+    // no-ops
+    v.clone_from(&expected);
+    v.rotate(0);
+    assert_eq!(v, expected);
+    v.rotate(expected.len());
+    assert_eq!(v, expected);
+    let mut zst_array = [(), (), ()];
+    zst_array.rotate(2);
+
+    // happy path
+    v = (5..13).chain(0..5).collect();
+    v.rotate(8);
+    assert_eq!(v, expected);
+
+    let expected: Vec<_> = (0..1000).collect();
+
+    // small rotations in large slice, uses ptr::copy
+    v = (2..1000).chain(0..2).collect();
+    v.rotate(998);
+    assert_eq!(v, expected);
+    v = (998..1000).chain(0..998).collect();
+    v.rotate(2);
+    assert_eq!(v, expected);
+
+    // non-small prime rotation, has a few rounds of swapping
+    v = (389..1000).chain(0..389).collect();
+    v.rotate(1000-389);
+    assert_eq!(v, expected);
 }
 
 #[test]

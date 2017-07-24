@@ -10,7 +10,10 @@
 
 #![deny(warnings)]
 
+#![feature(i128_type)]
 #![feature(rand)]
+#![feature(repr_simd)]
+#![feature(slice_rotate)]
 #![feature(sort_unstable)]
 #![feature(test)]
 

@@ -415,8 +415,11 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                                           Value(base));
                             }
                             if projected_ty.is_bool() {
-                                unsafe {
-                                    val = llvm::LLVMConstTrunc(val, Type::i1(self.ccx).to_ref());
+                                let i1_type = Type::i1(self.ccx);
+                                if val_ty(val) != i1_type {
+                                    unsafe {
+                                        val = llvm::LLVMConstTrunc(val, i1_type.to_ref());
+                                    }
                                 }
                             }
                             (Base::Value(val), extra)
@@ -793,6 +796,12 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                 Const::new(llval, operand.ty)
             }
 
+            mir::Rvalue::NullaryOp(mir::NullOp::SizeOf, ty) => {
+                assert!(self.ccx.shared().type_is_sized(ty));
+                let llval = C_uint(self.ccx, self.ccx.size_of(ty));
+                Const::new(llval, tcx.types.usize)
+            }
+
             _ => span_bug!(span, "{:?} in constant", rvalue)
         };
 
@@ -867,6 +876,7 @@ pub fn const_scalar_binop(op: mir::BinOp,
                     llvm::LLVMConstICmp(cmp, lhs, rhs)
                 }
             }
+            mir::BinOp::Offset => unreachable!("BinOp::Offset in const-eval!")
         }
     }
 }

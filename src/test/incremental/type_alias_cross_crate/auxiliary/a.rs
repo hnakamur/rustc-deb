@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: -Z incremental-cc
+// compile-flags: -Z query-dep-graph
 
 #![crate_type="rlib"]
 

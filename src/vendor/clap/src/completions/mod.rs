@@ -43,7 +43,6 @@ impl<'a, 'b> ComplGen<'a, 'b> {
 // Also note, aliases are treated as their own subcommands but duplicates of whatever they're
 // aliasing.
 pub fn all_subcommand_names(p: &Parser) -> Vec<String> {
-    debugln!("all_subcommand_names;");
     let mut subcmds: Vec<_> = subcommands_of(p).iter().map(|&(ref n, _)| n.clone()).collect();
     for sc_v in p.subcommands.iter().map(|s| all_subcommand_names(&s.p)) {
         subcmds.extend(sc_v);
@@ -60,7 +59,6 @@ pub fn all_subcommand_names(p: &Parser) -> Vec<String> {
 // Also note, aliases are treated as their own subcommands but duplicates of whatever they're
 // aliasing.
 pub fn all_subcommands(p: &Parser) -> Vec<(String, String)> {
-    debugln!("all_subcommands;");
     let mut subcmds: Vec<_> = subcommands_of(p);
     for sc_v in p.subcommands.iter().map(|s| all_subcommands(&s.p)) {
         subcmds.extend(sc_v);
@@ -75,18 +73,19 @@ pub fn all_subcommands(p: &Parser) -> Vec<(String, String)> {
 // Also note, aliases are treated as their own subcommands but duplicates of whatever they're
 // aliasing.
 pub fn subcommands_of(p: &Parser) -> Vec<(String, String)> {
-    debugln!("subcommands_of: name={}, bin_name={}",
+    debugln!("fn=subcommands_of;name={};bin_name={}",
              p.meta.name,
              p.meta.bin_name.as_ref().unwrap());
     let mut subcmds = vec![];
 
-    debugln!("subcommands_of: Has subcommands...{:?}", p.has_subcommands());
+    debug!("Has subcommands...");
     if !p.has_subcommands() {
+        sdebugln!("No");
         let mut ret = vec![(p.meta.name.clone(), p.meta.bin_name.as_ref().unwrap().clone())];
-        debugln!("subcommands_of: Looking for aliases...");
+        debugln!("Looking for aliases...");
         if let Some(ref aliases) = p.meta.aliases {
             for &(n, _) in aliases {
-                debugln!("subcommands_of:iter:iter: Found alias...{}", n);
+                debugln!("Found alias...{}", n);
                 let mut als_bin_name: Vec<_> =
                     p.meta.bin_name.as_ref().unwrap().split(' ').collect();
                 als_bin_name.push(n);
@@ -97,15 +96,16 @@ pub fn subcommands_of(p: &Parser) -> Vec<(String, String)> {
         }
         return ret;
     }
+    sdebugln!("Yes");
     for sc in &p.subcommands {
-        debugln!("subcommands_of:iter: name={}, bin_name={}",
+        debugln!("iter;name={};bin_name={}",
                  sc.p.meta.name,
                  sc.p.meta.bin_name.as_ref().unwrap());
 
-        debugln!("subcommands_of:iter: Looking for aliases...");
+        debugln!("Looking for aliases...");
         if let Some(ref aliases) = sc.p.meta.aliases {
             for &(n, _) in aliases {
-                debugln!("subcommands_of:iter:iter: Found alias...{}", n);
+                debugln!("Found alias...{}", n);
                 let mut als_bin_name: Vec<_> =
                     p.meta.bin_name.as_ref().unwrap().split(' ').collect();
                 als_bin_name.push(n);
@@ -120,12 +120,11 @@ pub fn subcommands_of(p: &Parser) -> Vec<(String, String)> {
 }
 
 pub fn get_all_subcommand_paths(p: &Parser, first: bool) -> Vec<String> {
-    debugln!("get_all_subcommand_paths;");
     let mut subcmds = vec![];
     if !p.has_subcommands() {
         if !first {
             let name = &*p.meta.name;
-            let path = p.meta.bin_name.as_ref().unwrap().clone().replace(" ", "__");
+            let path = p.meta.bin_name.as_ref().unwrap().clone().replace(" ", "_");
             let mut ret = vec![path.clone()];
             if let Some(ref aliases) = p.meta.aliases {
                 for &(n, _) in aliases {
@@ -138,7 +137,7 @@ pub fn get_all_subcommand_paths(p: &Parser, first: bool) -> Vec<String> {
     }
     for sc in &p.subcommands {
         let name = &*sc.p.meta.name;
-        let path = sc.p.meta.bin_name.as_ref().unwrap().clone().replace(" ", "__");
+        let path = sc.p.meta.bin_name.as_ref().unwrap().clone().replace(" ", "_");
         subcmds.push(path.clone());
         if let Some(ref aliases) = sc.p.meta.aliases {
             for &(n, _) in aliases {

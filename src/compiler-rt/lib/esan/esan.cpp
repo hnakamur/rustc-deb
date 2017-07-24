@@ -141,8 +141,16 @@ static bool verifyShadowScheme() {
 }
 #endif
 
+uptr VmaSize;
+
 static void initializeShadow() {
   verifyAddressSpace();
+
+  // This is based on the assumption that the intial stack is always allocated
+  // in the topmost segment of the user address space and the assumption
+  // holds true on all the platforms currently supported.
+  VmaSize =
+    (MostSignificantSetBitIndex(GET_CURRENT_FRAME()) + 1);
 
   DCHECK(verifyShadowScheme());
 
@@ -257,6 +265,14 @@ void processCompilationUnitExit(void *Ptr) {
   } else {
     DCHECK(Ptr == nullptr);
   }
+}
+
+unsigned int getSampleCount() {
+  VPrintf(1, "in esan::%s\n", __FUNCTION__);
+  if (__esan_which_tool == ESAN_WorkingSet) {
+    return getSampleCountWorkingSet();
+  }
+  return 0;
 }
 
 } // namespace __esan

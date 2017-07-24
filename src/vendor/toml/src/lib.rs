@@ -1,7 +1,5 @@
 //! A [TOML]-parsing library
 //!
-//! [TOML]: https://github.com/toml-lang/toml
-//!
 //! This library implements a [TOML] v0.4.0 compatible parser,
 //! primarily supporting the [`serde`] library for encoding/decoding
 //! various types in Rust.
@@ -15,7 +13,7 @@
 //! authors = ["Alex Crichton <alex@alexcrichton.com>"]
 //!
 //! [dependencies]
-//! serde = "0.9"
+//! serde = "1.0"
 //! ```
 //!
 //! The TOML format tends to be relatively common throughout the Rust community
@@ -59,7 +57,7 @@
 //!
 //! ## Deserialization and Serialization
 //!
-//! This crate supports [`serde`] 0.9 with a number of
+//! This crate supports [`serde`] 1.0 with a number of
 //! implementations of the `Deserialize`, `Serialize`, `Deserializer`, and
 //! `Serializer` traits. Namely, you'll find:
 //!
@@ -146,19 +144,20 @@
 //! }
 //! ```
 //!
+//! [TOML]: https://github.com/toml-lang/toml
 //! [Cargo]: https://crates.io/
 //! [`serde`]: https://serde.rs/
 
-#![doc(html_root_url = "https://docs.rs/toml/0.3")]
+#![doc(html_root_url = "https://docs.rs/toml/0.4")]
 #![deny(missing_docs)]
 
 #[macro_use]
 extern crate serde;
 
 pub mod value;
-mod datetime;
 #[doc(no_inline)]
 pub use value::Value;
+mod datetime;
 
 pub mod ser;
 #[doc(no_inline)]

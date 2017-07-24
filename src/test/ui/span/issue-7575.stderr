@@ -1,4 +1,4 @@
-error: no method named `f9` found for type `usize` in the current scope
+error[E0599]: no method named `f9` found for type `usize` in the current scope
   --> $DIR/issue-7575.rs:74:18
    |
 74 |     u.f8(42) + u.f9(342) + m.fff(42)
@@ -23,12 +23,13 @@ note: candidate #3 is defined in the trait `UnusedTrait`
 29 |     fn f9(usize) -> usize; //~ NOTE candidate
    |     ^^^^^^^^^^^^^^^^^^^^^^
    = help: to disambiguate the method call, write `UnusedTrait::f9(u, 342)` instead
-   = help: items from traits can only be used if the trait is implemented and in scope; the following traits define an item `f9`, perhaps you need to implement one of them:
-   = help: candidate #1: `CtxtFn`
-   = help: candidate #2: `OtherTrait`
-   = help: candidate #3: `UnusedTrait`
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following traits define an item `f9`, perhaps you need to implement one of them:
+           candidate #1: `CtxtFn`
+           candidate #2: `OtherTrait`
+           candidate #3: `UnusedTrait`
 
-error: no method named `fff` found for type `Myisize` in the current scope
+error[E0599]: no method named `fff` found for type `Myisize` in the current scope
   --> $DIR/issue-7575.rs:74:30
    |
 74 |     u.f8(42) + u.f9(342) + m.fff(42)
@@ -43,7 +44,7 @@ note: candidate #1 is defined in an impl for the type `Myisize`
 53 | |     }
    | |_____^
 
-error: no method named `is_str` found for type `T` in the current scope
+error[E0599]: no method named `is_str` found for type `T` in the current scope
   --> $DIR/issue-7575.rs:85:7
    |
 85 |     t.is_str()
@@ -58,8 +59,9 @@ note: candidate #1 is defined in the trait `ManyImplTrait`
 59 | |     }
    | |_____^
    = help: to disambiguate the method call, write `ManyImplTrait::is_str(t)` instead
-   = help: items from traits can only be used if the trait is implemented and in scope; the following trait defines an item `is_str`, perhaps you need to implement it:
-   = help: candidate #1: `ManyImplTrait`
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following trait defines an item `is_str`, perhaps you need to implement it:
+           candidate #1: `ManyImplTrait`
 
-error: aborting due to 3 previous errors
+error: aborting due to previous error(s)
 

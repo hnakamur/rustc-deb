@@ -35,7 +35,8 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     temp_lifetime: Option<CodeExtent>,
                     expr: Expr<'tcx>)
                     -> BlockAnd<Lvalue<'tcx>> {
-        debug!("expr_as_temp(block={:?}, expr={:?})", block, expr);
+        debug!("expr_as_temp(block={:?}, temp_lifetime={:?}, expr={:?})",
+               block, temp_lifetime, expr);
         let this = self;
 
         if let ExprKind::Scope { extent, value } = expr.kind {
@@ -48,13 +49,6 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         let expr_span = expr.span;
         let temp = this.temp(expr_ty.clone(), expr_span);
         let source_info = this.source_info(expr_span);
-
-        if expr.temp_lifetime_was_shrunk && this.hir.needs_drop(expr_ty) {
-            this.hir.tcx().sess.span_warn(
-                expr_span,
-                "this temporary used to live longer - see issue #39283 \
-(https://github.com/rust-lang/rust/issues/39283)");
-        }
 
         if !expr_ty.is_never() && temp_lifetime.is_some() {
             this.cfg.push(block, Statement {

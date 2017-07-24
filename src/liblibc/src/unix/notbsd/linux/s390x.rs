@@ -86,7 +86,7 @@ s! {
         pub sa_sigaction: ::sighandler_t,
         __glibc_reserved0: ::c_int,
         pub sa_flags: ::c_int,
-        _restorer: *mut ::c_void,
+        pub sa_restorer: ::dox::Option<extern fn()>,
         pub sa_mask: sigset_t,
     }
 
@@ -339,6 +339,7 @@ pub const SA_ONSTACK: ::c_int = 0x08000000;
 pub const SA_SIGINFO: ::c_int = 4;
 pub const SIGBUS: ::c_int = 7;
 pub const SIGSTKSZ: ::size_t = 0x2000;
+pub const MINSIGSTKSZ: ::size_t = 2048;
 pub const SIG_SETMASK: ::c_int = 2;
 pub const SOCK_DGRAM: ::c_int = 2;
 pub const SOCK_STREAM: ::c_int = 1;

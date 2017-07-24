@@ -26,11 +26,20 @@ $ mkdir hello_world
 $ cd hello_world
 ```
 
-Windows:
+Windows CMD:
 
 ```cmd
 > mkdir %USERPROFILE%\projects
 > cd %USERPROFILE%\projects
+> mkdir hello_world
+> cd hello_world
+```
+
+Windows PowerShell:
+
+```powershell
+> mkdir $env:USERPROFILE\projects
+> cd $env:USERPROFILE\projects
 > mkdir hello_world
 > cd hello_world
 ```
@@ -64,7 +73,7 @@ Hello, world!
 On Windows, run `.\main.exe` instead of `./main`. Regardless of your
 operating system, you should see the string `Hello, world!` print to the
 terminal. If you did, then congratulations! You've officially written a Rust
-program. That makes you a Rust programmer! Welcome.
+program. That makes you a Rust programmer! Welcome!
 
 ### Anatomy of a Rust Program
 

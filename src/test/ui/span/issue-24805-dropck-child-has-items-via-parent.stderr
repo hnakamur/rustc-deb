@@ -1,4 +1,4 @@
-error: `d1` does not live long enough
+error[E0597]: `d1` does not live long enough
   --> $DIR/issue-24805-dropck-child-has-items-via-parent.rs:42:1
    |
 38 |     _d = D_Child(&d1);
@@ -9,5 +9,5 @@ error: `d1` does not live long enough
    |
    = note: values in a scope are dropped in the opposite order they are created
 
-error: aborting due to previous error
+error: aborting due to previous error(s)
 

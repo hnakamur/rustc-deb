@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! A macro which makes errors easy to write
 //!
 //! Minimum type is like this:
@@ -19,6 +20,8 @@
 //! comments ``/// something`` (as well as other meta attrbiutes) on variants
 //! are allowed.
 //!
+//! # Allowed Syntax
+//!
 //! You may add arbitrary parameters to any struct variant:
 //!
 //! ```rust
@@ -36,7 +39,7 @@
 //! }
 //! ```
 //!
-//! Note unlike in normal Enum decarations you declare names of fields (which
+//! Note unlike in normal Enum declarations you declare names of fields (which
 //! are omitted from type). How they can be used is outlined below.
 //!
 //! Now you might have noticed trailing braces `{}`. They are used to define
@@ -85,6 +88,10 @@
 //!         }
 //!         Utf8(err: std::str::Utf8Error) {
 //!             description("utf8 error")
+//!         }
+//!         Other(err: Box<std::error::Error>) {
+//!             cause(&**err)
+//!             description(err.description())
 //!         }
 //!     }
 //! }
@@ -196,6 +203,7 @@
 //!     }
 //! }
 //! ```
+//! # Context
 //!
 //! Since quick-error 1.1 we also have a `context` declaration, which is
 //! similar to (the longest form of) `from`, but allows adding some context to
@@ -254,12 +262,50 @@
 //! Docstrings are also okay.  Empty braces can be omitted as of quick_error
 //! 0.1.3.
 //!
+//! # Private Enums
+//!
+//! Since quick-error 1.2.0 we  have a way to make a private enum that is
+//! wrapped by public structure:
+//!
+//! ```rust
+//! #[macro_use] extern crate quick_error;
+//! # fn main() {}
+//!
+//! quick_error! {
+//!     #[derive(Debug)]
+//!     pub enum PubError wraps ErrorEnum {
+//!         Variant1 {}
+//!     }
+//! }
+//! ```
+//!
+//! This generates data structures like this
+//!
+//! ```rust
+//!
+//! pub struct PubError(ErrorEnum);
+//!
+//! enum ErrorEnum {
+//!     Variant1,
+//! }
+//!
+//! ```
+//!
+//! Which in turn allows you to export just `PubError` in your crate and keep
+//! actual enumeration private to the crate. This is useful to keep backwards
+//! compatibility for error types. Currently there is no shorcuts to define
+//! error constructors for the inner type, but we consider adding some in
+//! future versions.
+//!
+//! It's possible to declare internal enum as public too.
+//!
 //!
 
 
 /// Main macro that does all the work
 #[macro_export]
 macro_rules! quick_error {
+
     (   $(#[$meta:meta])*
         pub enum $name:ident { $($chunks:tt)* }
     ) => {
@@ -274,6 +320,74 @@ macro_rules! quick_error {
             items [] buf []
             queue [ $($chunks)* ]);
     };
+
+    (   $(#[$meta:meta])*
+        pub enum $name:ident wraps $enum_name:ident { $($chunks:tt)* }
+    ) => {
+        quick_error!(WRAPPER $enum_name [ pub struct ] $name $(#[$meta])*);
+        quick_error!(SORT [enum $enum_name $(#[$meta])* ]
+            items [] buf []
+            queue [ $($chunks)* ]);
+    };
+
+    (   $(#[$meta:meta])*
+        pub enum $name:ident wraps pub $enum_name:ident { $($chunks:tt)* }
+    ) => {
+        quick_error!(WRAPPER $enum_name [ pub struct ] $name $(#[$meta])*);
+        quick_error!(SORT [pub enum $enum_name $(#[$meta])* ]
+            items [] buf []
+            queue [ $($chunks)* ]);
+    };
+    (   $(#[$meta:meta])*
+        enum $name:ident wraps $enum_name:ident { $($chunks:tt)* }
+    ) => {
+        quick_error!(WRAPPER $enum_name [ struct ] $name $(#[$meta])*);
+        quick_error!(SORT [enum $enum_name $(#[$meta])* ]
+            items [] buf []
+            queue [ $($chunks)* ]);
+    };
+
+    (   $(#[$meta:meta])*
+        enum $name:ident wraps pub $enum_name:ident { $($chunks:tt)* }
+    ) => {
+        quick_error!(WRAPPER $enum_name [ struct ] $name $(#[$meta])*);
+        quick_error!(SORT [pub enum $enum_name $(#[$meta])* ]
+            items [] buf []
+            queue [ $($chunks)* ]);
+    };
+
+
+    (
+        WRAPPER $internal:ident [ $($strdef:tt)* ] $strname:ident
+        $(#[$meta:meta])*
+    ) => {
+        $(#[$meta])*
+        $($strdef)* $strname ( $internal );
+
+        impl ::std::fmt::Display for $strname {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter)
+                -> ::std::fmt::Result
+            {
+                ::std::fmt::Display::fmt(&self.0, f)
+            }
+        }
+
+        impl From<$internal> for $strname {
+            fn from(err: $internal) -> Self {
+                $strname(err)
+            }
+        }
+
+        impl ::std::error::Error for $strname {
+            fn description(&self) -> &str {
+                self.0.description()
+            }
+            fn cause(&self) -> Option<&::std::error::Error> {
+                self.0.cause()
+            }
+        }
+    };
+
     // Queue is empty, can do the work
     (SORT [enum $name:ident $( #[$meta:meta] )*]
         items [$($( #[$imeta:meta] )*
@@ -288,7 +402,7 @@ macro_rules! quick_error {
                       => $iitem: $imode [$( $ivar: $ityp ),*] )*]
         );
         quick_error!(IMPLEMENTATIONS $name {$(
-           $iitem: $imode [$( $ivar: $ityp ),*] {$( $ifuncs )*}
+           $iitem: $imode [$(#[$imeta])*] [$( $ivar: $ityp ),*] {$( $ifuncs )*}
            )*});
         $(
             quick_error!(ERROR_CHECK $imode $($ifuncs)*);
@@ -307,7 +421,7 @@ macro_rules! quick_error {
                       => $iitem: $imode [$( $ivar: $ityp ),*] )*]
         );
         quick_error!(IMPLEMENTATIONS $name {$(
-           $iitem: $imode [$( $ivar: $ityp ),*] {$( $ifuncs )*}
+           $iitem: $imode [$(#[$imeta])*] [$( $ivar: $ityp ),*] {$( $ifuncs )*}
            )*});
         $(
             quick_error!(ERROR_CHECK $imode $($ifuncs)*);
@@ -512,7 +626,7 @@ macro_rules! quick_error {
     };
     (IMPLEMENTATIONS
         $name:ident {$(
-            $item:ident: $imode:tt [$( $var:ident: $typ:ty ),*] {$( $funcs:tt )*}
+            $item:ident: $imode:tt [$(#[$imeta:meta])*] [$( $var:ident: $typ:ty ),*] {$( $funcs:tt )*}
         )*}
     ) => {
         #[allow(unused)]
@@ -522,6 +636,7 @@ macro_rules! quick_error {
             {
                 match *self {
                     $(
+                        $(#[$imeta])*
                         quick_error!(ITEM_PATTERN
                             $name $item: $imode [$( ref $var ),*]
                         ) => {
@@ -540,6 +655,7 @@ macro_rules! quick_error {
             fn description(&self) -> &str {
                 match *self {
                     $(
+                        $(#[$imeta])*
                         quick_error!(ITEM_PATTERN
                             $name $item: $imode [$( ref $var ),*]
                         ) => {
@@ -553,6 +669,7 @@ macro_rules! quick_error {
             fn cause(&self) -> Option<&::std::error::Error> {
                 match *self {
                     $(
+                        $(#[$imeta])*
                         quick_error!(ITEM_PATTERN
                             $name $item: $imode [$( ref $var ),*]
                         ) => {
@@ -865,10 +982,20 @@ macro_rules! quick_error {
 }
 
 
+/// Generic context type
+///
+/// Used mostly as a transport for `ResultExt::context` method
 #[derive(Debug)]
 pub struct Context<X, E>(pub X, pub E);
 
+/// Result extension trait adding a `context` method
 pub trait ResultExt<T, E> {
+    /// The method is use to add context information to current operation
+    ///
+    /// The context data is then used in error constructor to store additional
+    /// information within error. For example, you may add a filename as a
+    /// context for file operation. See crate documentation for the actual
+    /// example.
     fn context<X>(self, x: X) -> Result<T, Context<X, E>>;
 }
 
@@ -912,6 +1039,30 @@ mod test {
         assert_eq!(format!("{:?}", err), "Two".to_string());
         assert_eq!(err.description(), "Two".to_string());
         assert!(err.cause().is_none());
+    }
+
+    quick_error! {
+        #[derive(Debug)]
+        pub enum Wrapper wraps Wrapped {
+            One
+            Two(s: String) {
+                display("two: {}", s)
+                from()
+            }
+        }
+    }
+
+    #[test]
+    fn wrapper() {
+        assert_eq!(format!("{}", Wrapper::from(Wrapped::One)),
+            "One".to_string());
+        assert_eq!(format!("{}",
+            Wrapper::from(Wrapped::from(String::from("hello")))),
+            "two: hello".to_string());
+        assert_eq!(format!("{:?}", Wrapper::from(Wrapped::One)),
+            "Wrapper(One)".to_string());
+        assert_eq!(Wrapper::from(Wrapped::One).description(),
+            "One".to_string());
     }
 
     quick_error! {
@@ -1119,12 +1270,24 @@ mod test {
             try!(::std::str::from_utf8(s).context(p));
             Ok(())
         }
-        assert_eq!(format!("{}", parse_utf(b"a\x80\x80", "/etc").unwrap_err()),
-            "Path error at \"/etc\": invalid utf-8: \
-               invalid byte near index 1");
-        assert_eq!(format!("{}", parse_utf(b"\x80\x80",
-                                 PathBuf::from("/tmp")).unwrap_err()),
-            "Path error at \"/tmp\": invalid utf-8: \
-               invalid byte near index 0");
+        let etext = parse_utf(b"a\x80\x80", "/etc").unwrap_err().to_string();
+        assert!(etext.starts_with(
+            "Path error at \"/etc\": invalid utf-8"));
+        let etext = parse_utf(b"\x80\x80", PathBuf::from("/tmp")).unwrap_err()
+            .to_string();
+        assert!(etext.starts_with(
+            "Path error at \"/tmp\": invalid utf-8"));
+    }
+
+    #[test]
+    fn conditional_compilation() {
+        quick_error! {
+            #[allow(dead_code)]
+            #[derive(Debug)]
+            pub enum Test {
+                #[cfg(feature = "foo")]
+                Variant
+            }
+        }
     }
 }

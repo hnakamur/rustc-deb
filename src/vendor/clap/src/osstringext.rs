@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 
 #[cfg(target_os = "windows")]
-pub trait OsStrExt3 {
+trait OsStrExt3 {
     fn from_bytes(b: &[u8]) -> &Self;
     fn as_bytes(&self) -> &[u8];
 }
@@ -91,7 +91,8 @@ impl<'a> Iterator for OsSplit<'a> {
     type Item = &'a OsStr;
 
     fn next(&mut self) -> Option<&'a OsStr> {
-        debugln!("OsSplit::next: self={:?}", self);
+        debugln!("fn=OsSplit::next;");
+        debugln!("OsSplit: {:?}", self);
         if self.pos == self.val.len() {
             return None;
         }
