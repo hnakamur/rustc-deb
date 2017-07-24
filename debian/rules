@@ -43,8 +43,9 @@ SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc:nat
 DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src --prefix=/usr --release-channel=$(RELEASE_CHANNEL) --disable-debuginfo-only-std
 
 # Use system LLVM (comment out to use vendored LLVM)
-OLD_LLVM_VERSION = 3.8
-DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.9
+LLVM_VERSION = 4.0
+OLD_LLVM_VERSION = 3.9
+DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-$(LLVM_VERSION)
 RUSTBUILD = ./x.py
 RUSTBUILD_FLAGS = --config debian/config.toml -v --on-fail env
 # To run a specific test, run something like:
@@ -133,11 +134,12 @@ debian/config.toml: debian/config.toml.in
 		-DDEB_HOST_RUST_TYPE="$(DEB_HOST_RUST_TYPE)" \
 		-DDEB_TARGET_RUST_TYPE="$(DEB_TARGET_RUST_TYPE)" \
 		-DRELEASE_CHANNEL="$(RELEASE_CHANNEL)" \
+		-DLLVM_VERSION="$(LLVM_VERSION)" \
 		"$<" > "$@"
 
 override_dh_auto_configure: debian/config.toml
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
-	! grep --color=always -i 'll...?$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
+	! grep --color=always -i 'll...\?$(subst .,\.,$(OLD_LLVM_VERSION))' --exclude=changelog -R debian
 	$(PRECONFIGURE_CHECK)
 	if [ -d stage0 ]; then mkdir -p build && ln -sfT ../stage0 build/cache; fi
 	# work around #842634
