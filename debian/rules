@@ -125,6 +125,9 @@ endif
 build:
 	$(SYSTEM_WORKAROUNDS) dh $@ --parallel
 
+override_dh_clean:
+	dh_clean -Xsrc/vendor/bitflags/Cargo.toml.orig
+
 debian/config.toml: debian/config.toml.in
 	m4  -DDEB_BUILD_RUST_TYPE="$(DEB_BUILD_RUST_TYPE)" \
 		-DDEB_HOST_RUST_TYPE="$(DEB_HOST_RUST_TYPE)" \
