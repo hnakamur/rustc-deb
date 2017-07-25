@@ -1,5 +1,4 @@
-1. Run prune-unused-deps and do another repack
-2. Update d/copyright
+1. Update d/copyright
 
 Long build time
 ===============

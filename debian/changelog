@@ -1,4 +1,4 @@
-rustc (1.19.0+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.19.0+dfsg2-1) UNRELEASED; urgency=medium
 
   * DO NOT RELEASE, see TODO.Debian
   * New upstream release.
