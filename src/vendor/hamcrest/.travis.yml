@@ -1,8 +1,0 @@
-language: rust
-rust:
-  - beta
-  - nightly
-  - stable
-os:
-  - linux
-  - osx
