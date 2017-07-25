@@ -1,8 +1,8 @@
-rustc (1.18.0+dfsg1-4) UNRELEASED; urgency=medium
+rustc (1.18.0+dfsg1-4) unstable; urgency=medium
 
   * Support gperf 3.1. (Closes: #869610)
 
- -- Ximin Luo <infinity0@debian.org>  Tue, 25 Jul 2017 23:17:42 +0200
+ -- Ximin Luo <infinity0@debian.org>  Tue, 25 Jul 2017 23:19:47 +0200
 
 rustc (1.18.0+dfsg1-3) unstable; urgency=medium
 
