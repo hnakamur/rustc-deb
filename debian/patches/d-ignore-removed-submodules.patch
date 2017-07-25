@@ -3,11 +3,10 @@ Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 --- a/src/Cargo.toml
 +++ b/src/Cargo.toml
-@@ -13,8 +13,6 @@
-   "tools/build-manifest",
+@@ -14,7 +14,6 @@
    "tools/remote-test-client",
    "tools/remote-test-server",
--  "tools/rust-installer",
+   "tools/rust-installer",
 -  "tools/cargo",
  ]
  

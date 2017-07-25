@@ -4,6 +4,7 @@
 u-fix-debuginfo.patch
 u-only-run-linkchecker-if-docs.patch
 u-skip-main-thread-stack-guard.patch
+u-fix-backtrace-build.patch
 
 # pending, forwarded
 u-ignoretest-armhf_01.patch

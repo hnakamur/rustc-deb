@@ -7,6 +7,7 @@ Uploaders: Jordan Justen <jordan.l.justen@intel.com>,
  Sylvestre Ledru <sylvestre@debian.org>,
  Angus Lees <gus@debian.org>,
  Ximin Luo <infinity0@debian.org>
+# :native annotations are to support cross-compiling, see README.Debian
 Build-Depends: debhelper (>= 9),
                dpkg-dev (>= 1.17.14),
                python:native,
@@ -19,6 +20,8 @@ Build-Depends: debhelper (>= 9),
                autotools-dev,
                cmake | cmake3,
                gperf,
+# used by rust-installer
+               liblzma-dev,
 # this is sometimes needed depending on the LLVM situation, just keep it here
                zlib1g-dev,
                binutils (>= 2.26) <!nocheck> | binutils-2.26 <!nocheck>,

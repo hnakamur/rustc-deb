@@ -158,6 +158,16 @@ override_dh_auto_configure: debian/config.toml
 	# work around #842634
 	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
 	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
+	# We patched mdbook so have to rm the checksums
+	debian/empty-cargo-checksum.py src/vendor/mdbook/.cargo-checksum.json
+	# Unfortunately upstream uses a duplicate copy of libbacktrace and wants to
+	# compile it again for rust-installer, see #43449
+	ln -rsf src/libbacktrace -t src/vendor/backtrace-sys/src/
+	debian/empty-cargo-checksum.py src/vendor/backtrace-sys/.cargo-checksum.json
+	# Link against system liblzma, see https://github.com/alexcrichton/xz2-rs/issues/16
+	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > src/vendor/lzma-sys/build.rs
+	debian/empty-cargo-checksum.py src/vendor/lzma-sys/.cargo-checksum.json
+	# Do the actual configure
 	PATH="$$PWD/debian/bin:$$PATH" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 
@@ -267,7 +277,6 @@ override_dh_install-indep:
 		\) -delete
 	cd debian/rust-src/usr/src/rust && chmod -x \
 		src/etc/gdb_rust_pretty_printing.py \
-		src/etc/adb_run_wrapper.sh \
 		src/compiler-rt/test/builtins/Unit/ppc/test
 
 override_dh_installchangelogs:

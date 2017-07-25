@@ -1,13 +1,16 @@
+/debhelper-build-stamp
 /*.debhelper.log
 /*.substvars
 /*.debhelper
 /config.toml
+/configure-upstream
 /files
 /libstd-rust-*/
 /libstd-rust-dev/
 /rust-doc/
 /rust-gdb/
 /rust-lldb/
+/rust-src/
 /rustc/
 /tmp/
 /patches/*~
