@@ -15,14 +15,23 @@ Import of a new upstream version
 $ uscan --verbose
 $ ver=UPDATE-ME # whatever it is, X.YY.0 probably
 $ tar xf ../rustc-$ver-src.tar.gz && ( cd rustc-$ver-src/ && ../debian/prune-unused-deps ) && rm -rf rustc-$ver-src/
-$ uscan --verbose # yes, again, to pick up the new Files-Excluded stuff
 $ git commit -m "Update Files-Excluded for new upstream version $ver" debian/copyright
+$ uscan --verbose # yes, again, to pick up the new Files-Excluded stuff
+
+# Now `tar tf ../rustc_$ver+dfsg1.orig.tar.xz | less` and look for any extra
+# stuff like new embedded C libraries. If so, add them to Files-Excluded: and
+# run uscan again. Repeat until there's no more issues.
 
 $ gbp import-orig ../rustc_$ver+dfsg1.orig.tar.xz
 $ dch -v $ver+dfsg1-1
 $ debian/rules update-version
 # might also need to bump the version of the cargo Build-Depends
 # then refresh patches, etc etc
+
+# If you need to repack again, bump the 'repacksuffix' in d/watch then run
+$ uscan --verbose --force-download
+# This will do a local repack using the new Files-Excluded rules, without
+# redownloading the orig tarball (despite the slightly misleading flag).
 
 
 Comparing Debian rustc vs upstream rustc
