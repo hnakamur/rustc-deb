@@ -132,7 +132,7 @@ override_dh_clean:
 debian/configure-upstream: debian/config.toml debian/rules
 	rm -f "$@"
 	echo '#!/bin/sh' >> "$@"
-	echo '# This script can be used to configure a clean upstream checkout' >> "$@"
+	echo '# This script can be used to configure a mostly-clean upstream checkout' >> "$@"
 	echo '# in case you need to test any differences between it and Debian' >> "$@"
 	echo 'set -e' >> "$@"
 	echo 'test -f ./configure' >> "$@"
@@ -218,7 +218,7 @@ endif
 endif
 
 override_dh_auto_install:
-	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) dist $(RUSTBUILD_FLAGS) --install
+	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) install $(RUSTBUILD_FLAGS)
 
 	mkdir -p $(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/
 	mv $(DEB_DESTDIR)/usr/lib/lib*.so $(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/
