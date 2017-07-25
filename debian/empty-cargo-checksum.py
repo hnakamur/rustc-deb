@@ -8,3 +8,4 @@ for i in sys.argv[1:]:
 		x["files"] = {}
 		fp.seek(0)
 		json.dump(x, fp, separators=(',', ':'))
+		fp.truncate()
