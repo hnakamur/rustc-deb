@@ -5,8 +5,11 @@ u-fix-debuginfo.patch
 u-only-run-linkchecker-if-docs.patch
 u-skip-main-thread-stack-guard.patch
 u-fix-backtrace-build.patch
+u-allow-disable-debuginfo-only-std.patch
 
 # pending, forwarded
+u-gperf-3.1.patch
+u-reproducible-build.patch
 u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
 u-ignoretest-armhf_03.patch
@@ -14,8 +17,6 @@ u-ignoretest-armhf_05.patch
 u-ignoretest-armhf_06.patch
 u-ignoretest-arm64.patch
 u-ignoretest-ppc64el.patch
-u-allow-disable-debuginfo-only-std.patch
-u-gperf-3.1.patch
 
 # not forwarded, or forwarded but unlikely to be merged
 u-exception-traceback.patch
