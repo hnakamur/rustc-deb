@@ -4,10 +4,17 @@
 include /usr/share/dpkg/pkg-info.mk
 include /usr/share/dpkg/vendor.mk
 include /usr/share/dpkg/architecture.mk
+SED_VERSION_SHORT := sed -re 's/([^.]+)\.([^.]+)\..*/\1.\2/'
+RUST_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | $(SED_VERSION_SHORT))
+RUST_LONG_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -re 's/([^+]+).*/\1/')
+LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
+# Sed expression that matches the "rustc" we have in our Build-Depends field
+SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc:native .*,/p}" debian/control
+
 include /usr/share/dpkg/buildflags.mk
 # TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
 RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS)) \
- -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rust
+ -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
 
 # Defines DEB_*_RUST_TYPE triples
@@ -29,13 +36,6 @@ RELEASE_CHANNEL := stable
 # to see if we already know what fix to make.
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
-
-SED_VERSION_SHORT := sed -re 's/([^.]+)\.([^.]+)\..*/\1.\2/'
-RUST_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | $(SED_VERSION_SHORT))
-RUST_LONG_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -re 's/([^+]+).*/\1/')
-LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
-# Sed expression that matches the "rustc" we have in our Build-Depends field
-SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc:native .*,/p}" debian/control
 
 # These are the normal build flags. Upstream is moving to debian/config.toml
 # but at the current version not all of these flags are available in that file.
@@ -151,6 +151,10 @@ debian/config.toml: debian/config.toml.in
 		-DLLVM_VERSION="$(LLVM_VERSION)" \
 		"$<" > "$@"
 
+debian/rust-src.%: debian/rust-src.%.in
+	m4  -DRUST_LONG_VERSION="$(RUST_LONG_VERSION)" \
+		"$<" > "$@"
+
 override_dh_auto_configure: debian/config.toml
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
 	! grep --color=always -i 'll...\?$(subst .,\.,$(OLD_LLVM_VERSION))' --exclude=changelog -R debian
@@ -174,7 +178,7 @@ override_dh_auto_configure: debian/config.toml
 
 override_dh_auto_clean:
 	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile
-	$(RM) -rf $(SRC_CLEAN) debian/config.toml
+	$(RM) -rf $(SRC_CLEAN) debian/config.toml debian/rust-src.install debian/rust-src.links
 
 # upstream bundles this in the source, but in Debian we rebuild everything yo
 generate-sources:
@@ -262,21 +266,21 @@ override_dh_install-arch:
 	dh_install
 	dh_install -p$(LIBSTD_PKG) usr/lib/$(DEB_HOST_MULTIARCH)/
 
-override_dh_install-indep:
+override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 	dh_install
 	chmod -x \
 	  debian/rust-gdb/usr/share/rust-gdb/*.py \
 	  debian/rust-lldb/usr/share/rust-lldb/*.py
-	$(RM) -rf $(SRC_CLEAN:%=debian/rust-src/usr/src/rust/%)
+	$(RM) -rf $(SRC_CLEAN:%=debian/rust-src/usr/src/rustc-$(RUST_LONG_VERSION)/%)
 	# Get rid of lintian warnings
-	find debian/rust-src/usr/src/rust \
+	find debian/rust-src/usr/src/rustc-$(RUST_LONG_VERSION) \
 		\( -name .gitignore \
 		-o -name 'LICENSE*' \
 		-o -name 'LICENCE' \
 		-o -name 'license' \
 		-o -name 'COPYING*' \
 		\) -delete
-	cd debian/rust-src/usr/src/rust && chmod -x \
+	cd debian/rust-src/usr/src/rustc-$(RUST_LONG_VERSION) && chmod -x \
 		src/etc/gdb_rust_pretty_printing.py \
 		src/compiler-rt/test/builtins/Unit/ppc/test
 

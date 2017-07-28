@@ -11,6 +11,8 @@
 /rust-gdb/
 /rust-lldb/
 /rust-src/
+/rust-src.install
+/rust-src.links
 /rustc/
 /tmp/
 /patches/*~
