@@ -13,9 +13,13 @@ SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc:nat
 
 include /usr/share/dpkg/buildflags.mk
 # TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
-RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS)) \
- -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
+RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
+# set remap-path-prefix for reproducible builds; TODO: remove "if" after 1.20
+ifeq (0,$(shell dpkg --compare-versions "$$(rustc --version --verbose | sed -ne 's/^release: //p')" '>=' 1.19.0; echo $$?))
+RUSTFLAGS += -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
+export RUSTC_BOOTSTRAP = 1
+endif
 
 # Defines DEB_*_RUST_TYPE triples
 include debian/architecture.mk
