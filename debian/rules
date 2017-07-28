@@ -218,17 +218,21 @@ override_dh_auto_test-arch:
 		objdump -p "$$x" | grep -q "NEEDED.*LLVM"; \
 		test "$$(stat -c %s "$$x")" -lt 6000000; \
 	done
+ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	$(call RUN_TESTS,$(RUSTBUILD) test --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS))
 # don't continue if RUSTBUILD_TEST_FLAGS is non-empty
 	test -z "$(RUSTBUILD_TEST_FLAGS)"
 endif
+endif
 
 override_dh_auto_test-indep:
 ifneq (,$(BUILD_DOCS))
+ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	# Run all rules that test the docs, i.e. in step.rs that depend on default:doc
 	$(call RUN_TESTS,$(RUSTBUILD) test --no-fail-fast src/tools/linkchecker $(RUSTBUILD_FLAGS))
+endif
 endif
 endif
 
