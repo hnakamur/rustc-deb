@@ -6,7 +6,8 @@ include /usr/share/dpkg/vendor.mk
 include /usr/share/dpkg/architecture.mk
 include /usr/share/dpkg/buildflags.mk
 # TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
-RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
+RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS)) \
+ -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rust
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
 
 # Defines DEB_*_RUST_TYPE triples
