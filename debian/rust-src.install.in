@@ -1,3 +1,4 @@
+debian/patches  usr/src/rustc-RUST_LONG_VERSION/debian
 # from src/bootstrap/dist.rs:370 onwards
 COPYRIGHT       usr/src/rustc-RUST_LONG_VERSION
 LICENSE-APACHE  usr/src/rustc-RUST_LONG_VERSION
