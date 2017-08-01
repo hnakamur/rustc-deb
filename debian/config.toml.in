@@ -33,7 +33,9 @@ dist-src = false
 
 channel = "RELEASE_CHANNEL"
 
-codegen-units = 0
+# parallel codegen interferes with reproducibility, see
+# https://github.com/rust-lang/rust/issues/34902#issuecomment-319463586
+#codegen-units = 0
 debuginfo = true
 debuginfo-lines = true
 rpath = false
