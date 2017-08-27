@@ -18,7 +18,7 @@ Build-Depends: debhelper (>= 9),
                llvm-4.0-tools:native (>= 1:4.0.1),
                libllvm4.0            (>= 1:4.0.1),
                autotools-dev,
-               cmake | cmake3,
+               cmake (>= 3.0) | cmake3,
                gperf,
 # this is sometimes needed by rustc_llvm
                zlib1g-dev:native,
