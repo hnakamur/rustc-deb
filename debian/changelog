@@ -1,7 +1,7 @@
 rustc (1.19.0+dfsg2-1) UNRELEASED; urgency=medium
 
   * DO NOT RELEASE, see TODO.Debian
-  * New upstream release.
+  * New upstream release. (Closes: #873421)
 
  -- Ximin Luo <infinity0@debian.org>  Mon, 24 Jul 2017 11:55:53 +0200
 
