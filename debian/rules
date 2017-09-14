@@ -301,6 +301,15 @@ override_dh_installdocs:
 override_dh_compress:
 	dh_compress -X.woff
 
+override_dh_strip:
+	# Work around #35733, #468333
+	find debian/libstd-rust-dev/ -name '*.rlib' -execdir mv '{}' '{}.a' \;
+	# This is expected to print out lots of "File format unrecognized" warnings about
+	# rust.metadata.bin and *.deflate but the .o files inside the rlibs should be stripped
+	# Some files are still omitted because of #875780 however.
+	dh_strip -v
+	find debian/libstd-rust-dev/ -name '*.rlib.a' -execdir sh -c 'mv "$$1" "$${1%.a}"' - '{}' \;
+
 override_dh_makeshlibs:
 	dh_makeshlibs -V
 
