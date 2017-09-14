@@ -1,4 +1,3 @@
-1. Update d/copyright
 2. Strip rlibs, they are not being stripped currently
 3. Upstream updated the "install_std" functionality to install libstd for all
    targets that were built. For a cross-build this is both the native and the

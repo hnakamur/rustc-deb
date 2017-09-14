@@ -223,10 +223,20 @@ Comment:
  same MIT/Apache-2.0 dual-license. See https://github.com/rust-lang.
  Exceptions are noted below.
 
-Files: src/vendor/filetime/*
+Files: src/vendor/backtrace/*
+       src/vendor/backtrace-sys/*
+       src/vendor/cfg-if/*
+       src/vendor/filetime/*
+       src/vendor/flate2/*
+       src/vendor/lzma-sys/*
+       src/vendor/miniz-sys/*
+       src/vendor/rustc-demangle/*
+       src/vendor/tar/*
        src/vendor/toml/*
        src/vendor/toml-0*
-Copyright: 2014-2016 Alex Crichton <alex@alexcrichton.com>
+       src/vendor/xz2/*
+Copyright: 2014-2017 Alex Crichton <alex@alexcrichton.com>
+           2015-2017 The Rust Project Developers
 License: Expat or Apache-2.0
 Comment: see https://github.com/alexcrichton/
 
@@ -238,7 +248,9 @@ Comment: see https://github.com/ogham/rust-ansi-term
 
 Files: src/vendor/aho-corasick/*
        src/vendor/memchr/*
+       src/vendor/same-file/*
        src/vendor/utf8-ranges/*
+       src/vendor/walkdir/*
 Copyright: 2015 Andrew Gallant <jamslam@gmail.com>
 License: Expat or Unlicense
 Comment: see upstream projects,
@@ -257,6 +269,11 @@ Copyright: 2015-2017 Kevin K. <kbknapp@gmail.com>
 License: Expat
 Comment: see https://github.com/kbknapp/clap-rs.git
 
+Files: src/vendor/diff/*
+Copyright: 2015-2017 Utkarsh Kukreti <utkarshkukreti@gmail.com>
+License: Expat OR Apache-2.0
+Comment: see https://github.com/utkarshkukreti/diff.rs
+
 Files: src/vendor/dtoa/*
        src/vendor/itoa/*
 Copyright: 2016-2017 David Tolnay <dtolnay@gmail.com>
@@ -265,12 +282,21 @@ Comment:
  see https://github.com/dtolnay/dtoa
  see https://github.com/dtolnay/itoa
 
+Files: src/vendor/error-chain/*
+Copyright: 2016-2017 Brian Anderson <banderson@mozilla.com>
+           2016-2017 Paul Colomiets <paul@colomiets.name>
+           2016-2017 Colin Kiegel <kiegel@gmx.de>
+           2016-2017 Yamakaky <yamakaky@yamaworld.fr>
+License: Expat or Apache-2.0
+Comment: see https://github.com/brson/error-chain
+
 Files: src/vendor/handlebars/*
 Copyright: 2014-2017 Ning Sun <sunng@about.me>
 License: Expat
 Comment: see https://github.com/sunng87/handlebars-rust
 
-Files: src/vendor/kernel32-sys/*
+Files: src/vendor/dbghelp-sys/*
+       src/vendor/kernel32-sys/*
        src/vendor/winapi/*
        src/vendor/winapi-build/*
 Copyright: 2015-2017 Peter Atashian <retep998@gmail.com>
@@ -279,9 +305,11 @@ License: Expat
 Comment: see https://github.com/retep998/winapi-rs
 
 Files: src/vendor/lazy_static/*
-Copyright: 2014-2016 Marvin Löbel <loebel.marvin@gmail.com>
+       src/vendor/owning_ref/*
+Copyright: 2014-2017 Marvin Löbel <loebel.marvin@gmail.com>
 License: Expat
 Comment: see https://github.com/rust-lang-nursery/lazy-static.rs
+         see https://github.com/Kimundi/owning-ref-rs
 
 Files: src/vendor/mdbook/*
 Copyright: 2015-2017 Mathieu David <mathieudavid@mathieudavid.org>
@@ -323,14 +351,22 @@ Comment: see https://github.com/nrc/rls-span
          see https://github.com/nrc/rls-data
 
 Files: src/vendor/serde/*
+       src/vendor/serde-0*
        src/vendor/serde_json/*
+       src/vendor/serde_json-0*
 Copyright: 2014-2017 Erick Tryzelaar <erick.tryzelaar@gmail.com>
 License: Expat or Apache-2.0
 Comment:
  see https://github.com/serde-rs/serde
  see https://github.com/serde-rs/json
 
+Files: src/vendor/stable_deref_trait/*
+Copyright: 2017-2017 Robert Grosse <n210241048576@gmail.com>
+License: Expat or Apache-2.0
+Comment: see https://github.com/storyyeller/stable_deref_trait
+
 Files: src/vendor/strsim/*
+       src/vendor/strsim-0*
 Copyright: 2015 Danny Guo <dannyguo91@gmail.com>
 License: Expat
 Comment: see https://github.com/dguo/strsim-rs
@@ -374,6 +410,16 @@ License: Expat
 Comment:
  see https://github.com/reem/rust-unreachable.git
  see https://github.com/reem/rust-void.git
+
+Files: src/vendor/xattr/*
+Copyright: 2015-2017 Steven Allen <steven@stebalien.com>
+License: Expat or Apache-2.0
+Comment: see https://github.com/Stebalien/xattr
+
+Files: src/vendor/yaml-rust/*
+Copyright: 2015-2017 Yuheng Chen <yuhengchen@sensetime.com>
+License: Expat or Apache-2.0
+Comment: see https://github.com/chyh1990/yaml-rust
 
 Files: debian/*
 Copyright: 2013-2017 Debian Rust Maintainers <pkg-rust-maintainers@lists.alioth.debian.org>
