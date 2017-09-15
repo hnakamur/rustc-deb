@@ -1,10 +1,10 @@
-rustc (1.19.0+dfsg3-1) UNRELEASED; urgency=medium
+rustc (1.19.0+dfsg3-1) experimental; urgency=medium
 
   * New upstream release.
   * Upgrade to LLVM 4.0. (Closes: #873421)
   * rust-src: install Debian patches as well
 
- -- Ximin Luo <infinity0@debian.org>  Mon, 24 Jul 2017 11:55:53 +0200
+ -- Ximin Luo <infinity0@debian.org>  Fri, 15 Sep 2017 04:02:09 +0200
 
 rustc (1.18.0+dfsg1-4) unstable; urgency=medium
 
