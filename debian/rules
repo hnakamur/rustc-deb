@@ -183,6 +183,8 @@ override_dh_auto_configure: debian/config.toml
 	# Link against system liblzma, see https://github.com/alexcrichton/xz2-rs/issues/16
 	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > src/vendor/lzma-sys/build.rs
 	debian/empty-cargo-checksum.py src/vendor/lzma-sys/.cargo-checksum.json
+	# We excluded some embedded libraries in d/copyright
+	debian/empty-cargo-checksum.py src/vendor/dbghelp-sys/.cargo-checksum.json
 	# Do the actual configure
 	PATH="$$PWD/debian/bin:$$PATH" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
