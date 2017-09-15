@@ -53,6 +53,13 @@ OLD_LLVM_VERSION = 3.9
 DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-$(LLVM_VERSION)
 RUSTBUILD = RUST_BACKTRACE=1 ./x.py
 RUSTBUILD_FLAGS = --config debian/config.toml -v --on-fail env
+# TODO: This should simply be "$(RUSTBUILD) test" but unfortunately this causes
+# an insane blow up in the time it takes to run tests. See upstream #37477 for
+# details. Upstream worked around it in #38984 but in Debian we can't take
+# advantage of that work-around, because we want as much debuginfo as possible
+# (so we set debuginfo-lines = true, debuginfo-only-std = false) so we have to
+# work around it instead by disabling backtrace when running tests.
+RUSTBUILD_TEST = ./x.py test
 # To run a specific test, run something like:
 #   $ debian/rules override_dh_auto_test-arch \
 #     RUSTBUILD_TEST_FLAGS="src/test/run-make --test-args extern-fn-struct"
@@ -224,7 +231,7 @@ override_dh_auto_test-arch:
 	done
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	$(call RUN_TESTS,$(RUSTBUILD) test --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS))
+	$(call RUN_TESTS,$(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS))
 # don't continue if RUSTBUILD_TEST_FLAGS is non-empty
 	test -z "$(RUSTBUILD_TEST_FLAGS)"
 endif
@@ -235,7 +242,7 @@ ifneq (,$(BUILD_DOCS))
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	# Run all rules that test the docs, i.e. in step.rs that depend on default:doc
-	$(call RUN_TESTS,$(RUSTBUILD) test --no-fail-fast src/tools/linkchecker $(RUSTBUILD_FLAGS))
+	$(call RUN_TESTS,$(RUSTBUILD_TEST) --no-fail-fast src/tools/linkchecker $(RUSTBUILD_FLAGS))
 endif
 endif
 endif
