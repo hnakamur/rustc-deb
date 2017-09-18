@@ -1,12 +1,10 @@
-Document by Luca Bruno & Sylvestre Ledru
+Document by Ximin Luo, Luca Bruno & Sylvestre Ledru
 
-This source package is unfortunately quite tricky and with
-several cutting edges, due to the complexity of rust-lang
-bootstrapping system and the high rate of language changes
-still ongoing.
+This source package is unfortunately quite tricky and with several cutting
+edges, due to the complexity of rust-lang bootstrapping system and the high
+rate of language changes still ongoing.
 
-We try to describe here inner packaging details and the
-reasons behind them.
+We try to describe here inner packaging details and the reasons behind them.
 
 
 Import of a new upstream version
@@ -186,3 +184,20 @@ nothing was backdoored along the way.
 [1] The build process for rustc is currently *not* reproducible but we're
     working towards it. https://github.com/rust-lang/rust/issues/34902
 [2] http://www.dwheeler.com/trusting-trust/
+
+
+Useful links
+============
+
+The Fedora rust team is more active than the Debian one. Here are their links:
+
+Source code
+https://src.fedoraproject.org/cgit/rpms/rust.git/tree/
+
+Binary packages and test logs
+https://kojipkgs.fedoraproject.org//packages/rust/
+If the same test fails both on Fedora and Debian it's a good indication that
+we're not Doing It Wrong and can file a valid bug upstream.
+
+Package metadata
+https://admin.fedoraproject.org/pkgdb/package/rpms/rust/

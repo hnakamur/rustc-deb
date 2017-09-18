@@ -1,3 +1,7 @@
+Description: rustbuild: with --no-fail-fast, report the specific commands that failed
+Author: Ximin Luo <infinity0@debian.org>
+Bug: https://github.com/rust-lang/rust/pull/44680
+
 --- a/src/bootstrap/check.rs
 +++ b/src/bootstrap/check.rs
 @@ -61,8 +61,8 @@
