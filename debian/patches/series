@@ -16,6 +16,7 @@ u-ignoretest-armhf_03.patch
 u-ignoretest-armhf_05.patch
 u-ignoretest-armhf_06.patch
 u-ignoretest-arm64.patch
+u-ignoretest-arm64_02.patch
 u-ignoretest-ppc64el.patch
 
 # not forwarded, or forwarded but unlikely to be merged
