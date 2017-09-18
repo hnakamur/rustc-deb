@@ -19,6 +19,7 @@ u-ignoretest-arm64.patch
 u-ignoretest-ppc64el.patch
 
 # not forwarded, or forwarded but unlikely to be merged
+u-output-failed-commands.patch
 u-exception-traceback.patch
 u-reproducible-dl-stage0.patch
 u-allow-stable-features.patch
