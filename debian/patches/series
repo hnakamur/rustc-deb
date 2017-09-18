@@ -19,6 +19,7 @@ u-ignoretest-arm64.patch
 u-ignoretest-arm64_02.patch
 u-ignoretest-ppc64el.patch
 u-ignoretest-ppc64el_02.patch
+u-ignoretest-ppc64el_03.patch
 
 # not forwarded, or forwarded but unlikely to be merged
 u-output-failed-commands.patch
