@@ -185,6 +185,8 @@ override_dh_auto_configure: debian/config.toml
 	debian/empty-cargo-checksum.py src/vendor/lzma-sys/.cargo-checksum.json
 	# We excluded some embedded libraries in d/copyright
 	debian/empty-cargo-checksum.py src/vendor/dbghelp-sys/.cargo-checksum.json
+	# TODO: work-around for slightly buggy prune-unused-deps, can rm in 1.20.0
+	rmdir src/vendor/* 2>/dev/null || true
 	# Do the actual configure
 	PATH="$$PWD/debian/bin:$$PATH" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)

@@ -34,7 +34,7 @@ pruned_paths() {
 		fi
 		echo "$pkgnamever $i"
 	done | grep -F -f <(not_needed) | cut '-d ' -f3 | while read x; do
-		echo " $(dirname $x)/*"
+		echo " $(dirname $x)"
 	done
 }
 
