@@ -3,7 +3,7 @@ rustc (1.19.0+dfsg3-2) unstable; urgency=medium
   * Upload to unstable.
   * Add a patch to print extra information when tests fail.
 
- -- Ximin Luo <infinity0@debian.org>  Mon, 18 Sep 2017 12:54:10 +0200
+ -- Ximin Luo <infinity0@debian.org>  Tue, 19 Sep 2017 12:32:03 +0200
 
 rustc (1.19.0+dfsg3-1) experimental; urgency=medium
 
