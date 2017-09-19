@@ -1,8 +1,8 @@
-rustc (1.19.0+dfsg3-3) UNRELEASED; urgency=medium
+rustc (1.19.0+dfsg3-3) unstable; urgency=medium
 
   * Fix a trailing whitespace for tidy.
 
- -- Ximin Luo <infinity0@debian.org>  Tue, 19 Sep 2017 16:08:36 +0200
+ -- Ximin Luo <infinity0@debian.org>  Tue, 19 Sep 2017 16:09:41 +0200
 
 rustc (1.19.0+dfsg3-2) unstable; urgency=medium
 
