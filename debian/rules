@@ -50,7 +50,13 @@ DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src --prefix=/usr
 # Use system LLVM (comment out to use vendored LLVM)
 LLVM_VERSION = 4.0
 OLD_LLVM_VERSION = 3.9
-DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-$(LLVM_VERSION)
+# Make it easier to test against a custom LLVM
+ifneq (,$(LLVM_DESTDIR))
+LD_LIBRARY_PATH := $(if $(LD_LIBRARY_PATH),$(LD_LIBRARY_PATH):$(LLVM_DESTDIR),$(LLVM_DESTDIR))
+export LD_LIBRARY_PATH
+endif
+DEB_CONFIGURE_FLAGS += --llvm-root=$(LLVM_DESTDIR)/usr/lib/llvm-$(LLVM_VERSION)
+
 RUSTBUILD = RUST_BACKTRACE=1 ./x.py
 RUSTBUILD_FLAGS = --config debian/config.toml -v --on-fail env
 # TODO: This should simply be "$(RUSTBUILD) test" but unfortunately this causes
@@ -159,6 +165,7 @@ debian/config.toml: debian/config.toml.in
 		-DDEB_HOST_RUST_TYPE="$(DEB_HOST_RUST_TYPE)" \
 		-DDEB_TARGET_RUST_TYPE="$(DEB_TARGET_RUST_TYPE)" \
 		-DRELEASE_CHANNEL="$(RELEASE_CHANNEL)" \
+		-DLLVM_DESTDIR="$(LLVM_DESTDIR)" \
 		-DLLVM_VERSION="$(LLVM_VERSION)" \
 		"$<" > "$@"
 
