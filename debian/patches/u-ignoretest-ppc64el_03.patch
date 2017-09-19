@@ -11,6 +11,6 @@ Bug-Debian: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=876134
  // Smallest "hello world" with a libc runtime
  
 +// ignore-powerpc
- // pretty-expanded FIXME #23616
+ // ignore-windows
+ // ignore-android
  
- #![feature(intrinsics, lang_items, start, no_core, libc)]
