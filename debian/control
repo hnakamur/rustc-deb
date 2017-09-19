@@ -175,7 +175,6 @@ Description: Rust systems programming language - Documentation
  standard library documentation.
 
 Package: rust-src
-Section: devel
 Architecture: all
 Depends: ${misc:Depends}
 Description: Rust systems programming language - source code
