@@ -27,7 +27,7 @@ $ find src/vendor/ -name '*.c' -o -name '*.js'
 $ suspicious-source
 
 $ gbp import-orig ../rustc_$ver+dfsg1.orig.tar.xz
-$ dch -v $ver+dfsg1-1
+$ dch -v $ver+dfsg1-1 -m "New upstream release."
 $ debian/rules update-version
 # might also need to bump the version of the cargo Build-Depends
 # then refresh patches, etc etc
