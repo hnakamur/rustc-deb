@@ -8,7 +8,7 @@ Bug: https://github.com/rust-lang/rust/issues/44670
  }
  
 +#[cfg(target_arch = "powerpc64")]
-+fn main() {} 
++fn main() {}
 +
 +#[cfg(not(target_arch = "powerpc64"))]
  fn main() {
