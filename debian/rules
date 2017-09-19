@@ -139,7 +139,8 @@ build:
 	$(SYSTEM_WORKAROUNDS) dh $@ --parallel
 
 override_dh_clean:
-	dh_clean -Xsrc/vendor/bitflags/Cargo.toml.orig
+	# Upstream contains a lot of these
+	dh_clean -XCargo.toml.orig
 
 debian/configure-upstream: debian/config.toml debian/rules
 	rm -f "$@"
