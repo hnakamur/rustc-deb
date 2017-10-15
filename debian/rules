@@ -307,9 +307,6 @@ override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 		-o -name 'license' \
 		-o -name 'COPYING*' \
 		\) -delete
-	cd debian/rust-src/usr/src/rustc-$(RUST_LONG_VERSION) && chmod -x \
-		src/etc/gdb_rust_pretty_printing.py \
-		src/compiler-rt/test/builtins/Unit/ppc/test
 
 override_dh_installchangelogs:
 	dh_installchangelogs RELEASES.md
