@@ -60,6 +60,15 @@ annoying stuff like building LLVM and downloading dependencies from crates.io,
 simply unpack the tarball and run `./configure && ./x.py build` etc as normal.
 This can be useful for confirming that an issue is caused by Debian's LLVM.
 
+If you need to test a LLVM patch, do something like this:
+
+# build your patched LLVM debs, then:
+$ mkdir -p llvm-destdir && cd llvm-destdir
+$ for i in llvm-4.0 llvm-4.0-dev llvm-4.0-runtime llvm-4.0-tools libllvm4.0; do \
+    dpkg -x ../"$i"_*${VERSION}_*.deb .; done
+$ cd ../rustc
+$ debian/rules LLVM_DESTDIR=$PWD/../llvm-destdir build
+
 
 Embedded libraries
 ==================

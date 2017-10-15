@@ -4,6 +4,18 @@ rustc (1.20.0+dfsg1-1) UNRELEASED; urgency=medium
 
  -- Ximin Luo <infinity0@debian.org>  Tue, 19 Sep 2017 13:01:02 +0200
 
+rustc (1.19.0+dfsg3-4) unstable; urgency=medium
+
+  * Bump LLVM requirement to pull in a fix for a FTBFS on ppc64el.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 15 Oct 2017 21:31:03 +0200
+
+rustc (1.19.0+dfsg3-3) unstable; urgency=medium
+
+  * Fix a trailing whitespace for tidy.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 19 Sep 2017 16:09:41 +0200
+
 rustc (1.19.0+dfsg3-2) unstable; urgency=medium
 
   * Upload to unstable.
