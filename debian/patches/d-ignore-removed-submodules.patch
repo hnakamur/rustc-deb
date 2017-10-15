@@ -3,11 +3,13 @@ Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 --- a/src/Cargo.toml
 +++ b/src/Cargo.toml
-@@ -15,7 +15,6 @@
+@@ -15,9 +15,7 @@
    "tools/remote-test-client",
    "tools/remote-test-server",
    "tools/rust-installer",
 -  "tools/cargo",
+   "tools/rustdoc",
+-  "tools/rls",
  ]
  
  # Curiously, compiletest will segfault if compiled with opt-level=3 on 64-bit
@@ -24,8 +26,8 @@ Forwarded: not-needed
          run(args, env=env, verbose=self.verbose)
  
      def build_triple(self):
---- a/src/bootstrap/lib.rs
-+++ b/src/bootstrap/lib.rs
+--- a/src/bootstrap/builder.rs
++++ b/src/bootstrap/builder.rs
 @@ -513,10 +513,7 @@
          if self.config.rust_optimize && cmd != "bench" {
              cargo.arg("--release");

@@ -13,6 +13,7 @@ Import of a new upstream version
 $ uscan --verbose
 $ ver=UPDATE-ME # whatever it is, X.YY.0 probably
 $ tar xf ../rustc-$ver-src.tar.gz && ( cd rustc-$ver-src/ && ../debian/prune-unused-deps ) && rm -rf rustc-$ver-src/
+# ^ If this fails, you probably need to refresh patches or edit debian/prune-unused-deps
 $ git commit -m "Update Files-Excluded for new upstream version $ver" debian/copyright
 $ uscan --verbose # yes, again, to pick up the new Files-Excluded stuff
 
@@ -25,6 +26,7 @@ $ find . -type f -and -not -name '.cargo-checksum.json' -exec file '{}' \; | \
     grep -v '\b\(text\|empty\)\b' || true
 $ find src/vendor/ -name '*.c' -o -name '*.js'
 $ suspicious-source
+# When you are satisfied with the above, proceed:
 
 $ gbp import-orig ../rustc_$ver+dfsg1.orig.tar.xz
 $ dch -v $ver+dfsg1-1 -m "New upstream release."

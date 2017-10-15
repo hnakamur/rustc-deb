@@ -26,11 +26,8 @@ llvm-config = "LLVM_DESTDIR/usr/lib/llvm-LLVM_VERSION/bin/llvm-config"
 
 )dnl
 [llvm]
-link-shared = true
 
 [rust]
-dist-src = false
-
 channel = "RELEASE_CHANNEL"
 
 # parallel codegen interferes with reproducibility, see
