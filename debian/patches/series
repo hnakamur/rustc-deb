@@ -12,6 +12,7 @@ u-ignoretest-arm64.patch
 u-ignoretest-ppc64el.patch
 u-ignoretest-ppc64el_02.patch
 u-output-failed-commands.patch
+u-cross-compile-install.patch
 
 # not forwarded, or forwarded but unlikely to be merged
 u-reproducible-dl-stage0.patch
@@ -25,9 +26,8 @@ d-rust-gdb-paths
 d-rust-lldb-paths
 d-add-soname.patch
 d-dont-download-stage0.patch
-#d-cross-compile-install.patch
 d-no-web-dependencies-in-doc.patch
+d-ignore-removed-submodules.patch
 
 # Work around for some porterboxes, keep this commented
 #d-host-duplicates.patch
-d-ignore-removed-submodules.patch

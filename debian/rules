@@ -255,6 +255,9 @@ endif
 endif
 endif
 
+run_rustbuild:
+	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) $(X_CMD) $(RUSTBUILD_FLAGS) $(X_FLAGS)
+
 override_dh_auto_install:
 	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) install $(RUSTBUILD_FLAGS)
 
