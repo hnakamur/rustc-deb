@@ -1,4 +1,4 @@
-rustc (1.21.0+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.21.0+dfsg1-1) experimental; urgency=medium
 
   * New upstream release.
   * Update changelog entry for 1.20.0+dfsg1-1 to reflect that it was actually
@@ -10,7 +10,7 @@ rustc (1.21.0+dfsg1-1) UNRELEASED; urgency=medium
   * Update to latest Standards-Version; changes:
     - Priority changed to optional from extra.
 
- -- Ximin Luo <infinity0@debian.org>  Mon, 16 Oct 2017 16:40:13 +0200
+ -- Ximin Luo <infinity0@debian.org>  Tue, 17 Oct 2017 00:42:54 +0200
 
 rustc (1.20.0+dfsg1-1) unstable; urgency=medium
 
