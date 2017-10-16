@@ -6,63 +6,8 @@ rate of language changes still ongoing.
 
 We try to describe here inner packaging details and the reasons behind them.
 
-
-Import of a new upstream version
-================================
-
-$ uscan --verbose
-$ ver=UPDATE-ME # whatever it is, X.YY.0 probably
-$ tar xf ../rustc-$ver-src.tar.gz && ( cd rustc-$ver-src/ && ../debian/prune-unused-deps ) && rm -rf rustc-$ver-src/
-# ^ If this fails, you probably need to refresh patches or edit debian/prune-unused-deps
-$ git commit -m "Update Files-Excluded for new upstream version $ver" debian/copyright
-$ uscan --verbose # yes, again, to pick up the new Files-Excluded stuff
-
-# Keep running this and follow its instructions, until it gives no output:
-$ debian/check-orig-suspicious.sh $ver
-# When you are satisfied with the above, proceed:
-
-$ gbp import-orig ../rustc_$ver+dfsg1.orig.tar.xz
-$ dch -v $ver+dfsg1-1 -m "New upstream release."
-$ debian/rules update-version
-# might also need to bump the version of the cargo Build-Depends
-# then refresh patches, etc etc
-
-# If you need to repack again, bump the 'repacksuffix' in d/watch then run
-$ uscan --verbose --force-download
-# This will do a local repack using the new Files-Excluded rules, without
-# redownloading the orig tarball (despite the slightly misleading flag).
-
-
-Comparing Debian rustc vs upstream rustc
-========================================
-
-This package does things the Debian way, which differs significantly from
-upstream practices. If you find a bug, you might want to check if it is present
-in the upstream package. Run "debian/rules debian/configure-upstream" to
-generate a script, that you can then run in an unpacked upstream directory.
-
-This will configure it in a "halfway" style between upstream and Debian.
-Specifically, it will not build LLVM nor download stuff from crates.io, yet
-Debian patches are *not* applied. These specific settings were chosen as a
-tradeoff between convenience vs being close to what upstream does - so that the
-chances of a bug here being a genuine upstream issue rather than a Debian bug,
-is much higher. Also, with the exception of LLVM, these are non-default modes
-*supported by* upstream so they would be happy to receive bug reports about it
-even if your issue only occurs here.
-
-OTOH if you need to test a completely clean upstream build, including all the
-annoying stuff like building LLVM and downloading dependencies from crates.io,
-simply unpack the tarball and run `./configure && ./x.py build` etc as normal.
-This can be useful for confirming that an issue is caused by Debian's LLVM.
-
-If you need to test a LLVM patch, do something like this:
-
-# build your patched LLVM debs, then:
-$ mkdir -p llvm-destdir && cd llvm-destdir
-$ for i in llvm-4.0 llvm-4.0-dev llvm-4.0-runtime llvm-4.0-tools libllvm4.0; do \
-    dpkg -x ../"$i"_*${VERSION}_*.deb .; done
-$ cd ../rustc
-$ debian/rules LLVM_DESTDIR=$PWD/../llvm-destdir build
+If you are looking to help maintain this package, be sure to read the "Notes
+for package maintainers" section further below.
 
 
 Embedded libraries
@@ -196,8 +141,82 @@ nothing was backdoored along the way.
 [2] http://www.dwheeler.com/trusting-trust/
 
 
+Maintaining this package
+========================
+
+Import of a new upstream version
+--------------------------------
+
+$ uscan --verbose
+$ ver=UPDATE-ME # whatever it is, X.YY.0 probably
+$ tar xf ../rustc-$ver-src.tar.gz && ( cd rustc-$ver-src/ && ../debian/prune-unused-deps ) && rm -rf rustc-$ver-src/
+# ^ If this fails, you probably need to refresh patches or edit debian/prune-unused-deps
+$ git commit -m "Update Files-Excluded for new upstream version $ver" debian/copyright
+$ uscan --verbose # yes, again, to pick up the new Files-Excluded stuff
+
+# Keep running this and follow its instructions, until it gives no output:
+$ debian/check-orig-suspicious.sh $ver
+# When you are satisfied with the above, proceed:
+
+$ gbp import-orig ../rustc_$ver+dfsg1.orig.tar.xz
+$ dch -v $ver+dfsg1-1 -m "New upstream release."
+$ debian/rules update-version
+# might also need to bump the version of the cargo Build-Depends
+# then refresh patches, etc etc
+
+# If you need to repack again, bump the 'repacksuffix' in d/watch then run
+$ uscan --verbose --force-download
+# This will do a local repack using the new Files-Excluded rules, without
+# redownloading the orig tarball (despite the slightly misleading flag).
+
+
+Proceeding after build failure
+------------------------------
+
+If your build fails, don't run `./x.py` directly as that will detect it's being
+run with different settings, and run the build from scratch all over again.
+overwriting all intermediate files. Instead, do:
+
+$ debian/rules run_rustbuild X_CMD="build|test|install" X_FLAGS="whatever"
+
+Hopefully, this will directly proceed to the step that failed, without
+rebuilding everything in between.
+
+
+Comparing Debian rustc vs upstream rustc
+----------------------------------------
+
+This package does things the Debian way, which differs significantly from
+upstream practices. If you find a bug, you might want to check if it is present
+in the upstream package. Run "debian/rules debian/configure-upstream" to
+generate a script, that you can then run in an unpacked upstream directory.
+
+This will configure it in a "halfway" style between upstream and Debian.
+Specifically, it will not build LLVM nor download stuff from crates.io, yet
+Debian patches are *not* applied. These specific settings were chosen as a
+tradeoff between convenience vs being close to what upstream does - so that the
+chances of a bug here being a genuine upstream issue rather than a Debian bug,
+is much higher. Also, with the exception of LLVM, these are non-default modes
+*supported by* upstream so they would be happy to receive bug reports about it
+even if your issue only occurs here.
+
+OTOH if you need to test a completely clean upstream build, including all the
+annoying stuff like building LLVM and downloading dependencies from crates.io,
+simply unpack the tarball and run `./configure && ./x.py build` etc as normal.
+This can be useful for confirming that an issue is caused by Debian's LLVM.
+
+If you need to test a LLVM patch, do something like this:
+
+# build your patched LLVM debs, then:
+$ mkdir -p llvm-destdir && cd llvm-destdir
+$ for i in llvm-4.0 llvm-4.0-dev llvm-4.0-runtime llvm-4.0-tools libllvm4.0; do \
+    dpkg -x ../"$i"_*${VERSION}_*.deb .; done
+$ cd ../rustc
+$ debian/rules LLVM_DESTDIR=$PWD/../llvm-destdir build
+
+
 Useful links
-============
+------------
 
 The Fedora rust team is more active than the Debian one. Here are their links:
 

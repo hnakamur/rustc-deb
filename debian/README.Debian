@@ -3,8 +3,8 @@ Test failures
 
 Starting from version 1.20.0+dfsg1-1 the Debian packages of rustc no longer
 fail their build if any tests fail. In other words, some tests might have
-failed when building this and future versions of the package. This due to lack
-of maintainer time to investigate failures.
+failed when building this and future versions of the package. This is due to
+lack of maintainer time to investigate failures.
 
 Many previous test failures were reported to upstream and did not receive a
 timely response, suggesting the failures were not important. I was then forced
