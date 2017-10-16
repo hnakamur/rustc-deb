@@ -283,7 +283,7 @@ Comment: see upstream projects,
 
 Files: src/vendor/ar/*
 Copyright: 2017 Matthew D. Steele <mdsteele@alum.mit.edu>
-License: MIT
+License: Expat
 Comment: see https://github.com/mdsteele/rust-ar
 
 Files: src/vendor/atty/*

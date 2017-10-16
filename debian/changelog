@@ -7,6 +7,8 @@ rustc (1.21.0+dfsg1-1) UNRELEASED; urgency=medium
     README.Debian for details.
   * Fix the "install" target for cross-compilations; cross-compiling with
     sbuild --host=$foreign-arch should work again.
+  * Update to latest Standards-Version; changes:
+    - Priority changed to optional from extra.
 
  -- Ximin Luo <infinity0@debian.org>  Mon, 16 Oct 2017 16:40:13 +0200
 

@@ -105,8 +105,8 @@ output and logging messages, the term "host" and "target" mean as they do in
 the previous paragraph. Yes, it's a total mind fuck. :( Table for clarity:
 
 ======================================= =============== ========================
-GNU term / Debian envvar                Rust ecosystem, Some parts of the rustc
-                                        rustc and cargo and cargo build scripts
+                                        Rust ecosystem, Some parts of the rustc
+GNU term / Debian envvar                rustc and cargo and cargo build scripts
 ======================================= =============== ========================
 build   DEB_BUILD_{ARCH,RUST_TYPE}      host            build
   the machine running the build
