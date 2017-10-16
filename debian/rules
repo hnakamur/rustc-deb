@@ -292,7 +292,6 @@ override_dh_install-arch:
 	dh_install
 	dh_install -p$(LIBSTD_PKG) usr/lib/$(DEB_HOST_MULTIARCH)/
 	dh_install -plibstd-rust-dev usr/lib/rustlib/$(DEB_HOST_RUST_TYPE)/lib/
-	dh_missing --list-missing || true
 
 override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 	dh_install
@@ -310,6 +309,7 @@ override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 		\) -delete
 
 override_dh_installchangelogs:
+	dh_missing --list-missing || true
 	dh_installchangelogs RELEASES.md
 
 override_dh_installdocs:
