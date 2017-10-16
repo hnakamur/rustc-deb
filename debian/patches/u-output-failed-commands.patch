@@ -28,7 +28,7 @@ Bug: https://github.com/rust-lang/rust/pull/44680
          build.run_quiet(cmd);
 --- a/src/bootstrap/lib.rs
 +++ b/src/bootstrap/lib.rs
-@@ -134,7 +134,7 @@
+@@ -134,13 +134,13 @@
  #[cfg(unix)]
  extern crate libc;
  
@@ -37,6 +37,13 @@ Bug: https://github.com/rust-lang/rust/pull/44680
  use std::collections::{HashSet, HashMap};
  use std::env;
  use std::fs::{self, File};
+ use std::io::Read;
+ use std::path::{PathBuf, Path};
+-use std::process::Command;
++use std::process::{self, Command};
+ use std::slice;
+ 
+ use build_helper::{run_silent, run_suppressed, try_run_silent, try_run_suppressed, output, mtime};
 @@ -245,7 +245,7 @@
      crates: HashMap<Interned<String>, Crate>,
      is_sudo: bool,
