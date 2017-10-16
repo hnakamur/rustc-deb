@@ -223,10 +223,6 @@ endif
 RUN_TESTS = \
 	if $(1); then \
 	  : ; \
-	elif [ $(DEB_VENDOR) = "Debian" -a $(DEB_DISTRIBUTION) != "experimental" ]; then \
-	  false; \
-	elif [ $(DEB_VENDOR) = "Ubuntu" -a $(DEB_HOST_ARCH) != "s390x" ]; then \
-	  false ; \
 	else \
 	  echo "====================================================="; \
 	  echo "WARNING: Ignoring test failures in the rust testsuite"; \
