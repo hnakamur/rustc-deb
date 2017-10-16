@@ -183,7 +183,7 @@ override_dh_auto_configure: debian/config.toml
 	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
 	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
 	# We patched mdbook so have to rm the checksums
-	debian//prune-checksums src/vendor/mdbook/.cargo-checksum.json
+	debian/prune-checksums src/vendor/mdbook/.cargo-checksum.json
 	# Unfortunately upstream uses a duplicate copy of libbacktrace and wants to
 	# compile it again for rust-installer, see #43449
 	ln -rsf src/libbacktrace -t src/vendor/backtrace-sys/src/
