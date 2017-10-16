@@ -1,9 +1,5 @@
 # Patches for upstream
 
-# applied already
-u-fix-debuginfo.patch
-u-allow-disable-debuginfo-only-std.patch
-
 # pending, forwarded
 u-gperf-3.1.patch
 u-reproducible-build.patch
@@ -15,12 +11,10 @@ u-ignoretest-armhf_06.patch
 u-ignoretest-arm64.patch
 u-ignoretest-ppc64el.patch
 u-ignoretest-ppc64el_02.patch
+u-output-failed-commands.patch
 
 # not forwarded, or forwarded but unlikely to be merged
-u-output-failed-commands.patch
-u-exception-traceback.patch
 u-reproducible-dl-stage0.patch
-u-allow-stable-features.patch
 
 gcc-4.8-aarch64-ice.diff
 
@@ -31,7 +25,7 @@ d-rust-gdb-paths
 d-rust-lldb-paths
 d-add-soname.patch
 d-dont-download-stage0.patch
-d-cross-compile-install.patch
+#d-cross-compile-install.patch
 d-no-web-dependencies-in-doc.patch
 
 # Work around for some porterboxes, keep this commented

@@ -8,14 +8,7 @@ scriptdir=$(dirname "$(dirname "$(readlink -f "$0")")")
 had_configure_upstream=$(if test -e "$scriptdir/debian/configure-upstream"; then echo true; else echo false; fi)
 ( cd "$scriptdir" && debian/rules debian/configure-upstream )
 
-temporary_patches() {
-	# pre-patch Cargo.toml to remove hacky workarounds in 1.21 that won't be there in 1.22
-	# saves us time having to refresh then unrefresh the patch
-	sed -i -e '\,tools/rls/test_data,d' -e /FIXME/d src/Cargo.toml
-}
-
 "$scriptdir/debian/configure-upstream"
-temporary_patches
 "$scriptdir/debian/ensure-patch" -N "$scriptdir/debian/patches/d-ignore-removed-submodules.patch"
 test -f src/Cargo.lock.orig || cp src/Cargo.lock src/Cargo.lock.orig
 ./x.py build nonexistent/path/to/trigger/cargo/metadata src/bootstrap
