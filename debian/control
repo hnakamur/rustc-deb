@@ -27,16 +27,10 @@ Build-Depends: debhelper (>= 9),
                liblzma-dev:native,
 # test dependencies:
                binutils (>= 2.26) <!nocheck> | binutils-2.26 <!nocheck>,
-               nodejs <!nocheck>,
-               valgrind <!nocheck>,
                git <!nocheck>,
                procps <!nocheck>,
 # below are optional tools even for 'make check'
-               antlr4 <!nocheck> | antlr <!nocheck>,
-               bison <!nocheck>,
-               flex <!nocheck>,
                gdb (>= 7.12) <!nocheck>,
-               default-jdk-headless <!nocheck> | default-jdk <!nocheck>,
 # Work around #864741. The version constraint for gdb above should already do
 # that, but this will keep things covered even in the case that they change
 # gdb-minimal to do a versioned Provides: gdb.
