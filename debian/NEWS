@@ -1,4 +1,4 @@
-rustc (1.20.0+dfsg1-2) UNRELEASED; urgency=medium
+rustc (1.20.0+dfsg1-2) unstable; urgency=medium
 
   Starting from version 1.20.0+dfsg1-1 (i.e. the previous version) the Debian
   packages of rustc no longer fail their build if any tests fail. In other
