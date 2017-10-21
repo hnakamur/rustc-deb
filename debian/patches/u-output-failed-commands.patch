@@ -10,7 +10,7 @@ Bug: https://github.com/rust-lang/rust/pull/44680
          if !build.try_run(cmd) {
 -            let failures = build.delayed_failures.get();
 -            build.delayed_failures.set(failures + 1);
-+            let mut failures = &mut build.delayed_failures.borrow_mut();
++            let mut failures = build.delayed_failures.borrow_mut();
 +            failures.push(format!("{:?}", cmd));
          }
      } else {
@@ -21,7 +21,7 @@ Bug: https://github.com/rust-lang/rust/pull/44680
          if !build.try_run_quiet(cmd) {
 -            let failures = build.delayed_failures.get();
 -            build.delayed_failures.set(failures + 1);
-+            let mut failures = &mut build.delayed_failures.borrow_mut();
++            let mut failures = build.delayed_failures.borrow_mut();
 +            failures.push(format!("{:?}", cmd));
          }
      } else {
