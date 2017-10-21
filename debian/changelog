@@ -1,4 +1,11 @@
-rustc (1.20.0+dfsg1-1) experimental; urgency=medium
+rustc (1.20.0+dfsg1-2) UNRELEASED; urgency=medium
+
+  * Update changelog entry for 1.20.0+dfsg1-1 to reflect that it was actually
+    and accidentally uploaded to unstable. No harm, no foul.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 21 Oct 2017 14:11:16 +0200
+
+rustc (1.20.0+dfsg1-1) unstable; urgency=medium
 
   * New upstream release.
 
