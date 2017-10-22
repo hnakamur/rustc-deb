@@ -219,15 +219,9 @@ ifneq (,$(BUILD_DOCS))
 	$(RUSTBUILD) doc $(RUSTBUILD_FLAGS)
 endif
 
-RUN_TESTS = \
-	if $(1); then \
-	  : ; \
-	else \
-	  echo "====================================================="; \
-	  echo "WARNING: Ignoring test failures in the rust testsuite"; \
-	  echo "====================================================="; \
-	fi
-
+TEST_LOG = debian/rustc-tests.log
+FAILURES_ALLOWED = 5
+FAILED_TESTS = grep FAILED $(TEST_LOG) | grep -v '^test result'
 override_dh_auto_test-arch:
 # ensure that rustc_llvm is actually dynamically linked to libLLVM
 	set -e; find build/*/stage2/lib/rustlib/* -name '*rustc_llvm*.so' | \
@@ -238,7 +232,19 @@ override_dh_auto_test-arch:
 	done
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	$(call RUN_TESTS,$(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS))
+	$(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS) | tee $(TEST_LOG)
+	test -f $(TEST_LOG)
+	echo "Summary of specific test failures:"; \
+	$(FAILED_TESTS); \
+	num_failures=$$($(FAILED_TESTS) | wc -l); \
+	echo -n "$${num_failures} tests failed, $(FAILURES_ALLOWED) maximum allowed. "; \
+	if test "$${num_failures}" -le $(FAILURES_ALLOWED); then \
+	  echo "Continuing..."; \
+	else \
+	  echo "Aborting the build."; \
+	  echo "Check the logs further above for details."; \
+	  false; \
+	fi
 # don't continue if RUSTBUILD_TEST_FLAGS is non-empty
 	test -z "$(RUSTBUILD_TEST_FLAGS)"
 endif
@@ -249,7 +255,7 @@ ifneq (,$(BUILD_DOCS))
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	# Run all rules that test the docs, i.e. in step.rs that depend on default:doc
-	$(call RUN_TESTS,$(RUSTBUILD_TEST) --no-fail-fast src/tools/linkchecker $(RUSTBUILD_FLAGS))
+	$(RUSTBUILD_TEST) --no-fail-fast src/tools/linkchecker $(RUSTBUILD_FLAGS)
 endif
 endif
 endif
