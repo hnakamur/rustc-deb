@@ -1,3 +1,9 @@
+rustc (1.20.0+dfsg1-3) UNRELEASED; urgency=medium
+
+  * Disable jemalloc to fix FTBFS with 1.21 on armhf.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 23 Oct 2017 16:26:14 +0000
+
 rustc (1.20.0+dfsg1-2) unstable; urgency=medium
 
   * Update changelog entry for 1.20.0+dfsg1-1 to reflect that it was actually
