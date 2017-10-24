@@ -165,7 +165,7 @@ debian/configure-upstream: debian/config.toml debian/rules
 	echo 'cat > config.toml <<EOF' >> "$@"
 	cat debian/config.toml >> "$@"
 	echo 'EOF' >> "$@"
-	echo "./configure $(DEB_CONFIGURE_FLAGS)" >> "$@"
+	echo "./configure $(DEB_CONFIGURE_FLAGS) \"\$$@\"" >> "$@"
 	chmod +x "$@"
 
 debian/config.toml: debian/config.toml.in
