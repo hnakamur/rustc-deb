@@ -52,7 +52,8 @@ LLVM_VERSION = 4.0
 OLD_LLVM_VERSION = 3.9
 # Make it easier to test against a custom LLVM
 ifneq (,$(LLVM_DESTDIR))
-LD_LIBRARY_PATH := $(if $(LD_LIBRARY_PATH),$(LD_LIBRARY_PATH):$(LLVM_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH),$(LLVM_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH))
+LLVM_LIBRARY_PATH := $(LLVM_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH):$(LLVM_DESTDIR)/usr/lib
+LD_LIBRARY_PATH := $(if $(LD_LIBRARY_PATH),$(LD_LIBRARY_PATH):$(LLVM_LIBRARY_PATH),$(LLVM_LIBRARY_PATH))
 export LD_LIBRARY_PATH
 endif
 DEB_CONFIGURE_FLAGS += --llvm-root=$(LLVM_DESTDIR)/usr/lib/llvm-$(LLVM_VERSION)
@@ -95,7 +96,13 @@ ifeq (0,$(HAVE_BINARY_TARBALL))
     # Case A-1: the builder did not select the "pkg.rustc.dlstage0" build profile.
     # In this case, we use the distro's rustc - either the previous or current version.
     ifeq (,$(findstring pkg.rustc.dlstage0,$(DEB_BUILD_PROFILES)))
-        DEB_CONFIGURE_FLAGS += --enable-local-rust --local-rust-root=/usr
+        # Make it easier to test against a custom rustc
+        ifneq (,$(RUST_DESTDIR))
+        RUST_LIBRARY_PATH := $(RUST_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH):$(RUST_DESTDIR)/usr/lib
+        LD_LIBRARY_PATH := $(if $(LD_LIBRARY_PATH),$(LD_LIBRARY_PATH):$(RUST_LIBRARY_PATH),$(RUST_LIBRARY_PATH))
+        export LD_LIBRARY_PATH
+        endif
+        DEB_CONFIGURE_FLAGS += --enable-local-rust --local-rust-root=$(RUST_DESTDIR)/usr
     endif
     #
     # Case A-2: the builder selected the "dlstage0" build profile.

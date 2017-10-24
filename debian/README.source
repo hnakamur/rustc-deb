@@ -209,10 +209,21 @@ If you need to test a LLVM patch, do something like this:
 
 # build your patched LLVM debs, then:
 $ mkdir -p llvm-destdir && cd llvm-destdir
-$ for i in llvm-4.0 llvm-4.0-dev llvm-4.0-runtime llvm-4.0-tools libllvm4.0; do \
+$ ver=4.0; VERSION=FIXME
+$ for i in llvm-$ver llvm-$ver-dev llvm-$ver-runtime llvm-$ver-tools libllvm$ver; do \
     dpkg -x ../"$i"_*${VERSION}_*.deb .; done
 $ cd ../rustc
 $ debian/rules LLVM_DESTDIR=$PWD/../llvm-destdir build
+
+If you need to test a patch to the stage0 rustc, do something like this:
+
+# build your patched rustc debs or upstream rustc, then:
+$ mkdir -p rust-destdir && cd rust-destdir
+$ ver=1.20; VERSION=FIXME;
+$ for i in rustc libstd-rust-$ver libstd-rust-dev; do \
+    dpkg -x ../"$i"_*${VERSION}_*.deb .; done
+$ cd ../rustc
+$ debian/rules RUST_DESTDIR=$PWD/../rust-destdir build
 
 
 Useful links
