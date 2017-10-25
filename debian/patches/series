@@ -14,6 +14,7 @@ u-ignoretest-ppc64el_02.patch
 u-output-failed-commands.patch
 u-cross-compile-install.patch
 u-prefer-local-css.patch
+u-ppc64-extern-struct-abi.patch
 
 # not forwarded, or forwarded but unlikely to be merged
 u-reproducible-dl-stage0.patch
