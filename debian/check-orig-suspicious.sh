@@ -1,6 +1,6 @@
-#!/bin/sh
+#!/bin/bash
 
-set -x
+set -ex
 
 ver="$1"
 test -n "$ver" || exit 2
@@ -8,9 +8,11 @@ test -n "$ver" || exit 2
 FILTER="Files-Excluded: in debian/copyright and run a repack."
 SUS_WHITELIST=$(find "${PWD}" -name upstream-tarball-unsuspicious.txt -type f)
 
-rm -rf rustc-$ver-src/
-tar xf ../rustc_$ver+dfsg1.orig.tar.xz && cd rustc-$ver-src/
+rm -rf rustc-${ver/*~*/beta}-src/
+tar xf ../rustc_$ver+dfsg1.orig.tar.xz && cd rustc-${ver/*~*/beta}-src/
 
+# Remove tiny files 4 bytes or less
+find . -size -4c -delete
 # Remove non-suspicious files, warning on patterns that match nothing
 grep -v '^#' ${SUS_WHITELIST} | xargs  -I% sh -c 'rm -r ./% || true'
 echo "Checking for suspicious files..."
