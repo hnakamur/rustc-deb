@@ -363,3 +363,11 @@ source_orig-stage0:
 	debian/make_orig-stage0_tarball.sh
 	QUILT_PATCHES=debian/patches quilt pop -aq; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
 	rm -rf .pc
+
+debian/watch-beta: debian/watch-beta.in debian/rules
+	oldver=$(shell echo $(RUST_LONG_VERSION) | sed -e 's/\./\\./g'); \
+	newver=$(shell echo $(RUST_VERSION) | perl -lpe 's/(\d+)\.(\d+)/$$1 . "." . ($$2+1)/e'); \
+	m4 -DOLDVER="$$oldver" -DNEWVER="$$newver.0" "$<" > "$@"
+
+source_orig-beta: debian/watch-beta
+	uscan $(USCAN_OPTS) --watchfile "$<"
