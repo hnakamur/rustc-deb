@@ -45,7 +45,7 @@ DEB_DESTDIR := $(CURDIR)/debian/tmp
 # but at the current version not all of these flags are available in that file.
 # Certain flags also need to be kept here *as well as* debian/config.toml.in
 # because of https://github.com/rust-lang/rust/issues/43295
-DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src --prefix=/usr --release-channel=$(RELEASE_CHANNEL) --disable-debuginfo-only-std
+DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src --prefix=/usr --release-channel=$(RELEASE_CHANNEL) --disable-jemalloc --disable-debuginfo-only-std
 
 # Use system LLVM (comment out to use vendored LLVM)
 LLVM_VERSION = 4.0

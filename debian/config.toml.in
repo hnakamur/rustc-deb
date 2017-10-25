@@ -28,6 +28,8 @@ llvm-config = "LLVM_DESTDIR/usr/lib/llvm-LLVM_VERSION/bin/llvm-config"
 [llvm]
 
 [rust]
+use-jemalloc = false
+
 channel = "RELEASE_CHANNEL"
 
 # parallel codegen interferes with reproducibility, see

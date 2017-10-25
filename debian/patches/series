@@ -21,6 +21,7 @@ u-reproducible-dl-stage0.patch
 gcc-4.8-aarch64-ice.diff
 
 # Debian-specific patches, not suitable for upstream
+d-disable-jemalloc.patch
 d-raise-min-llvm-version.patch
 d-disable-cargo-vendor.patch
 d-rust-gdb-paths
