@@ -200,8 +200,8 @@ override_dh_auto_configure: debian/config.toml
 	debian/prune-checksums src/vendor/lzma-sys/.cargo-checksum.json
 	# We excluded some embedded libraries in d/copyright
 	debian/prune-checksums src/vendor/dbghelp-sys/.cargo-checksum.json
-	# TODO: work-around for slightly buggy prune-unused-deps, can rm in 1.20.0
-	rmdir src/vendor/* 2>/dev/null || true
+	# We patched this for sparc64 support
+	debian/prune-checksums src/vendor/gcc/.cargo-checksum.json
 	# Do the actual configure
 	./configure $(DEB_CONFIGURE_FLAGS)
 

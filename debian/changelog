@@ -1,3 +1,9 @@
+rustc (1.21.0+dfsg1-3) UNRELEASED; urgency=medium
+
+  * Add/fix detection for sparc64, thanks to John Paul Adrian Glaubitz.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 27 Oct 2017 20:24:00 +0200
+
 rustc (1.21.0+dfsg1-2) unstable; urgency=medium
 
   * Upload to unstable.
