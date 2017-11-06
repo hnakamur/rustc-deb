@@ -1,9 +1,9 @@
-rustc (1.21.0+dfsg1-3) UNRELEASED; urgency=medium
+rustc (1.21.0+dfsg1-3) unstable; urgency=medium
 
   * Add/fix detection for sparc64, thanks to John Paul Adrian Glaubitz.
   * Workaround FTBFS when building docs. (Closes: #880262)
 
- -- Ximin Luo <infinity0@debian.org>  Fri, 27 Oct 2017 20:24:00 +0200
+ -- Ximin Luo <infinity0@debian.org>  Mon, 06 Nov 2017 10:03:32 +0100
 
 rustc (1.21.0+dfsg1-2) unstable; urgency=medium
 
