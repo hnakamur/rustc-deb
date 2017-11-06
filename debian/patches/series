@@ -2,6 +2,7 @@
 
 # pending, forwarded
 u-sparc64-detection.patch
+u-sparc64-detection-2.patch
 u-gperf-3.1.patch
 u-reproducible-build.patch
 u-ignoretest-armhf_01.patch
