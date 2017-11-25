@@ -3,13 +3,14 @@ Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 --- a/src/Cargo.toml
 +++ b/src/Cargo.toml
-@@ -15,28 +15,7 @@
+@@ -15,31 +15,7 @@
    "tools/remote-test-client",
    "tools/remote-test-server",
    "tools/rust-installer",
 -  "tools/cargo",
    "tools/rustdoc",
 -  "tools/rls",
+-  "tools/rustfmt",
 -  # FIXME(https://github.com/rust-lang/cargo/issues/4089): move these to exclude
 -  "tools/rls/test_data/borrow_error",
 -  "tools/rls/test_data/completion",
@@ -29,6 +30,8 @@ Forwarded: not-needed
 -  "tools/rls/test_data/infer_custom_bin",
 -  "tools/rls/test_data/infer_lib",
 -  "tools/rls/test_data/omit_init_build",
+-  "tools/rls/test_data/unicødë",
+-  "tools/rls/test_data/workspace_symbol",
  ]
  
  # Curiously, compiletest will segfault if compiled with opt-level=3 on 64-bit

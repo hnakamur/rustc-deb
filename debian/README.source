@@ -149,7 +149,7 @@ Import of a new upstream version
 
 $ uscan --verbose
 $ ver=UPDATE-ME # whatever it is, X.YY.0 or X.YY.0~beta probably
-$ tar xf ../rustc-${ver/\~/-}-src.tar.gz && ( cd rustc-${ver/*~*/beta}-src/ && ../debian/prune-unused-deps ) && rm -rf rustc-${ver/*~*/beta}-src/
+$ tar xf ../rustc-${ver/\~/-}-src.tar.xz && ( cd rustc-${ver/*~*/beta}-src/ && ../debian/prune-unused-deps ) && rm -rf rustc-${ver/*~*/beta}-src/
 # ^ If this fails, you probably need to refresh patches or edit debian/prune-unused-deps
 $ git commit -m "Update Files-Excluded for new upstream version ${ver/\~/-}" debian/copyright
 $ uscan --verbose # yes, again, to pick up the new Files-Excluded stuff
