@@ -18,6 +18,7 @@ members = [
   "tools/cargo",
   "tools/rustdoc",
   "tools/rls",
+  "tools/rustfmt",
   # FIXME(https://github.com/rust-lang/cargo/issues/4089): move these to exclude
   "tools/rls/test_data/borrow_error",
   "tools/rls/test_data/completion",
@@ -37,6 +38,8 @@ members = [
   "tools/rls/test_data/infer_custom_bin",
   "tools/rls/test_data/infer_lib",
   "tools/rls/test_data/omit_init_build",
+  "tools/rls/test_data/unicødë",
+  "tools/rls/test_data/workspace_symbol",
 ]
 
 # Curiously, compiletest will segfault if compiled with opt-level=3 on 64-bit
@@ -55,3 +58,9 @@ debug-assertions = false
 [profile.test]
 debug = false
 debug-assertions = false
+
+[patch."https://github.com/rust-lang/cargo"]
+cargo = { path = "tools/cargo" }
+
+[patch.crates-io]
+rustfmt-nightly = { path = "tools/rustfmt" }
