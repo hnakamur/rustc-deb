@@ -37,7 +37,7 @@ Forwarded: not-needed
  # Curiously, compiletest will segfault if compiled with opt-level=3 on 64-bit
 --- a/src/bootstrap/bootstrap.py
 +++ b/src/bootstrap/bootstrap.py
-@@ -510,10 +510,6 @@
+@@ -618,10 +618,6 @@
              args.append("--verbose")
              if self.verbose > 1:
                  args.append("--verbose")
@@ -50,7 +50,7 @@ Forwarded: not-needed
      def build_triple(self):
 --- a/src/bootstrap/builder.rs
 +++ b/src/bootstrap/builder.rs
-@@ -579,10 +579,7 @@
+@@ -589,10 +589,7 @@
          if self.config.rust_optimize && cmd != "bench" {
              cargo.arg("--release");
          }
