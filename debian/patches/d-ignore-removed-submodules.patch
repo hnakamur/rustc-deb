@@ -35,6 +35,15 @@ Forwarded: not-needed
  ]
  
  # Curiously, compiletest will segfault if compiled with opt-level=3 on 64-bit
+@@ -59,8 +35,3 @@
+ debug = false
+ debug-assertions = false
+ 
+-[patch."https://github.com/rust-lang/cargo"]
+-cargo = { path = "tools/cargo" }
+-
+-[patch.crates-io]
+-rustfmt-nightly = { path = "tools/rustfmt" }
 --- a/src/bootstrap/bootstrap.py
 +++ b/src/bootstrap/bootstrap.py
 @@ -618,10 +618,6 @@

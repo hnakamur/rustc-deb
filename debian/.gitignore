@@ -3,7 +3,6 @@
 /*.substvars
 /*.debhelper
 /config.toml
-/configure-upstream
 /files
 /libstd-rust-*/
 /libstd-rust-dev/
