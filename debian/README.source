@@ -163,6 +163,7 @@ $ dch -v $ver+dfsg1-1 -m "New upstream release."
 $ debian/rules update-version
 # might also need to bump the version of the cargo Build-Depends
 # then refresh patches, etc etc
+# Use /usr/share/cargo/guess-crate-copyright to help update d/copyright quickly
 
 # If you need to repack again, bump the 'repacksuffix' in d/watch then run
 $ uscan --verbose --force-download
