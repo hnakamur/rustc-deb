@@ -539,10 +539,14 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          }
      }
  }
-@@ -170,9 +141,6 @@
+@@ -166,13 +137,8 @@
+             css: Vec::new(),
+             favicon: Vec::new(),
+             js: Vec::new(),
+-            highlight_css: Vec::new(),
              tomorrow_night_css: Vec::new(),
              ayu_highlight_css: Vec::new(),
-             highlight_js: Vec::new(),
+-            highlight_js: Vec::new(),
 -            clipboard_js: Vec::new(),
 -            store_js: Vec::new(),
 -            jquery: Vec::new(),
