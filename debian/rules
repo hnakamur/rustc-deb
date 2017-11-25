@@ -201,7 +201,7 @@ override_dh_auto_configure: debian/config.toml
 	# We excluded some embedded libraries in d/copyright
 	debian/prune-checksums src/vendor/dbghelp-sys/.cargo-checksum.json
 	# We patched this for sparc64 support
-	debian/prune-checksums src/vendor/gcc/.cargo-checksum.json
+	debian/prune-checksums src/vendor/cc/.cargo-checksum.json
 	# Do the actual configure
 	./configure $(DEB_CONFIGURE_FLAGS)
 
