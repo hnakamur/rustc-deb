@@ -1,9 +1,9 @@
-rustc (1.22.1+dfsg1-1~exp1) UNRELEASED; urgency=medium
+rustc (1.22.1+dfsg1-1~exp1) experimental; urgency=medium
 
   * New upstream release.
   * Fix symlink target. (Closes: #877276)
 
- -- Ximin Luo <infinity0@debian.org>  Sat, 25 Nov 2017 15:22:13 +0100
+ -- Ximin Luo <infinity0@debian.org>  Sat, 25 Nov 2017 22:29:12 +0100
 
 rustc (1.21.0+dfsg1-3) unstable; urgency=medium
 
