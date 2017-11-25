@@ -19,11 +19,15 @@ Files-Excluded:
 # NB: don't exclude rust-installer, it's needed for "install" functionality
  src/tools/cargo
  src/tools/rls
+ src/tools/rustfmt
 # Embedded C libraries
  src/vendor/backtrace-sys*/src/libbacktrace
  src/vendor/lzma-sys*/xz-*
 # Embedded binary blobs
  src/vendor/dbghelp-sys*/*/*.a
+ src/vendor/mdbook/src/theme/jquery.js
+ src/vendor/mdbook/src/theme/store.js
+ src/vendor/mdbook/src/theme/playpen_editor
 # Non-free-format documents already available in other formats
  src/doc/book/second-edition/nostarch/odt
 # unused dependencies:
