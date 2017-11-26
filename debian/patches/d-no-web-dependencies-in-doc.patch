@@ -1,5 +1,6 @@
 Description: Use local web resources instead of remote ones
 Author: Matthijs van Otterdijk <matthijs@wirevirt.net>
+Author: Ximin Luo <infinity0@debian.org>
 Bug: https://github.com/azerupi/mdBook/issues/271
 Comment:
  Use https://github.com/infinity0/mdBook/tree/debian to help you rebase the
@@ -35,10 +36,10 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  
          <!-- Font Awesome -->
 -        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
-+        <link rel="stylesheet" href="../font-awesome.min.css">
++        <link rel="stylesheet" href="../../font-awesome.min.css">
  
 -        <link rel="stylesheet" href="highlight.css">
-+        <link rel="stylesheet" href="../highlight.css">
++        <link rel="stylesheet" href="../../highlight.css">
          <link rel="stylesheet" href="tomorrow-night.css">
          <link rel="stylesheet" href="ayu-highlight.css">
  
@@ -47,7 +48,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          {{#if mathjax_support}}
          <!-- MathJax -->
 -        <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
-+        <script type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
++        <script type="text/javascript" src="../../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
          {{/if}}
  
 -        <!-- Fetch Clipboard.js from CDN but have a local fallback -->
@@ -68,7 +69,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -
 -        <!-- Fetch store.js from local - TODO add CDN when 2.x.x is available on cdnjs -->
 -        <script src="store.js"></script>
-+        <script src="../jquery.min.js"></script>
++        <script src="../../jquery.min.js"></script>
  
          <!-- Custom JS script -->
          {{#each additional_js}}
@@ -109,6 +110,15 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          {{#if is_print}}
          <script>
              $(document).ready(function() {
+@@ -233,7 +187,7 @@
+         </script>
+         {{/if}}
+ 
+-        <script src="highlight.js"></script>
++        <script src="../../highlight.js"></script>
+         <script src="book.js"></script>
+     </body>
+ </html>
 --- a/src/doc/reference/theme/index.hbs
 +++ b/src/doc/reference/theme/index.hbs
 @@ -10,15 +10,13 @@
