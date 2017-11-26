@@ -4,6 +4,8 @@ Bug: https://github.com/azerupi/mdBook/issues/271
 Comment:
  Use https://github.com/infinity0/mdBook/tree/debian to help you rebase the
  patch on top of a newer version.
+ .
+ Make sure the paths here match the ones in debian/rust-doc.links
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/tools/linkchecker/main.rs
