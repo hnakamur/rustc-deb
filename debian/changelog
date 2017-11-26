@@ -1,6 +1,10 @@
 rustc (1.22.1+dfsg1-1~exp2) UNRELEASED; urgency=medium
 
+  [ Ximin Luo ]
   * Remove unimportant files that autoload remote resources from rust-src.
+
+  [ Chris Coulson ]
+  * Fix some test failures that occur because we build rust without an rpath.
 
  -- Ximin Luo <infinity0@debian.org>  Sun, 26 Nov 2017 13:57:11 +0100
 
