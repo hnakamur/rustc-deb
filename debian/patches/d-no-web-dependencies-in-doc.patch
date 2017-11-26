@@ -73,7 +73,28 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  
          <!-- Custom JS script -->
          {{#each additional_js}}
-@@ -195,36 +176,9 @@
+@@ -124,20 +105,6 @@
+ 
+     </head>
+     <body class="light">
+-        <!-- Set the theme before any content is loaded, prevents flash -->
+-        <script type="text/javascript">
+-            var theme = store.get('mdbook-theme');
+-            if (theme === null || theme === undefined) { theme = 'light'; }
+-            $('body').removeClass().addClass(theme);
+-        </script>
+-
+-        <!-- Hide / unhide sidebar before it is displayed -->
+-        <script type="text/javascript">
+-            var sidebar = store.get('mdbook-sidebar');
+-            if (sidebar === "hidden") { $("html").addClass("sidebar-hidden") }
+-            else if (sidebar === "visible") { $("html").addClass("sidebar-visible") }
+-        </script>
+-
+         <div id="sidebar" class="sidebar">
+             {{#toc}}{{/toc}}
+         </div>
+@@ -195,36 +162,9 @@
          </div>
  
  
@@ -110,7 +131,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          {{#if is_print}}
          <script>
              $(document).ready(function() {
-@@ -233,7 +187,7 @@
+@@ -233,7 +173,7 @@
          </script>
          {{/if}}
  
@@ -169,7 +190,28 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  
          <!-- Custom JS script -->
          {{#each additional_js}}
-@@ -183,36 +164,9 @@
+@@ -108,20 +89,6 @@
+ 
+     </head>
+     <body class="light">
+-        <!-- Set the theme before any content is loaded, prevents flash -->
+-        <script type="text/javascript">
+-            var theme = store.get('mdbook-theme');
+-            if (theme === null || theme === undefined) { theme = 'light'; }
+-            $('body').removeClass().addClass(theme);
+-        </script>
+-
+-        <!-- Hide / unhide sidebar before it is displayed -->
+-        <script type="text/javascript">
+-            var sidebar = store.get('mdbook-sidebar');
+-            if (sidebar === "hidden") { $("html").addClass("sidebar-hidden") }
+-            else if (sidebar === "visible") { $("html").addClass("sidebar-visible") }
+-        </script>
+-
+         <div id="sidebar" class="sidebar">
+             {{#toc}}{{/toc}}
+         </div>
+@@ -183,36 +150,9 @@
          </div>
  
  
@@ -206,7 +248,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          {{#if is_print}}
          <script>
              $(document).ready(function() {
-@@ -221,7 +175,7 @@
+@@ -221,7 +161,7 @@
          </script>
          {{/if}}
  
