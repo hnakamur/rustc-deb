@@ -162,6 +162,8 @@ debian/config.toml: debian/config.toml.in
 		-DRUST_DESTDIR="$(RUST_DESTDIR)" \
 		"$<" > "$@"
 	! $(DOWNLOAD_BOOTSTRAP) || sed -i -e '/^rustc = /d' -e '/^cargo = /d' "$@"
+	# Work around armhf issue: https://github.com/rust-lang/rust/issues/45854
+	[ $(DEB_BUILD_ARCH) != armhf ] || sed -i -e '/^debuginfo-only-std = /d' "$@"
 
 debian/rust-src.%: debian/rust-src.%.in
 	m4  -DRUST_LONG_VERSION="$(RUST_LONG_VERSION)" \

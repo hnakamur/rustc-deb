@@ -3,6 +3,8 @@ rustc (1.22.1+dfsg1-1~exp2) UNRELEASED; urgency=medium
   [ Ximin Luo ]
   * Remove unimportant files that autoload remote resources from rust-src.
   * Fix more symlinks in rust-doc.
+  * On armhf, only generate debuginfo for libstd and not the compiler itself.
+    This works around buildds running out of memory, see upstream #45854.
 
   [ Chris Coulson ]
   * Fix some test failures that occur because we build rust without an rpath.
