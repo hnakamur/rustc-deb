@@ -1,8 +1,8 @@
-rustc (1.22.1+dfsg1-2) UNRELEASED; urgency=medium
+rustc (1.22.1+dfsg1-2) unstable; urgency=medium
 
   * Fix B-D rustc version so this package can be built using itself.
 
- -- Ximin Luo <infinity0@debian.org>  Mon, 01 Jan 2018 14:26:43 +0100
+ -- Ximin Luo <infinity0@debian.org>  Mon, 01 Jan 2018 14:27:19 +0100
 
 rustc (1.22.1+dfsg1-1) unstable; urgency=medium
 
