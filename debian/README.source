@@ -20,8 +20,13 @@ progressing in splitting them out.
 
 Here below the remaining ones, with the technical reasons.
 
+ * binaryen from https://github.com/alexcrichton/binaryen.git
+   -> temporary until LLVM lld is available
+   - see issue upstream: TODO waiting for alexcrichton to create one
+
  * jemalloc from https://github.com/rust-lang/jemalloc
    -> system-wide one can't be used due to rust using a "je_" prefix.
+   - our rust no longer uses jemalloc, TODO: can remove this altogether
 
    This is intentional upstream design and won't change soon, see:
     - https://github.com/rust-lang/rust/pull/18678

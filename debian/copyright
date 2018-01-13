@@ -24,6 +24,7 @@ Files-Excluded:
  src/vendor/backtrace-sys*/src/libbacktrace
  src/vendor/lzma-sys*/xz-*
 # Embedded binary blobs
+ src/binaryen/bin/*.js
  src/vendor/dbghelp-sys*/*/*.a
  src/vendor/mdbook/src/theme/jquery.js
  src/vendor/mdbook/src/theme/store.js
