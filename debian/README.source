@@ -24,14 +24,6 @@ Here below the remaining ones, with the technical reasons.
    -> temporary until LLVM lld is available
    - see issue upstream: TODO waiting for alexcrichton to create one
 
- * jemalloc from https://github.com/rust-lang/jemalloc
-   -> system-wide one can't be used due to rust using a "je_" prefix.
-   - our rust no longer uses jemalloc, TODO: can remove this altogether
-
-   This is intentional upstream design and won't change soon, see:
-    - https://github.com/rust-lang/rust/pull/18678
-    - http://smallcultfollowing.com/babysteps/blog/2014/11/14/allocators-in-rust/
-
  * compiler-rt from https://github.com/rust-lang/compiler-rt
    -> system-wide compiler-rt fails during linkage
 
@@ -40,7 +32,6 @@ Here below the remaining ones, with the technical reasons.
     - https://github.com/rust-lang/rust/issues/15708
 
 As a summary, we plan to:
- * keep embedding jemalloc (probably forever)
  * work with upstream to fix compiler-rt linkage soon.
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 06 May 2017 13:26:08 +0200

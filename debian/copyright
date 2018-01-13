@@ -3,7 +3,7 @@ Upstream-Name: rust
 Source: https://www.rust-lang.org
 Files-Excluded:
  *.min.js
- src/jemalloc/msvc/*_vc*.sln
+ src/jemalloc
  src/llvm
  src/rt/hoedown/src/html_blocks.c
  src/vendor/mdbook/src/theme/_FontAwesome
@@ -141,16 +141,6 @@ License: MIT or Apache-2.0
 Files: src/librustc_trans/cabi_x86_64.rs
 Copyright: 2008-2010 Tachyon Technologies
 License: BSD-2-clause
-
-Files: src/jemalloc/*
-Copyright: 2002-2014 Jason Evans <jasone@canonware.com>
-           2007-2012 Mozilla Foundation
-           2009-2014 Facebook, Inc.
-License: BSD-2-clause
-
-Files: src/jemalloc/bin/jeprof.in
-Copyright: 1998-2007, Google Inc.
-License: BSD-3-Clause
 
 Files: src/libcompiler_builtins/compiler-rt/*
 Copyright: 2009-2015 Howard Hinnant
