@@ -1,3 +1,9 @@
+rustc (1.23.0+dfsg1-1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 13 Jan 2018 17:31:02 +0100
+
 rustc (1.22.1+dfsg1-2) unstable; urgency=medium
 
   * Fix B-D rustc version so this package can be built using itself.
