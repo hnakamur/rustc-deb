@@ -312,6 +312,8 @@ override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/tools/clippy/util/gh-pages/*
 	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/cssparser/docs/*.html
 	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/kuchiki/docs/*.html
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/url/docs/*.html
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/xz2/.gitmodules
 
 override_dh_installchangelogs:
 	dh_missing --list-missing || true
