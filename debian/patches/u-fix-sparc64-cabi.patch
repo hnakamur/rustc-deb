@@ -2,15 +2,6 @@ Bug: https://github.com/rust-lang/rust/pull/47541
 Applied-Upstream: commit:f4bcfc5317258c77e25ab5c0f3eec5599287fdbd
 --- a/src/librustc_trans/cabi_sparc64.rs
 +++ b/src/librustc_trans/cabi_sparc64.rs
-@@ -26,7 +26,7 @@ fn is_homogeneous_aggregate<'a, 'tcx>(cc
-         let valid_unit = match unit.kind {
-             RegKind::Integer => false,
-             RegKind::Float => true,
--            RegKind::Vector => size.bits() == 128
-+            RegKind::Vector => size.bits() == 256
-         };
- 
-         if valid_unit {
 @@ -52,7 +52,7 @@ fn classify_ret_ty<'a, 'tcx>(ccx: &Crate
      }
      let size = ret.layout.size(ccx);
