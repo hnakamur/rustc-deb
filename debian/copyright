@@ -20,12 +20,14 @@ Files-Excluded:
  src/tools/cargo
  src/tools/rls
  src/tools/rustfmt
+ src/tools/miri
 # Embedded C libraries
  src/vendor/backtrace-sys*/src/libbacktrace
  src/vendor/lzma-sys*/xz-*
 # Embedded binary blobs
  src/binaryen/bin/*.js
  src/vendor/dbghelp-sys*/*/*.a
+ src/vendor/winapi-*/*/*.a
  src/vendor/mdbook/src/theme/jquery.js
  src/vendor/mdbook/src/theme/store.js
  src/vendor/mdbook/src/theme/playpen_editor
