@@ -1,4 +1,4 @@
-rustc (1.24.1+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.24.1+dfsg1-1~exp1) experimental; urgency=medium
 
   * More sparc64 CABI fixes. (Closes: #888757)
   * New upstream release.
@@ -13,7 +13,7 @@ rustc (1.24.1+dfsg1-1) UNRELEASED; urgency=medium
   * Backport upstream patch to support powerpcspe. (Closes: #891542)
   * Disable full-bootstrap again to work around upstream #48319.
 
- -- Ximin Luo <infinity0@debian.org>  Sat, 03 Mar 2018 11:37:35 +0100
+ -- Ximin Luo <infinity0@debian.org>  Sat, 03 Mar 2018 14:23:29 +0100
 
 rustc (1.23.0+dfsg1-1) unstable; urgency=medium
 
