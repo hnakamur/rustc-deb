@@ -36,6 +36,7 @@ Files-Excluded:
  src/vendor/advapi32-sys
  src/vendor/aho-corasick-0.5.3
  src/vendor/bufstream
+ src/vendor/cargo_metadata
  src/vendor/coco
  src/vendor/commoncrypto
  src/vendor/commoncrypto-sys
@@ -48,9 +49,13 @@ Files-Excluded:
  src/vendor/curl-sys
  src/vendor/derive-new
  src/vendor/docopt
+ src/vendor/endian-type
  src/vendor/enum_primitive
  src/vendor/env_logger-0.3.5
+ src/vendor/failure
+ src/vendor/failure_derive
  src/vendor/foreign-types
+ src/vendor/foreign-types-shared
  src/vendor/fs2
  src/vendor/futures
  src/vendor/git2
@@ -61,13 +66,15 @@ Files-Excluded:
  src/vendor/hex
  src/vendor/home
  src/vendor/ignore
+ src/vendor/json
  src/vendor/jsonrpc-core
  src/vendor/languageserver-types
  src/vendor/libgit2-sys
  src/vendor/libssh2-sys
  src/vendor/libz-sys
  src/vendor/memchr-0.1.11
- src/vendor/memchr
+ src/vendor/memchr-1.0.2
+ src/vendor/nibble_vec
  src/vendor/num-bigint
  src/vendor/num
  src/vendor/num-complex
@@ -79,6 +86,7 @@ Files-Excluded:
  src/vendor/openssl-sys
  src/vendor/psapi-sys
  src/vendor/racer
+ src/vendor/radix_trie
  src/vendor/rayon
  src/vendor/rayon-core
  src/vendor/regex-0.1.80
@@ -93,7 +101,7 @@ Files-Excluded:
  src/vendor/serde_ignored
  src/vendor/shell-escape
  src/vendor/socket2
- src/vendor/strings
+ src/vendor/synstructure
  src/vendor/syntex_errors
  src/vendor/syntex_pos
  src/vendor/syntex_syntax
