@@ -1,8 +1,9 @@
-rustc (1.23.0+dfsg1-2) UNRELEASED; urgency=medium
+rustc (1.24.1+dfsg1-1) UNRELEASED; urgency=medium
 
   * More sparc64 CABI fixes. (Closes: #888757)
+  * New upstream release.
 
- -- Ximin Luo <infinity0@debian.org>  Tue, 06 Feb 2018 12:00:25 +0100
+ -- Ximin Luo <infinity0@debian.org>  Sat, 03 Mar 2018 11:37:35 +0100
 
 rustc (1.23.0+dfsg1-1) unstable; urgency=medium
 
