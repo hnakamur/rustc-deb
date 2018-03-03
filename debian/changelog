@@ -2,6 +2,7 @@ rustc (1.24.1+dfsg1-1) UNRELEASED; urgency=medium
 
   * More sparc64 CABI fixes. (Closes: #888757)
   * New upstream release.
+  * Note that s390x baseline was updated in the meantime. (Closes: #851150)
   * Include Debian-specific patch to disable kernel helpers on armel.
     (Closes: #891902)
   * Include missing build-dependencies for pkg.rustc.dlstage0 build profile.
