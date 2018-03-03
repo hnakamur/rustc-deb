@@ -550,6 +550,7 @@ pub fn rustc_cargo(build: &Build,
     // Building with a static libstdc++ is only supported on linux right now,
     // not for MSVC or macOS
     if build.config.llvm_static_stdcpp &&
+       !target.contains("freebsd") &&
        !target.contains("windows") &&
        !target.contains("apple") {
         cargo.env("LLVM_STATIC_STDCPP",
@@ -560,6 +561,9 @@ pub fn rustc_cargo(build: &Build,
     }
     if let Some(ref s) = build.config.rustc_default_linker {
         cargo.env("CFG_DEFAULT_LINKER", s);
+    }
+    if build.config.rustc_parallel_queries {
+        cargo.env("RUSTC_PARALLEL_QUERIES", "1");
     }
 }
 
