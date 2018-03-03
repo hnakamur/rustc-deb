@@ -11,6 +11,7 @@ rustc (1.24.1+dfsg1-1) UNRELEASED; urgency=medium
     (Closes: #891913)
   * Enable debuginfo-only-std on armel as well. (Closes: #891961)
   * Backport upstream patch to support powerpcspe. (Closes: #891542)
+  * Disable full-bootstrap again to work around upstream #48319.
 
  -- Ximin Luo <infinity0@debian.org>  Sat, 03 Mar 2018 11:37:35 +0100
 
