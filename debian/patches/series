@@ -3,6 +3,7 @@
 # pending, forwarded
 u-sparc64-detection.patch
 u-fix-sparc64-cabi.patch
+u-powerpcspe-support.patch
 u-gperf-3.1.patch
 u-reproducible-build.patch
 u-ignoretest-armhf_01.patch
@@ -29,6 +30,8 @@ d-add-soname.patch
 d-dont-download-stage0.patch
 d-no-web-dependencies-in-doc.patch
 d-ignore-removed-submodules.patch
+
+d-armel-disable-kernel-helpers.patch
 
 # Work around for some porterboxes, keep this commented
 #d-host-duplicates.patch

@@ -2,6 +2,14 @@ rustc (1.24.1+dfsg1-1) UNRELEASED; urgency=medium
 
   * More sparc64 CABI fixes. (Closes: #888757)
   * New upstream release.
+  * Include Debian-specific patch to disable kernel helpers on armel.
+    (Closes: #891902)
+  * Include missing build-dependencies for pkg.rustc.dlstage0 build profile.
+    (Closes: #891022)
+  * Add architecture.mk mapping for armel => armv5te-unknown-linux-gnueabi.
+    (Closes: #891913)
+  * Enable debuginfo-only-std on armel as well. (Closes: #891961)
+  * Backport upstream patch to support powerpcspe. (Closes: #891542)
 
  -- Ximin Luo <infinity0@debian.org>  Sat, 03 Mar 2018 11:37:35 +0100
 
