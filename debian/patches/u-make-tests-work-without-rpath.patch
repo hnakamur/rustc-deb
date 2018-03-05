@@ -1,25 +1,12 @@
 Author: Chris Coulson <chris.coulson@canonical.com>
 Forwarded: TODO
---- a/src/test/run-make/issue-38237/Makefile
-+++ b/src/test/run-make/issue-38237/Makefile
-@@ -7,5 +7,5 @@
- else
+--- a/src/test/run-make/sysroot-crates-are-unstable/Makefile
++++ b/src/test/run-make/sysroot-crates-are-unstable/Makefile
+@@ -1,2 +1,6 @@
++include ../tools.mk
++
++RUSTC := $(RUSTC_ORIGINAL)
++
  all:
- 	$(RUSTC) foo.rs; $(RUSTC) bar.rs
--	$(RUSTDOC) baz.rs -L $(TMPDIR) -o $(TMPDIR)
-+	$(HOST_RPATH_ENV) '$(RUSTDOC)' baz.rs -L $(TMPDIR) -o $(TMPDIR)
- endif
---- a/src/test/run-make/issue-40535/Makefile
-+++ b/src/test/run-make/issue-40535/Makefile
-@@ -6,8 +6,8 @@
- # * All crates built in metadata-only mode (`cargo check`)
- all:
- 	# cc https://github.com/rust-lang/rust/issues/40623
--	$(RUSTC) baz.rs --emit=metadata
--	$(RUSTC) bar.rs --emit=metadata --extern baz=$(TMPDIR)/libbaz.rmeta
--	$(RUSTC) foo.rs --emit=metadata --extern bar=$(TMPDIR)/libbar.rmeta 2>&1 | \
-+	$(BARE_RUSTC) baz.rs --emit=metadata
-+	$(BARE_RUSTC) bar.rs --emit=metadata --extern baz=$(TMPDIR)/libbaz.rmeta
-+	$(BARE_RUSTC) foo.rs --emit=metadata --extern bar=$(TMPDIR)/libbar.rmeta 2>&1 | \
- 		$(CGREP) -v "unexpectedly panicked"
- 	# ^ Succeeds if it doesn't find the ICE message
+-	python2.7 test.py
++	$(HOST_RPATH_ENV) python2.7 test.py
