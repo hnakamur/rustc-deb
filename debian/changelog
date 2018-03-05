@@ -1,10 +1,10 @@
-rustc (1.24.1+dfsg1-1~exp2) UNRELEASED; urgency=medium
+rustc (1.24.1+dfsg1-1~exp2) experimental; urgency=medium
 
   * Steal some patches from Fedora to fix some test failures.
   * Update debian/patches/u-make-tests-work-without-rpath.patch to try to fix
     some more test failures.
 
- -- Ximin Luo <infinity0@debian.org>  Mon, 05 Mar 2018 16:13:21 +0100
+ -- Ximin Luo <infinity0@debian.org>  Mon, 05 Mar 2018 16:25:26 +0100
 
 rustc (1.24.1+dfsg1-1~exp1) experimental; urgency=medium
 
