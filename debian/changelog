@@ -1,10 +1,10 @@
-rustc (1.24.1+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.24.1+dfsg1-1) unstable; urgency=medium
 
   * Upload to unstable.
   * Raise allowed-test-failures to 160 on some non-release arches: powerpc,
     powerpcspe, sparc64, x32.
 
- -- Ximin Luo <infinity0@debian.org>  Wed, 07 Mar 2018 19:55:27 +0100
+ -- Ximin Luo <infinity0@debian.org>  Wed, 07 Mar 2018 20:07:27 +0100
 
 rustc (1.24.1+dfsg1-1~exp2) experimental; urgency=medium
 
