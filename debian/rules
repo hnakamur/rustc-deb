@@ -218,6 +218,9 @@ endif
 
 TEST_LOG = debian/rustc-tests.log
 FAILURES_ALLOWED = 5
+ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
+  FAILURES_ALLOWED = 160
+endif
 FAILED_TESTS = grep FAILED $(TEST_LOG) | grep -v '^test result'
 override_dh_auto_test-arch:
 # ensure that rustc_llvm is actually dynamically linked to libLLVM
