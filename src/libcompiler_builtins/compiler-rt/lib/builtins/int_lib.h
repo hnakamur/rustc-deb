@@ -22,21 +22,26 @@
 
 #if defined(__ELF__)
 #define FNALIAS(alias_name, original_name) \
-  void alias_name() __attribute__((alias(#original_name)))
+  void alias_name() __attribute__((__alias__(#original_name)))
+#define COMPILER_RT_ALIAS(aliasee) __attribute__((__alias__(#aliasee)))
 #else
 #define FNALIAS(alias, name) _Pragma("GCC error(\"alias unsupported on this file format\")")
+#define COMPILER_RT_ALIAS(aliasee) _Pragma("GCC error(\"alias unsupported on this file format\")")
 #endif
 
 /* ABI macro definitions */
 
 #if __ARM_EABI__
-# define ARM_EABI_FNALIAS(aeabi_name, name)         \
-  void __aeabi_##aeabi_name() __attribute__((alias("__" #name)));
-# define COMPILER_RT_ABI __attribute__((pcs("aapcs")))
+# ifdef COMPILER_RT_ARMHF_TARGET
+#   define COMPILER_RT_ABI
+# else
+#   define COMPILER_RT_ABI __attribute__((__pcs__("aapcs")))
+# endif
 #else
-# define ARM_EABI_FNALIAS(aeabi_name, name)
 # define COMPILER_RT_ABI
 #endif
+
+#define AEABI_RTABI __attribute__((__pcs__("aapcs")))
 
 #ifdef _MSC_VER
 #define ALWAYS_INLINE __forceinline
@@ -71,28 +76,6 @@
 
 /* Include internal utility function declarations. */
 #include "int_util.h"
-
-/*
- * Workaround for LLVM bug 11663.  Prevent endless recursion in
- * __c?zdi2(), where calls to __builtin_c?z() are expanded to
- * __c?zdi2() instead of __c?zsi2().
- *
- * Instead of placing this workaround in c?zdi2.c, put it in this
- * global header to prevent other C files from making the detour
- * through __c?zdi2() as well.
- *
- * This problem has been observed on FreeBSD for sparc64 and
- * mips64 with GCC 4.2.1, and for riscv with GCC 5.2.0.
- * Presumably it's any version of GCC, and targeting an arch that
- * does not have dedicated bit counting instructions.
- */
-#if (defined(__sparc64__) || defined(__sparcv9) || defined(__mips_n64) || defined(__mips_o64) || defined(__riscv__) \
-		|| (defined(_MIPS_SIM) && ((_MIPS_SIM == _ABI64) || (_MIPS_SIM == _ABIO64))))
-si_int __clzsi2(si_int);
-si_int __ctzsi2(si_int);
-#define	__builtin_clz __clzsi2
-#define	__builtin_ctz __ctzsi2
-#endif /* sparc64 || mips_n64 || mips_o64 || riscv */
 
 COMPILER_RT_ABI si_int __paritysi2(si_int a);
 COMPILER_RT_ABI si_int __paritydi2(di_int a);
