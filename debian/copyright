@@ -27,11 +27,11 @@ Files-Excluded:
  src/vendor/lzma-sys*/xz-*
 # Embedded binary blobs
  src/binaryen/bin/*.js
- src/vendor/dbghelp-sys*/*/*.a
  src/vendor/winapi-*/*/*.a
- src/vendor/mdbook/src/theme/jquery.js
- src/vendor/mdbook/src/theme/store.js
  src/vendor/mdbook/src/theme/playpen_editor
+# Accidental development files
+ src/vendor/shlex/*.swp
+ src/vendor/shlex/*/*.swp
 # Non-free-format documents already available in other formats
  src/doc/book/second-edition/nostarch/odt
 # unused dependencies:
