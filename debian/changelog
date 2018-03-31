@@ -1,3 +1,10 @@
+rustc (1.25.0+dfsg1-1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+  * Update to LLVM 6.0.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 31 Mar 2018 15:01:05 +0200
+
 rustc (1.24.1+dfsg1-1) unstable; urgency=medium
 
   * Upload to unstable.

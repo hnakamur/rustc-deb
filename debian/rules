@@ -42,8 +42,8 @@ RELEASE_CHANNEL := stable
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
 # Use system LLVM (comment out to use vendored LLVM)
-LLVM_VERSION = 4.0
-OLD_LLVM_VERSION = 3.9
+LLVM_VERSION = 6.0
+OLD_LLVM_VERSION = 4.0
 # Make it easier to test against a custom LLVM
 ifneq (,$(LLVM_DESTDIR))
 LLVM_LIBRARY_PATH := $(LLVM_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH):$(LLVM_DESTDIR)/usr/lib
