@@ -1,4 +1,4 @@
-rustc (1.25.0+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.25.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
 
   * New upstream release.
   * Update to LLVM 6.0.

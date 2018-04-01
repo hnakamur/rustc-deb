@@ -75,3 +75,22 @@ Forwarded: not-needed
              cargo.arg("--frozen");
          }
  
+--- a/src/bootstrap/doc.rs
++++ b/src/bootstrap/doc.rs
+@@ -141,7 +141,7 @@ pub struct CargoBook {
+ 
+ impl Step for CargoBook {
+     type Output = ();
+-    const DEFAULT: bool = true;
++    const DEFAULT: bool = false;
+ 
+     fn should_run(run: ShouldRun) -> ShouldRun {
+         let builder = run.builder;
+--- a/src/doc/index.md
++++ b/src/doc/index.md
+@@ -56,5 +56,5 @@ before this policy was put into place. That work is being tracked
+ [nomicon]: nomicon/index.html
+ [unstable-book]: unstable-book/index.html
+ [rustdoc-book]: rustdoc/index.html
+-[cargo-book]: cargo/index.html
++[cargo-book]: ../../cargo-doc/doc/index.html

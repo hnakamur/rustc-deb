@@ -155,6 +155,7 @@ Build-Profiles: <!nodoc>
 Depends: ${misc:Depends},
  libjs-jquery, libjs-highlight.js, libjs-mathjax,
  fonts-open-sans, fonts-font-awesome
+Recommends: cargo-doc
 Description: Rust systems programming language - Documentation
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
