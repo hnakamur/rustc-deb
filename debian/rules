@@ -298,6 +298,7 @@ override_dh_install-arch:
 	dh_install
 	dh_install -p$(LIBSTD_PKG) usr/lib/$(DEB_HOST_MULTIARCH)/
 	dh_install -plibstd-rust-dev usr/lib/rustlib/$(DEB_HOST_RUST_TYPE)/lib/
+	dh_install -plibstd-rust-dev usr/lib/rustlib/$(DEB_HOST_RUST_TYPE)/codegen-backends/
 
 override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 	dh_install
@@ -321,11 +322,13 @@ override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/xz2/.gitmodules
 
 override_dh_installchangelogs:
-	dh_missing --list-missing || true
 	dh_installchangelogs RELEASES.md
 
 override_dh_installdocs:
 	dh_installdocs -X.tex -X.aux -X.log -X.out -X.toc
+
+override_dh_missing:
+	dh_missing --list-missing
 
 override_dh_compress:
 	dh_compress -X.woff
