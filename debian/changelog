@@ -1,6 +1,7 @@
 rustc (1.25.0+dfsg1-2) UNRELEASED; urgency=medium
 
-  * Add D42902 from LLVM's compiler-rt to fix bugs on sparc64 and mips64.
+  * Add patches from LLVM's compiler-rt to fix bugs on sparc64 and mips64.
+    (Closes: #898982)
 
  -- Ximin Luo <infinity0@debian.org>  Fri, 18 May 2018 01:51:32 -0700
 

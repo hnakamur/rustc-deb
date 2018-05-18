@@ -16,7 +16,9 @@ u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
 
 # https://github.com/rust-lang/compiler-rt/pull/35/
+u-compiler-rt.patch
 D42902.diff
+D43146.diff
 
 # not forwarded, or forwarded but unlikely to be merged
 u-reproducible-dl-stage0.patch
