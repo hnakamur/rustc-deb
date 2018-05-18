@@ -15,6 +15,9 @@ u-ignoretest-ppc64el_02.patch
 u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
 
+# https://github.com/rust-lang/compiler-rt/pull/35/
+D42902.diff
+
 # not forwarded, or forwarded but unlikely to be merged
 u-reproducible-dl-stage0.patch
 
