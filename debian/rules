@@ -20,6 +20,9 @@ ifeq (0,$(shell dpkg --compare-versions "$$(rustc --version --verbose | sed -ne 
 RUSTFLAGS += -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
 export RUSTC_BOOTSTRAP = 1
 endif
+ifneq (,$(filter $(DEB_BUILD_ARCH), sparc64))
+export CARGO_INCREMENTAL = 0
+endif
 
 # Defines DEB_*_RUST_TYPE triples
 include debian/architecture.mk
@@ -219,6 +222,9 @@ endif
 
 TEST_LOG = debian/rustc-tests.log
 FAILURES_ALLOWED = 5
+ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
+  FAILURES_ALLOWED = 15
+endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
   FAILURES_ALLOWED = 160
 endif

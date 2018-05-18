@@ -1,3 +1,11 @@
+rustc (1.25.0+dfsg1-1) UNRELEASED; urgency=medium
+
+  * Upload to unstable.
+  * Allow up to 15 test failures on s390x.
+  * Set CARGO_INCREMENTAL=0 on sparc64.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 18 May 2018 01:07:10 -0700
+
 rustc (1.25.0+dfsg1-1~exp2) experimental; urgency=medium
 
   * Install missing codegen-backends.
