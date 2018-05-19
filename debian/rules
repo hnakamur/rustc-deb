@@ -192,8 +192,6 @@ override_dh_auto_configure: debian/config.toml
 	# Other partially-excluded vendor crates in d/copyright
 	debian/prune-checksums src/vendor/winapi-*/.cargo-checksum.json
 	debian/prune-checksums src/vendor/shlex/.cargo-checksum.json
-	# We patched this for sparc64 support
-	debian/prune-checksums src/vendor/cc/.cargo-checksum.json
 	# We don't run ./configure because we use debian/config.toml directly
 	ln -sf debian/config.toml config.toml
 
