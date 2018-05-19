@@ -52,7 +52,7 @@ Multi-Arch: allowed
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${binary:Version}),
  gcc, libc-dev, binutils (>= 2.26)
-Recommends: rust-gdb | rust-lldb
+Recommends: cargo (= 0.27.0), rust-gdb | rust-lldb
 Suggests: rust-doc, rust-src
 Replaces: libstd-rust-dev (<= 1.25.0+dfsg1-1)
 Breaks: libstd-rust-dev (<= 1.25.0+dfsg1-1)
