@@ -15,11 +15,9 @@ include /usr/share/dpkg/buildflags.mk
 # TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
 RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
-# set remap-path-prefix for reproducible builds; TODO: remove "if" after 1.20
-ifeq (0,$(shell dpkg --compare-versions "$$(rustc --version --verbose | sed -ne 's/^release: //p')" '>=' 1.19.0; echo $$?))
+# set remap-path-prefix for reproducible builds
 RUSTFLAGS += -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
 export RUSTC_BOOTSTRAP = 1
-endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), sparc64))
 export CARGO_INCREMENTAL = 0
 endif
