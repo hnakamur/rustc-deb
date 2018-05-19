@@ -1,3 +1,9 @@
+rustc (1.26.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 19 May 2018 14:14:04 -0700
+
 rustc (1.25.0+dfsg1-2) unstable; urgency=medium
 
   * Add patches for LLVM's compiler-rt to fix bugs on sparc64 and mips64.
