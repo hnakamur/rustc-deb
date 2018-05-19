@@ -21,7 +21,6 @@ Build-Depends: debhelper (>= 9),
                libllvm6.0:native,
                autotools-dev,
                cmake (>= 3.0) | cmake3,
-               gperf,
 # this is sometimes needed by rustc_llvm
                zlib1g-dev:native,
                zlib1g-dev,
@@ -55,6 +54,8 @@ Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${binary:Version
  gcc, libc-dev, binutils (>= 2.26)
 Recommends: rust-gdb | rust-lldb
 Suggests: rust-doc, rust-src
+Replaces: libstd-rust-dev (<= 1.25.0+dfsg1-1)
+Breaks: libstd-rust-dev (<= 1.25.0+dfsg1-1)
 Description: Rust systems programming language
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly

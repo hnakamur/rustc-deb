@@ -2,7 +2,6 @@
 
 # pending, or forwarded
 u-powerpcspe-support.patch
-u-gperf-3.1.patch
 u-reproducible-build.patch
 u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch

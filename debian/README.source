@@ -20,10 +20,6 @@ progressing in splitting them out.
 
 Here below the remaining ones, with the technical reasons.
 
- * binaryen from https://github.com/alexcrichton/binaryen.git
-   -> temporary until LLVM lld is available
-   - see issue upstream: TODO waiting for alexcrichton to create one
-
  * compiler-rt from https://github.com/rust-lang/compiler-rt
    -> system-wide compiler-rt fails during linkage
 

@@ -133,8 +133,7 @@ ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
 endif
 
 # Build products or non-source files in src/, that shouldn't go in rust-src
-SRC_CLEAN = src/rt/hoedown/src/html_blocks.c \
-	src/bootstrap/bootstrap.pyc \
+SRC_CLEAN = src/bootstrap/bootstrap.pyc \
 	src/etc/__pycache__/
 
 # Workaround for linux #865549
@@ -205,7 +204,7 @@ override_dh_auto_clean:
 
 # upstream bundles this in the source, but in Debian we rebuild everything yo
 generate-sources:
-	$(MAKE) -C src/rt/hoedown src/html_blocks.c
+	true
 
 override_dh_auto_build-arch: generate-sources
 	$(RUSTBUILD) build $(RUSTBUILD_FLAGS)
