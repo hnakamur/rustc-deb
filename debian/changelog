@@ -2,6 +2,7 @@ rustc (1.26.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
 
   * New upstream release.
   * Update to latest Standards-Version; no changes required.
+  * Update doc-base files. (Closes: #876831)
 
  -- Ximin Luo <infinity0@debian.org>  Sat, 19 May 2018 14:14:04 -0700
 
