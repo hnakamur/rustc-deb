@@ -17,6 +17,8 @@ Build-Depends: debhelper (>= 9),
                llvm-6.0-dev:native,
                llvm-6.0-tools:native,
                libllvm6.0,
+# TODO: remove below line on >= 1.27, some versions of 1.25 are affected by #899087
+               libllvm6.0:native,
                autotools-dev,
                cmake (>= 3.0) | cmake3,
                gperf,
@@ -91,7 +93,7 @@ Package: libstd-rust-dev
 Section: libdevel
 Architecture: any
 Multi-Arch: same
-Depends: ${misc:Depends}, libstd-rust-1.25 (= ${binary:Version})
+Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-1.25 (= ${binary:Version})
 Description: Rust standard libraries - development files
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
