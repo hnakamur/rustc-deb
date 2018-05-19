@@ -22,6 +22,7 @@ Files-Excluded:
  src/tools/rls
  src/tools/rustfmt
  src/tools/miri
+ src/tools/lld
 # Embedded C libraries
  src/vendor/backtrace-sys*/src/libbacktrace
  src/vendor/lzma-sys*/xz-*
