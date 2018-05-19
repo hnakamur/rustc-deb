@@ -1,6 +1,7 @@
 # Patches for upstream
 
 # pending, or forwarded
+u-0001-Ensure-libraries-built-in-stage0-have-unique-metadat.patch
 u-reproducible-build.patch
 u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
