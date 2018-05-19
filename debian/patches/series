@@ -1,7 +1,6 @@
 # Patches for upstream
 
 # pending, or forwarded
-u-powerpcspe-support.patch
 u-reproducible-build.patch
 u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
