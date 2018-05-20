@@ -54,8 +54,8 @@ Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${binary:Version
  gcc, libc-dev, binutils (>= 2.26)
 Recommends: cargo (= 0.27.0), rust-gdb | rust-lldb
 Suggests: rust-doc, rust-src
-Replaces: libstd-rust-dev (<= 1.25.0+dfsg1-1)
-Breaks: libstd-rust-dev (<= 1.25.0+dfsg1-1)
+Replaces: libstd-rust-dev (<< 1.25.0+dfsg1-2~~)
+Breaks: libstd-rust-dev (<< 1.25.0+dfsg1-2~~)
 Description: Rust systems programming language
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly

@@ -230,7 +230,7 @@ endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
   FAILURES_ALLOWED = 160
 endif
-FAILED_TESTS = grep FAILED $(TEST_LOG) | grep -v '^test result'
+FAILED_TESTS = grep "FAILED\|^command did not execute successfully" $(TEST_LOG) | grep -v '^test result: FAILED'
 override_dh_auto_test-arch:
 # ensure that rustc_llvm is actually dynamically linked to libLLVM
 	set -e; find build/*/stage2/lib/rustlib/* -name '*rustc_llvm*.so' | \
@@ -241,13 +241,20 @@ override_dh_auto_test-arch:
 	done
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	$(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS) | tee $(TEST_LOG)
+	{ $(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS); echo $$?; } | tee -a $(TEST_LOG)
 	test -f $(TEST_LOG)
-	echo "Summary of specific test failures:"; \
+	echo "==== Debian rustc test report ===="; \
+	echo "Specific test failures:"; \
 	$(FAILED_TESTS); \
 	num_failures=$$($(FAILED_TESTS) | wc -l); \
-	echo -n "$${num_failures} tests failed, $(FAILURES_ALLOWED) maximum allowed. "; \
-	if test "$${num_failures}" -le $(FAILURES_ALLOWED); then \
+	exit_code=$$(tail -n1 $(TEST_LOG)); \
+	echo "Summary: exit code $$exit_code, counted $$num_failures tests failed."; \
+	echo -n "$(FAILURES_ALLOWED) maximum allowed. "; \
+	if test "$$num_failures" -eq 0 -a "$$exit_code" -ne 0; then \
+	  echo "Aborting just in case, because we missed counting some test failures."; \
+	  echo "This is a bug in the Debian packaging, please file a report. "; \
+	  false; \
+	elif test "$$num_failures" -le $(FAILURES_ALLOWED); then \
 	  echo "Continuing..."; \
 	else \
 	  echo "Aborting the build."; \

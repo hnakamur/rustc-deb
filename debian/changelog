@@ -1,3 +1,11 @@
+rustc (1.26.0+dfsg1-1~exp2) UNRELEASED; urgency=medium
+
+  * Add Breaks+Replaces for older libstd-rust-dev with codegen-backends.
+    (Closes: #899180)
+  * Backport some test and packaging fixes from Ubuntu.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 20 May 2018 11:23:22 -0700
+
 rustc (1.26.0+dfsg1-1~exp1) experimental; urgency=medium
 
   * New upstream release.
