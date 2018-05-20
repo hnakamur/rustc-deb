@@ -10,14 +10,21 @@ RUST_LONG_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -re 's/([^+]+)
 LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
 # Sed expression that matches the "rustc" we have in our Build-Depends field
 SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc:native .*,/p}" debian/control
+# Version of /usr/bin/rustc
+LOCAL_RUST_VERSION := $(shell rustc --version --verbose | sed -ne 's/^release: //p')
 
 include /usr/share/dpkg/buildflags.mk
 # TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
 RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
-# set remap-path-prefix for reproducible builds
-RUSTFLAGS += -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
-export RUSTC_BOOTSTRAP = 1
+# set remap-path-prefix for reproducible builds; TODO: remove "if" after 1.20
+RUSTFLAGS_STAGE_NOT_0 = --remap-path-prefix=$(CURDIR)=/usr/src/rustc-$(RUST_LONG_VERSION)
+ifeq (0,$(shell dpkg --compare-versions "$(LOCAL_RUST_VERSION)" '>=' 1.26.0; echo $$?))
+RUSTFLAGS_STAGE_0 = $(RUSTFLAGS_STAGE_NOT_0)
+else
+RUSTFLAGS_STAGE_0 = -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
+endif
+export RUSTFLAGS_STAGE_0 RUSTFLAGS_STAGE_NOT_0
 ifneq (,$(filter $(DEB_BUILD_ARCH), sparc64))
 export CARGO_INCREMENTAL = 0
 endif
