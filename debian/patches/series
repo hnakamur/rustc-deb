@@ -15,6 +15,7 @@ u-ignoretest-ppc64el_02.patch
 u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
 u-fix-rustdoc-theme-test-without-rpath.patch
+u-fix-fp-target-warning.patch
 
 # https://github.com/rust-lang/compiler-rt/pull/35/
 u-compiler-rt.patch
