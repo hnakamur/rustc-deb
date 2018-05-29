@@ -12,6 +12,8 @@ u-ignoretest-arm64.patch
 u-ignoretest-arm64_02.patch
 u-ignoretest-ppc64el.patch
 u-ignoretest-ppc64el_02.patch
+u-ignoretest-ppc64el_03.patch
+u-ignoretest-non-x86.patch
 u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
 u-fix-rustdoc-theme-test-without-rpath.patch

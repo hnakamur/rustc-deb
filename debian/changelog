@@ -1,3 +1,9 @@
+rustc (1.26.0+dfsg1-1~exp3) UNRELEASED; urgency=medium
+
+  * Ignore some irrelevant tests on ppc64 and non-x86 platforms.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 29 May 2018 09:31:41 -0700
+
 rustc (1.26.0+dfsg1-1~exp2) experimental; urgency=medium
 
   * Add Breaks+Replaces for older libstd-rust-dev with codegen-backends.
