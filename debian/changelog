@@ -1,3 +1,9 @@
+rustc (1.26.1+dfsg1-1~exp1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 29 May 2018 23:05:09 -0700
+
 rustc (1.26.0+dfsg1-1~exp4) experimental; urgency=medium
 
   * Try alternative patch to ignore x86 stdsimd tests suggested by upstream.
