@@ -38,7 +38,6 @@ Files-Excluded:
  src/vendor/bitflags-0.7.0
  src/vendor/bufstream
  src/vendor/cargo_metadata-0.2.3
- src/vendor/clippy_lints
  src/vendor/commoncrypto
  src/vendor/commoncrypto-sys
  src/vendor/core-foundation
