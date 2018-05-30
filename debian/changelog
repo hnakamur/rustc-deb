@@ -1,3 +1,9 @@
+rustc (1.26.0+dfsg1-1~exp4) UNRELEASED; urgency=medium
+
+  * Try alternative patch to ignore x86 stdsimd tests suggested by upstream.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 29 May 2018 20:25:53 -0700
+
 rustc (1.26.0+dfsg1-1~exp3) experimental; urgency=medium
 
   * Ignore some irrelevant tests on ppc64 and non-x86 platforms.
