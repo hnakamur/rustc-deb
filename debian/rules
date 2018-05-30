@@ -223,9 +223,9 @@ ifeq (true,$(BUILD_DOCS))
 endif
 
 TEST_LOG = debian/rustc-tests.log
-FAILURES_ALLOWED = 5
+FAILURES_ALLOWED = 8
 ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
-  FAILURES_ALLOWED = 15
+  FAILURES_ALLOWED = 18
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
   FAILURES_ALLOWED = 160
