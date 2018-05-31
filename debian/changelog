@@ -1,8 +1,8 @@
-rustc (1.26.1+dfsg1-3) UNRELEASED; urgency=medium
+rustc (1.26.1+dfsg1-3) unstable; urgency=medium
 
   * Fix build-dep version range to build against myself.
 
- -- Ximin Luo <infinity0@debian.org>  Thu, 31 May 2018 09:21:07 -0700
+ -- Ximin Luo <infinity0@debian.org>  Thu, 31 May 2018 09:25:17 -0700
 
 rustc (1.26.1+dfsg1-2) unstable; urgency=medium
 
