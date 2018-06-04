@@ -224,6 +224,9 @@ endif
 
 TEST_LOG = debian/rustc-tests.log
 FAILURES_ALLOWED = 8
+ifneq (,$(filter $(DEB_BUILD_ARCH), ppc64el ppc64))
+  FAILURES_ALLOWED = 12
+endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
   FAILURES_ALLOWED = 18
 endif
