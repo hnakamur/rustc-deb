@@ -1,4 +1,4 @@
-rustc (1.26.2+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.26.2+dfsg1-1) unstable; urgency=medium
 
   * New upstream release.
   * Stop ignoring tests that now pass.
@@ -6,7 +6,7 @@ rustc (1.26.2+dfsg1-1) UNRELEASED; urgency=medium
     This allows us to see the test failures in the build logs, rather than
     hiding them.
 
- -- Ximin Luo <infinity0@debian.org>  Sat, 16 Jun 2018 12:38:18 -0700
+ -- Ximin Luo <infinity0@debian.org>  Sat, 16 Jun 2018 12:39:59 -0700
 
 rustc (1.26.1+dfsg1-3) unstable; urgency=medium
 
