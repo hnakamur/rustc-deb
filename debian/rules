@@ -168,7 +168,8 @@ debian/config.toml: debian/config.toml.in
 		-DLLVM_VERSION="$(LLVM_VERSION)" \
 		-DRUST_DESTDIR="$(RUST_DESTDIR)" \
 		"$<" > "$@"
-	! $(DOWNLOAD_BOOTSTRAP) || sed -i -e '/^rustc = /d' -e '/^cargo = /d' "$@"
+	if $(DOWNLOAD_BOOTSTRAP) || [ $(HAVE_BINARY_TARBALL) != 0 ]; \
+	  then sed -i -e '/^rustc = /d' -e '/^cargo = /d' "$@"; fi
 	# Work around armhf issue: https://github.com/rust-lang/rust/issues/45854
 	[ $(DEB_BUILD_ARCH) != armhf -a \
 	  $(DEB_BUILD_ARCH) != armel ] || sed -i -e '/^debuginfo-only-std = /d' "$@"
