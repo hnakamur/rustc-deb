@@ -4,11 +4,8 @@
 u-0001-Ensure-libraries-built-in-stage0-have-unique-metadat.patch
 u-reproducible-build.patch
 u-fixtestignores-ppc64el.patch
-u-tag-private-modules-with-doc-cfg.patch
 u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
-u-fix-rustdoc-theme-test-without-rpath.patch
-u-fix-fp-target-warning.patch
 
 # https://github.com/rust-lang/compiler-rt/pull/35/
 u-compiler-rt.patch

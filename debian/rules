@@ -17,14 +17,7 @@ include /usr/share/dpkg/buildflags.mk
 # TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
 RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
-# set remap-path-prefix for reproducible builds; TODO: remove "if" after 1.20
-RUSTFLAGS_STAGE_NOT_0 = --remap-path-prefix=$(CURDIR)=/usr/src/rustc-$(RUST_LONG_VERSION)
-ifeq (0,$(shell dpkg --compare-versions "$(LOCAL_RUST_VERSION)" '>=' 1.26.0; echo $$?))
-RUSTFLAGS_STAGE_0 = $(RUSTFLAGS_STAGE_NOT_0)
-else
-RUSTFLAGS_STAGE_0 = -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
-endif
-export RUSTFLAGS_STAGE_0 RUSTFLAGS_STAGE_NOT_0
+RUSTFLAGS += --remap-path-prefix=$(CURDIR)=/usr/src/rustc-$(RUST_LONG_VERSION)
 ifneq (,$(filter $(DEB_BUILD_ARCH), sparc64))
 export CARGO_INCREMENTAL = 0
 endif
@@ -76,8 +69,9 @@ RUSTBUILD_TEST_FLAGS =
 
 update-version:
 	oldver=$(shell $(SED_RUSTC_BUILDDEP) | sed -ne 's/.*(<= \(.*\)).*/\1/gp' | $(SED_VERSION_SHORT)); \
-	newver=$(RUST_VERSION); \
-	if [ $$oldver != $$newver ]; then debian/update-version.sh $$oldver $$newver $(CARGO_NEW); fi
+	newver=$(RUST_LONG_VERSION); \
+	if [ $$oldver != $$newver ]; then debian/update-version.sh \
+	  $$oldver $$newver $(RUST_LONG_VERSION) $(CARGO_NEW); fi
 
 # Below we detect how we're supposed to bootstrap the stage0 compiler. See
 # README.Debian for more details of the cases described below.

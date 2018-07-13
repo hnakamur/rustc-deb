@@ -86,5 +86,5 @@ Bug: https://github.com/rust-lang/rust/issues/50989
 +// ignore-powerpc64
 +// ignore-powerpc64le
  // ignore-sparc
+ // ignore-mips
  
- #![feature(asm)]
