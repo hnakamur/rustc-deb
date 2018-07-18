@@ -1,8 +1,8 @@
-rustc (1.27.1+dfsg1-1~exp2) UNRELEASED; urgency=medium
+rustc (1.27.1+dfsg1-1~exp2) experimental; urgency=medium
 
   * Fix some failing tests.
 
- -- Ximin Luo <infinity0@debian.org>  Wed, 18 Jul 2018 08:42:32 -0700
+ -- Ximin Luo <infinity0@debian.org>  Wed, 18 Jul 2018 09:06:44 -0700
 
 rustc (1.27.1+dfsg1-1~exp1) unstable; urgency=medium
 
