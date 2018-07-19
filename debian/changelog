@@ -1,9 +1,9 @@
-rustc (1.27.1+dfsg1-1~exp4) UNRELEASED; urgency=medium
+rustc (1.27.1+dfsg1-1~exp4) experimental; urgency=medium
 
   * Unconditonally prune crate checksums to avoid having to manually prune them
     whenever we patch the vendored crates.
 
- -- Ximin Luo <infinity0@debian.org>  Thu, 19 Jul 2018 14:48:44 -0700
+ -- Ximin Luo <infinity0@debian.org>  Thu, 19 Jul 2018 14:49:18 -0700
 
 rustc (1.27.1+dfsg1-1~exp3) experimental; urgency=medium
 
