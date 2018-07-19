@@ -1,8 +1,8 @@
-rustc (1.27.1+dfsg1-1~exp3) UNRELEASED; urgency=medium
+rustc (1.27.1+dfsg1-1~exp3) experimental; urgency=medium
 
   * Add patch from Fedora to fix rebuild against same version.
 
- -- Ximin Luo <infinity0@debian.org>  Thu, 19 Jul 2018 08:22:50 -0700
+ -- Ximin Luo <infinity0@debian.org>  Thu, 19 Jul 2018 08:52:03 -0700
 
 rustc (1.27.1+dfsg1-1~exp2) experimental; urgency=medium
 
