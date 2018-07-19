@@ -1,3 +1,10 @@
+rustc (1.27.1+dfsg1-1~exp4) UNRELEASED; urgency=medium
+
+  * Unconditonally prune crate checksums to avoid having to manually prune them
+    whenever we patch the vendored crates.
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 19 Jul 2018 14:48:44 -0700
+
 rustc (1.27.1+dfsg1-1~exp3) experimental; urgency=medium
 
   * Add patch from Fedora to fix rebuild against same version.

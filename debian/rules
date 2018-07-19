@@ -180,18 +180,13 @@ override_dh_auto_configure: debian/config.toml
 	# work around #842634
 	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
 	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
-	# We patched mdbook so have to rm the checksums
-	debian/prune-checksums src/vendor/mdbook/.cargo-checksum.json
+	# We patched some crates so have to rm the checksums
+	find src/vendor -name .cargo-checksum.json -execdir "$(CURDIR)/debian/prune-checksums" "{}" ";"
 	# Unfortunately upstream uses a duplicate copy of libbacktrace and wants to
 	# compile it again for rust-installer, see #43449
 	ln -rsf src/libbacktrace -t src/vendor/backtrace-sys/src/
-	debian/prune-checksums src/vendor/backtrace-sys/.cargo-checksum.json
 	# Link against system liblzma, see https://github.com/alexcrichton/xz2-rs/issues/16
 	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > src/vendor/lzma-sys/build.rs
-	debian/prune-checksums src/vendor/lzma-sys/.cargo-checksum.json
-	# Other partially-excluded vendor crates in d/copyright
-	debian/prune-checksums src/vendor/winapi-*/.cargo-checksum.json
-	debian/prune-checksums src/vendor/shlex/.cargo-checksum.json
 	# We don't run ./configure because we use debian/config.toml directly
 	ln -sf debian/config.toml config.toml
 
