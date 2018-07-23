@@ -755,7 +755,7 @@ License: MIT or Apache-2.0
 Comment: see https://github.com/chyh1990/yaml-rust
 
 Files: debian/*
-Copyright: 2013-2017 Debian Rust Maintainers <pkg-rust-maintainers@lists.alioth.debian.org>
+Copyright: 2013-2018 Debian Rust Maintainers <pkg-rust-maintainers@alioth-lists.debian.net>
 License: MIT or Apache-2.0
 
 Files: debian/icons/rust-logo-32x32-blk.png

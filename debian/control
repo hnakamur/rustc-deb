@@ -1,7 +1,7 @@
 Source: rustc
 Section: devel
 Priority: optional
-Maintainer: Rust Maintainers <pkg-rust-maintainers@lists.alioth.debian.org>
+Maintainer: Rust Maintainers <pkg-rust-maintainers@alioth-lists.debian.net>,
 Uploaders: Jordan Justen <jordan.l.justen@intel.com>,
  Luca Bruno <lucab@debian.org>,
  Sylvestre Ledru <sylvestre@debian.org>,
