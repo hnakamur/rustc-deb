@@ -6,6 +6,7 @@ rustc (1.27.1+dfsg1-1~exp5) UNRELEASED; urgency=medium
   [ Ximin Luo ]
   * Fail the build if our version contains ~exp and we are not releasing to
     experimental, this has happened by accident a few times already.
+  * Allow 36 and 44 test failures on armel and s390x respectively.
 
  -- Ximin Luo <infinity0@debian.org>  Tue, 24 Jul 2018 20:55:35 -0700
 

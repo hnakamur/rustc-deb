@@ -215,12 +215,14 @@ ifeq (true,$(BUILD_DOCS))
 endif
 
 TEST_LOG = debian/rustc-tests.log
+# This is advertised as "5 tests failed" in README.Debian because our counting
+# method is imprecise and in practise we count some failures twice.
 FAILURES_ALLOWED = 8
-ifneq (,$(filter $(DEB_BUILD_ARCH), ppc64el ppc64))
-  FAILURES_ALLOWED = 12
+ifneq (,$(filter $(DEB_BUILD_ARCH), armel))
+  FAILURES_ALLOWED = 36
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
-  FAILURES_ALLOWED = 18
+  FAILURES_ALLOWED = 44
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
   FAILURES_ALLOWED = 160
