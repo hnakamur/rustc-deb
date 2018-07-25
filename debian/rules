@@ -69,9 +69,8 @@ RUSTBUILD_TEST_FLAGS =
 
 update-version:
 	oldver=$(shell $(SED_RUSTC_BUILDDEP) | sed -ne 's/.*(<= \(.*\)).*/\1/gp' | $(SED_VERSION_SHORT)); \
-	newver=$(RUST_LONG_VERSION); \
-	if [ $$oldver != $$newver ]; then debian/update-version.sh \
-	  $$oldver $$newver $(RUST_LONG_VERSION) $(CARGO_NEW); fi
+	newver=$(RUST_VERSION); \
+	debian/update-version.sh $$oldver $$newver $(RUST_LONG_VERSION) $(CARGO_NEW)
 
 # Below we detect how we're supposed to bootstrap the stage0 compiler. See
 # README.Debian for more details of the cases described below.
