@@ -1,4 +1,4 @@
-rustc (1.27.2+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.27.2+dfsg1-1) unstable; urgency=medium
 
   [ Sylvestre Ledru ]
   * Update of the alioth ML address.
@@ -9,7 +9,7 @@ rustc (1.27.2+dfsg1-1) UNRELEASED; urgency=medium
   * Allow 36 and 44 test failures on armel and s390x respectively.
   * New upstream release.
 
- -- Ximin Luo <infinity0@debian.org>  Tue, 24 Jul 2018 21:18:45 -0700
+ -- Ximin Luo <infinity0@debian.org>  Tue, 24 Jul 2018 21:35:56 -0700
 
 rustc (1.27.1+dfsg1-1~exp4) experimental; urgency=medium
 
