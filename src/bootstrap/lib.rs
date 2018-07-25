@@ -280,7 +280,8 @@ pub struct Build {
 struct Crate {
     name: Interned<String>,
     version: String,
-    deps: Vec<Interned<String>>,
+    deps: HashSet<Interned<String>>,
+    id: String,
     path: PathBuf,
     doc_step: String,
     build_step: String,
@@ -307,16 +308,30 @@ impl Crate {
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mode {
     /// Build the standard library, placing output in the "stageN-std" directory.
-    Libstd,
+    Std,
 
     /// Build libtest, placing output in the "stageN-test" directory.
-    Libtest,
+    Test,
 
-    /// Build librustc and compiler libraries, placing output in the "stageN-rustc" directory.
-    Librustc,
+    /// Build librustc, and compiler libraries, placing output in the "stageN-rustc" directory.
+    Rustc,
 
-    /// Build some tool, placing output in the "stageN-tools" directory.
-    Tool,
+    /// Build codegen libraries, placing output in the "stageN-codegen" directory
+    Codegen,
+
+    /// Build some tools, placing output in the "stageN-tools" directory.
+    ToolStd,
+    ToolTest,
+    ToolRustc,
+}
+
+impl Mode {
+    pub fn is_tool(&self) -> bool {
+        match self {
+            Mode::ToolStd | Mode::ToolTest | Mode::ToolRustc => true,
+            _ => false
+        }
+    }
 }
 
 impl Build {
@@ -517,10 +532,11 @@ impl Build {
     /// The mode indicates what the root directory is for.
     fn stage_out(&self, compiler: Compiler, mode: Mode) -> PathBuf {
         let suffix = match mode {
-            Mode::Libstd => "-std",
-            Mode::Libtest => "-test",
-            Mode::Tool => "-tools",
-            Mode::Librustc => "-rustc",
+            Mode::Std => "-std",
+            Mode::Test => "-test",
+            Mode::Codegen => "-rustc",
+            Mode::Rustc => "-rustc",
+            Mode::ToolStd | Mode::ToolTest | Mode::ToolRustc => "-tools",
         };
         self.out.join(&*compiler.host)
                 .join(format!("stage{}{}", compiler.stage, suffix))
@@ -592,12 +608,20 @@ impl Build {
             Path::new(llvm_bindir.trim()).join(exe("FileCheck", &*target))
         } else {
             let base = self.llvm_out(self.config.build).join("build");
-            let exe = exe("FileCheck", &*target);
-            if !self.config.ninja && self.config.build.contains("msvc") {
-                base.join("Release/bin").join(exe)
+            let base = if !self.config.ninja && self.config.build.contains("msvc") {
+                if self.config.llvm_optimize {
+                    if self.config.llvm_release_debuginfo {
+                        base.join("RelWithDebInfo")
+                    } else {
+                        base.join("Release")
+                    }
+                } else {
+                    base.join("Debug")
+                }
             } else {
-                base.join("bin").join(exe)
-            }
+                base
+            };
+            base.join("bin").join(exe("FileCheck", &*target))
         }
     }
 
