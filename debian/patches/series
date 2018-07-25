@@ -33,3 +33,4 @@ d-no-web-dependencies-in-doc.patch
 
 # Work around for some porterboxes, keep this commented
 #d-host-duplicates.patch
+d-read-beta-version-from-file.patch
