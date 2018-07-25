@@ -175,6 +175,8 @@ debian/rust-src.%: debian/rust-src.%.in
 override_dh_auto_configure: debian/config.toml
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
 	! grep --color=always -i 'll...\?$(subst .,\.,$(OLD_LLVM_VERSION))' --exclude=changelog -R debian
+	# fail the build if our version contains ~exp and we are not releasing to experimental
+	v="$(DEB_VERSION)"; test "$$v" = "$${v%~exp*}" -o "$(DEB_DISTRIBUTION)" = "experimental"
 	$(PRECONFIGURE_CHECK)
 	if [ -d stage0 ]; then mkdir -p build && ln -sfT ../stage0 build/cache; fi
 	# work around #842634

@@ -1,8 +1,13 @@
 rustc (1.27.1+dfsg1-1~exp5) UNRELEASED; urgency=medium
 
+  [ Sylvestre Ledru ]
   * Update of the alioth ML address.
 
- -- Sylvestre Ledru <sylvestre@debian.org>  Mon, 23 Jul 2018 12:09:25 +0200
+  [ Ximin Luo ]
+  * Fail the build if our version contains ~exp and we are not releasing to
+    experimental, this has happened by accident a few times already.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 24 Jul 2018 20:55:35 -0700
 
 rustc (1.27.1+dfsg1-1~exp4) experimental; urgency=medium
 
