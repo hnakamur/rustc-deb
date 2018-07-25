@@ -1,3 +1,9 @@
+rustc (1.28.0~beta.14+dfsg1-1~exp1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 24 Jul 2018 23:01:46 -0700
+
 rustc (1.27.2+dfsg1-1) unstable; urgency=medium
 
   [ Sylvestre Ledru ]

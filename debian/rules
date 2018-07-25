@@ -29,17 +29,6 @@ export DEB_HOST_RUST_TYPE
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-# src/rt/miniz.c (incorrectly) triggers -Wmisleading-indentation with
-# gcc-6.  See bug #811573.
-CFLAGS += -Wno-misleading-indentation
-
-# Release type (one of beta, stable or nightly)
-RELEASE_CHANNEL := stable
-# See also ./build-preview-dsc.sh for a script that builds a beta/nightly .dsc
-# out of this packaging. Furthermore, if the build breaks after importing a new
-# upstream stable release, check the do_temporary_fixup function in that file
-# to see if we already know what fix to make.
-
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
 # Use system LLVM (comment out to use vendored LLVM)
@@ -150,11 +139,14 @@ override_dh_clean:
 	# Upstream contains a lot of these
 	dh_clean -XCargo.toml.orig
 
-debian/config.toml: debian/config.toml.in
+debian/config.toml: debian/config.toml.in debian/rules
+	u="$(DEB_VERSION_UPSTREAM)"; \
+	if [ "$$u" != "$${u%~beta.*+dfsg*}" ]; then channel="beta"; \
+	else channel="stable"; fi; echo $$channel; \
 	m4  -DDEB_BUILD_RUST_TYPE="$(DEB_BUILD_RUST_TYPE)" \
 		-DDEB_HOST_RUST_TYPE="$(DEB_HOST_RUST_TYPE)" \
 		-DDEB_TARGET_RUST_TYPE="$(DEB_TARGET_RUST_TYPE)" \
-		-DRELEASE_CHANNEL="$(RELEASE_CHANNEL)" \
+		-DRELEASE_CHANNEL="$$channel" \
 		-DBUILD_DOCS="$(BUILD_DOCS)" \
 		-DMAKE_OPTIMISATIONS="$(MAKE_OPTIMISATIONS)" \
 		-DLLVM_DESTDIR="$(LLVM_DESTDIR)" \
@@ -175,7 +167,7 @@ override_dh_auto_configure: debian/config.toml
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
 	! grep --color=always -i 'll...\?$(subst .,\.,$(OLD_LLVM_VERSION))' --exclude=changelog -R debian
 	# fail the build if our version contains ~exp and we are not releasing to experimental
-	v="$(DEB_VERSION)"; test "$$v" = "$${v%~exp*}" -o "$(DEB_DISTRIBUTION)" = "experimental"
+	v="$(DEB_VERSION)"; test "$$v" = "$${v%~exp*}" -o "$(DEB_DISTRIBUTION)" = "experimental" -o "$(DEB_DISTRIBUTION)" = "UNRELEASED"
 	$(PRECONFIGURE_CHECK)
 	if [ -d stage0 ]; then mkdir -p build && ln -sfT ../stage0 build/cache; fi
 	# work around #842634
