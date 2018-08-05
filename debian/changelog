@@ -2,6 +2,8 @@ rustc (1.28.0+dfsg1-2) UNRELEASED; urgency=medium
 
   * Switch on verbose-tests to restore the old pre-1.28 behaviour, and restore
     old failure-counting logic.
+  * Allow 50 test failures on s390x, restored failure-counting logic avoids
+    more double-counts.
 
  -- Ximin Luo <infinity0@debian.org>  Sun, 05 Aug 2018 02:12:47 -0700
 
