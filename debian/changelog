@@ -1,6 +1,8 @@
 rustc (1.28.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
 
   * New upstream release.
+  * Add patches from Fedora to fix some test failures.
+  * Ignore a failure testing specific error output, under investigation.
 
  -- Ximin Luo <infinity0@debian.org>  Sat, 04 Aug 2018 22:47:24 -0700
 

@@ -31,6 +31,7 @@ d-add-soname.patch
 d-dont-download-stage0.patch
 d-ignore-removed-submodules.patch
 d-armel-disable-kernel-helpers.patch
+d-ignore-impl-generic-mismatch-diff.patch
 d-no-web-dependencies-in-doc.patch
 
 # Work around for some porterboxes, keep this commented
