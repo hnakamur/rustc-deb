@@ -1,3 +1,9 @@
+rustc (1.28.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 04 Aug 2018 22:47:24 -0700
+
 rustc (1.28.0~beta.14+dfsg1-1~exp2) experimental; urgency=medium
 
   * Update test-failure counting logic.
