@@ -5,6 +5,8 @@ rustc (1.28.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
   * Ignore a failure testing specific error output, under investigation.
   * Allow 100 test failures on s390x, should be reducible later with LLVM 7.
   * Temporary fix for mips64el bootstrap.
+  * Be even more verbose during the build.
+  * Update to latest Standards-Version.
 
  -- Ximin Luo <infinity0@debian.org>  Sat, 04 Aug 2018 22:47:24 -0700
 
