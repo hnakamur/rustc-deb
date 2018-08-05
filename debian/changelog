@@ -1,4 +1,4 @@
-rustc (1.28.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
+rustc (1.28.0+dfsg1-1) unstable; urgency=medium
 
   * New upstream release.
   * Add patches from Fedora to fix some test failures.
@@ -8,7 +8,7 @@ rustc (1.28.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
   * Be even more verbose during the build.
   * Update to latest Standards-Version.
 
- -- Ximin Luo <infinity0@debian.org>  Sat, 04 Aug 2018 22:47:24 -0700
+ -- Ximin Luo <infinity0@debian.org>  Sat, 04 Aug 2018 23:04:41 -0700
 
 rustc (1.28.0~beta.14+dfsg1-1~exp2) experimental; urgency=medium
 
