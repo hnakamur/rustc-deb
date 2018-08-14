@@ -216,7 +216,7 @@ ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
   FAILURES_ALLOWED = 50
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
-  FAILURES_ALLOWED = 160
+  FAILURES_ALLOWED = 180
 endif
 FAILED_TESTS = grep "FAILED\|^command did not execute successfully" $(TEST_LOG) | grep -v '^test result: FAILED'
 override_dh_auto_test-arch:
