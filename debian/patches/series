@@ -37,6 +37,7 @@ d-ignore-removed-submodules.patch
 d-armel-disable-kernel-helpers.patch
 d-read-beta-version-from-file.patch
 d-ignore-impl-generic-mismatch-diff.patch
+d-i686-baseline.patch
 
 d-no-web-dependencies-in-doc.patch
 # Work around for some porterboxes, keep this commented

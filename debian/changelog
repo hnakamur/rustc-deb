@@ -1,6 +1,10 @@
 rustc (1.28.0+dfsg1-3) UNRELEASED; urgency=medium
 
+  [ Ximin Luo ]
   * More sparc64 fixes, and increase allowed-test-failures there to 180.
+
+  [ Julien Cristau ]
+  * Don't use pentium4 as i686 baseline (closes: #908561)
 
  -- Ximin Luo <infinity0@debian.org>  Mon, 13 Aug 2018 20:31:31 -0700
 
