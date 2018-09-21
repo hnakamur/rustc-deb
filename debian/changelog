@@ -1,3 +1,10 @@
+rustc (1.29.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+  * Include patch for armel atomics. (Closes: #906520)
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 20 Sep 2018 21:53:22 -0700
+
 rustc (1.28.0+dfsg1-3) unstable; urgency=medium
 
   * Team upload.

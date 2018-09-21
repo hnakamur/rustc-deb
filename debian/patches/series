@@ -6,13 +6,11 @@ u-reproducible-build.patch
 u-fixtestignores-ppc64el.patch
 u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
-u-tag-private-modules-with-doc-cfg.patch
-u-sparc64-cabi.patch
-u-rust-52760-test_loading_atoi.patch
 u-rust-52876-const-endianess.patch
 
 # https://github.com/rust-lang/compiler-rt/pull/35/
 u-compiler-rt.patch
+u-armel-atomics-nand.patch
 
 # Extra ignored tests. We now instead raise FAILURES_ALLOWED in d/rules but
 # these patches are kept in case they are useful for derivatives.
