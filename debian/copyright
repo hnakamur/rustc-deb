@@ -25,6 +25,20 @@ Files-Excluded:
  src/tools/rustfmt
  src/tools/miri
  src/tools/lld
+# Extraneous stuff from compiler-rt that's not needed by Rust
+ src/libcompiler_builtins/compiler-rt/cmake
+ src/libcompiler_builtins/compiler-rt/docs
+ src/libcompiler_builtins/compiler-rt/include
+ src/libcompiler_builtins/compiler-rt/lib/*san
+ src/libcompiler_builtins/compiler-rt/lib/fuzzer
+ src/libcompiler_builtins/compiler-rt/lib/interception
+ src/libcompiler_builtins/compiler-rt/lib/profile
+ src/libcompiler_builtins/compiler-rt/lib/sanitizer_common
+ src/libcompiler_builtins/compiler-rt/lib/scudo
+ src/libcompiler_builtins/compiler-rt/lib/xray
+ src/libcompiler_builtins/compiler-rt/test
+ src/libcompiler_builtins/compiler-rt/unittests
+ src/libcompiler_builtins/compiler-rt/www
 # Embedded C libraries
  src/vendor/backtrace-sys*/src/libbacktrace
  src/vendor/lzma-sys*/xz-*
