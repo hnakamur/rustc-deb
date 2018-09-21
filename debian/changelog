@@ -2,6 +2,7 @@ rustc (1.29.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
 
   * New upstream release.
   * Include patch for armel atomics. (Closes: #906520)
+  * Update to latest Standards-Version; no changes required.
 
  -- Ximin Luo <infinity0@debian.org>  Thu, 20 Sep 2018 21:53:22 -0700
 
