@@ -18,7 +18,10 @@ Files-Excluded:
 # cargo's own test suite (in its own package) also called cargotest.
 # NB: don't exclude rust-installer, it's needed for "install" functionality
  src/tools/cargo
+ src/tools/clippy
  src/tools/rls
+ src/tools/remote-test-client
+ src/tools/remote-test-server
  src/tools/rustfmt
  src/tools/miri
  src/tools/lld
