@@ -13,7 +13,7 @@ fn main() {
     // OpenBSD provides compiler_rt by default, use it instead of rebuilding it from source
     if target.contains("openbsd") {
         println!("cargo:rustc-link-search=native=/usr/lib");
-        println!("cargo:rustc-link-lib=static=compiler_rt");
+        println!("cargo:rustc-link-lib=compiler_rt");
         return;
     }
 
@@ -415,11 +415,14 @@ mod c {
                     "floatsitf.c",
                     "floatunditf.c",
                     "floatunsitf.c",
-                    "multc3.c",
                     "trunctfdf2.c",
                     "trunctfsf2.c",
                 ],
             );
+
+            if target_os != "windows" {
+                sources.extend(&["multc3.c"]);
+            }
         }
 
         // Remove the assembly implementations that won't compile for the target
