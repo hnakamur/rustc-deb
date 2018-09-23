@@ -8,10 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: --edition 2018
+// edition:2018
 
 #![deny(unused_extern_crates)]
-#![feature(alloc, test, libc)]
+#![feature(alloc, test, libc, crate_visibility_modifier)]
 
 extern crate alloc;
 //~^ ERROR unused extern crate
