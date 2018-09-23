@@ -88,7 +88,10 @@ def _download(path, url, probably_big, verbose, exception):
             option = "-#"
         else:
             option = "-s"
-        run(["curl", option, "--retry", "3", "-Sf", "-o", path, url],
+        run(["curl", option,
+             "-y", "30", "-Y", "10",    # timeout if speed is < 10 bytes/sec for > 30 seconds
+             "--connect-timeout", "30", # timeout if cannot connect within 30 seconds
+             "--retry", "3", "-Sf", "-o", path, url],
             verbose=verbose,
             exception=exception)
 
@@ -716,6 +719,10 @@ class RustBuild(object):
                     continue
             if module.endswith("lld"):
                 config = self.get_toml('lld')
+                if config is None or config == 'false':
+                    continue
+            if module.endswith("lldb") or module.endswith("clang"):
+                config = self.get_toml('lldb')
                 if config is None or config == 'false':
                     continue
             check = self.check_submodule(module, slow_submodules)
