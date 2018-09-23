@@ -1,4 +1,4 @@
-rustc (1.29.0+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.29.0+dfsg1-1) unstable; urgency=medium
 
   * Upload to unstable.
   * Drop d-armel-disable-kernel-helpers.patch as a necessary part of the
@@ -6,7 +6,7 @@ rustc (1.29.0+dfsg1-1) UNRELEASED; urgency=medium
   * Backport a patch to fix the rand crate on powerpc. (Closes: #909400)
   * Lower the s390x allowed failures back to 25.
 
- -- Ximin Luo <infinity0@debian.org>  Sun, 23 Sep 2018 10:13:45 -0700
+ -- Ximin Luo <infinity0@debian.org>  Sun, 23 Sep 2018 10:16:53 -0700
 
 rustc (1.29.0+dfsg1-1~exp1) experimental; urgency=medium
 
