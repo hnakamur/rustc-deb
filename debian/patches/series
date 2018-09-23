@@ -17,6 +17,7 @@ u-armel-atomics-nand.patch
 #u-ignoretest-ppc64el_02.patch
 
 # not forwarded, or forwarded but unlikely to be merged
+u-vendor-rand-fix-ppc-syscall.patch
 u-reproducible-dl-stage0.patch
 
 gcc-4.8-aarch64-ice.diff
@@ -32,7 +33,6 @@ d-rust-lldb-paths
 d-add-soname.patch
 d-dont-download-stage0.patch
 d-ignore-removed-submodules.patch
-d-armel-disable-kernel-helpers.patch
 d-read-beta-version-from-file.patch
 d-ignore-impl-generic-mismatch-diff.patch
 d-i686-baseline.patch
