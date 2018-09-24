@@ -209,8 +209,8 @@ TEST_LOG = debian/rustc-tests.log
 # This is advertised as "5 tests failed" in README.Debian because our counting
 # method is imprecise and in practise we count some failures twice.
 FAILURES_ALLOWED = 8
-ifneq (,$(filter $(DEB_BUILD_ARCH), armel))
-  FAILURES_ALLOWED = 36
+ifneq (,$(filter $(DEB_BUILD_ARCH), ppc64))
+  FAILURES_ALLOWED = 12
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
   FAILURES_ALLOWED = 25
@@ -240,7 +240,7 @@ ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	echo -n "$(FAILURES_ALLOWED) maximum allowed. "; \
 	if test "$$num_failures" -eq 0 -a "$$exit_code" -ne 0; then \
 	  echo "Aborting just in case, because we missed counting some test failures."; \
-	  echo "This is a bug in the Debian packaging, please file a report. "; \
+	  echo "This could happen if we failed to build the tests, or if the testsuite runner is buggy."; \
 	  false; \
 	elif test "$$num_failures" -le $(FAILURES_ALLOWED); then \
 	  echo "Continuing..."; \
