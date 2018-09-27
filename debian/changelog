@@ -1,8 +1,8 @@
-rustc (1.30.0~beta.7+dfsg1-1~exp3) UNRELEASED; urgency=medium
+rustc (1.30.0~beta.7+dfsg1-1~exp3) experimental; urgency=medium
 
   * Do the necessary bookkeeping for the LLVM update.
 
- -- Ximin Luo <infinity0@debian.org>  Wed, 26 Sep 2018 23:23:52 -0700
+ -- Ximin Luo <infinity0@debian.org>  Wed, 26 Sep 2018 23:29:18 -0700
 
 rustc (1.30.0~beta.7+dfsg1-1~exp2) experimental; urgency=medium
 
