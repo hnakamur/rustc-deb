@@ -1,6 +1,7 @@
 rustc (1.30.0~beta.7+dfsg1-1~exp2) UNRELEASED; urgency=medium
 
   * Tweak test failure rules: armel <= 8, ppc64 <= 12.
+  * Update to LLVM 7.
 
  -- Ximin Luo <infinity0@debian.org>  Mon, 24 Sep 2018 08:35:31 -0700
 
