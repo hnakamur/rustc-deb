@@ -132,7 +132,7 @@ Description: Rust debugger (gdb)
 Package: rust-lldb
 Architecture: all
 # When updating, also update rust-lldb.links
-Depends: lldb-6.0, ${misc:Depends}, python-lldb-6.0
+Depends: lldb-7, ${misc:Depends}, python-lldb-7
 Replaces: rustc (<< 1.1.0+dfsg1-1)
 Description: Rust debugger (lldb)
  Rust is a curly-brace, block-structured expression language.  It

@@ -31,7 +31,7 @@ Forwarded: not-needed
 -        echo "***"
 -    fi
 -fi
-+lldb=lldb-6.0
++lldb=lldb-7
  
  # Prepare commands that will be loaded before any file on the command line has been loaded
 -script_import="command script import \"$RUSTC_SYSROOT/lib/rustlib/etc/lldb_rust_formatters.py\""
