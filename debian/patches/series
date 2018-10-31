@@ -26,6 +26,7 @@ d-sparc64-dont-pack-spans.patch
 
 # Debian-specific patches, not suitable for upstream
 d-disable-cargo-vendor.patch
+d-temp-ignore-debuginfo-gdb-enum.patch
 d-rust-gdb-paths
 d-rust-lldb-paths
 d-add-soname.patch
