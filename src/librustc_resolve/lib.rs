@@ -14,6 +14,7 @@
 
 #![feature(crate_visibility_modifier)]
 #![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(rustc_diagnostic_macros)]
 #![feature(slice_sort_by_cached_key)]
 
@@ -71,11 +72,10 @@ use syntax_pos::{Span, DUMMY_SP, MultiSpan};
 use errors::{Applicability, DiagnosticBuilder, DiagnosticId};
 
 use std::cell::{Cell, RefCell};
-use std::cmp;
+use std::{cmp, fmt, iter, ptr};
 use std::collections::BTreeSet;
-use std::fmt;
-use std::iter;
 use std::mem::replace;
+use rustc_data_structures::ptr_key::PtrKey;
 use rustc_data_structures::sync::Lrc;
 
 use resolve_imports::{ImportDirective, ImportDirectiveSubclass, NameResolution, ImportResolver};
@@ -1113,6 +1113,17 @@ impl<'a> ModuleData<'a> {
     fn nearest_item_scope(&'a self) -> Module<'a> {
         if self.is_trait() { self.parent.unwrap() } else { self }
     }
+
+    fn is_ancestor_of(&self, mut other: &Self) -> bool {
+        while !ptr::eq(self, other) {
+            if let Some(parent) = other.parent {
+                other = parent;
+            } else {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 impl<'a> fmt::Debug for ModuleData<'a> {
@@ -1350,7 +1361,7 @@ pub struct Resolver<'a, 'b: 'a> {
     graph_root: Module<'a>,
 
     prelude: Option<Module<'a>>,
-    extern_prelude: FxHashSet<Name>,
+    pub extern_prelude: FxHashSet<Name>,
 
     /// n.b. This is used only for better diagnostics, not name resolution itself.
     has_self: FxHashSet<DefId>,
@@ -1408,6 +1419,7 @@ pub struct Resolver<'a, 'b: 'a> {
     block_map: NodeMap<Module<'a>>,
     module_map: FxHashMap<DefId, Module<'a>>,
     extern_module_map: FxHashMap<(DefId, bool /* MacrosOnly? */), Module<'a>>,
+    binding_parent_modules: FxHashMap<PtrKey<'a, NameBinding<'a>>, Module<'a>>,
 
     pub make_glob_map: bool,
     /// Maps imports to the names of items actually imported (this actually maps
@@ -1666,13 +1678,15 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
         let mut extern_prelude: FxHashSet<Name> =
             session.opts.externs.iter().map(|kv| Symbol::intern(kv.0)).collect();
 
-        // HACK(eddyb) this ignore the `no_{core,std}` attributes.
-        // FIXME(eddyb) warn (elsewhere) if core/std is used with `no_{core,std}`.
-        // if !attr::contains_name(&krate.attrs, "no_core") {
-        // if !attr::contains_name(&krate.attrs, "no_std") {
-        extern_prelude.insert(Symbol::intern("core"));
-        extern_prelude.insert(Symbol::intern("std"));
-        extern_prelude.insert(Symbol::intern("meta"));
+        if !attr::contains_name(&krate.attrs, "no_core") {
+            extern_prelude.insert(Symbol::intern("core"));
+            if !attr::contains_name(&krate.attrs, "no_std") {
+                extern_prelude.insert(Symbol::intern("std"));
+                if session.rust_2018() {
+                    extern_prelude.insert(Symbol::intern("meta"));
+                }
+            }
+        }
 
         let mut invocations = FxHashMap();
         invocations.insert(Mark::root(),
@@ -1722,6 +1736,7 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
             module_map,
             block_map: NodeMap(),
             extern_module_map: FxHashMap(),
+            binding_parent_modules: FxHashMap(),
 
             make_glob_map: make_glob_map == MakeGlobMap::Yes,
             glob_map: NodeMap(),
@@ -1962,9 +1977,15 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
         }
 
         if !module.no_implicit_prelude {
-            // `record_used` means that we don't try to load crates during speculative resolution
-            if record_used && ns == TypeNS && self.extern_prelude.contains(&ident.name) {
-                let crate_id = self.crate_loader.process_path_extern(ident.name, ident.span);
+            if ns == TypeNS && self.extern_prelude.contains(&ident.name) {
+                let crate_id = if record_used {
+                    self.crate_loader.process_path_extern(ident.name, ident.span)
+                } else if let Some(crate_id) =
+                        self.crate_loader.maybe_process_path_extern(ident.name, ident.span) {
+                    crate_id
+                } else {
+                    return None;
+                };
                 let crate_root = self.get_module(DefId { krate: crate_id, index: CRATE_DEF_INDEX });
                 self.populate_module_if_necessary(&crate_root);
 
@@ -4538,6 +4559,31 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
 
     fn is_accessible_from(&self, vis: ty::Visibility, module: Module<'a>) -> bool {
         vis.is_accessible_from(module.normal_ancestor_id, self)
+    }
+
+    fn set_binding_parent_module(&mut self, binding: &'a NameBinding<'a>, module: Module<'a>) {
+        if let Some(old_module) = self.binding_parent_modules.insert(PtrKey(binding), module) {
+            if !ptr::eq(module, old_module) {
+                span_bug!(binding.span, "parent module is reset for binding");
+            }
+        }
+    }
+
+    fn disambiguate_legacy_vs_modern(
+        &self,
+        legacy: &'a NameBinding<'a>,
+        modern: &'a NameBinding<'a>,
+    ) -> bool {
+        // Some non-controversial subset of ambiguities "modern macro name" vs "macro_rules"
+        // is disambiguated to mitigate regressions from macro modularization.
+        // Scoping for `macro_rules` behaves like scoping for `let` at module level, in general.
+        match (self.binding_parent_modules.get(&PtrKey(legacy)),
+               self.binding_parent_modules.get(&PtrKey(modern))) {
+            (Some(legacy), Some(modern)) =>
+                legacy.normal_ancestor_id == modern.normal_ancestor_id &&
+                modern.is_ancestor_of(legacy),
+            _ => false,
+        }
     }
 
     fn report_ambiguity_error(&self, ident: Ident, b1: &NameBinding, b2: &NameBinding) {

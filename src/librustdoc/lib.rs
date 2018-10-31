@@ -17,6 +17,7 @@
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(set_stdio)]
 #![feature(slice_sort_by_cached_key)]
 #![feature(test)]
@@ -285,7 +286,7 @@ fn opts() -> Vec<RustcOptGroup> {
                       \"light-suffix.css\"",
                      "PATH")
         }),
-        stable("edition", |o| {
+        unstable("edition", |o| {
             o.optopt("", "edition",
                      "edition to use when compiling rust code (default: 2015)",
                      "EDITION")
