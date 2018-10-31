@@ -6,6 +6,7 @@ u-reproducible-build.patch
 u-fixtestignores-ppc64el.patch
 u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
+u-mips-fixes.diff
 
 # https://github.com/rust-lang/compiler-rt/pull/35/
 u-compiler-rt.patch
