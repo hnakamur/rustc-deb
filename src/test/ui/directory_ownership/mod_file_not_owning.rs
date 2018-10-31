@@ -8,31 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// Various examples of structs whose fields are not well-formed.
+// error-pattern: mod statements in non-mod.rs files are unstable
 
-#![allow(dead_code)]
+mod mod_file_not_owning_aux1;
 
-trait Trait<'a, T> {
-    type Out;
-}
-trait Trait1<'a, 'b, T> {
-    type Out;
-}
-
-impl<'a, T> Trait<'a, T> for usize {
-    type Out = &'a T;
-}
-
-struct RefOk<'a, T:'a> {
-    field: &'a T
-}
-
-impl<'a, T> Trait<'a, T> for u32 {
-    type Out = RefOk<'a, T>;
-}
-
-impl<'a, 'b, T> Trait1<'a, 'b, T> for u32 {
-    type Out = &'a &'b T;
-}
-
-fn main() { }
+fn main() {}

@@ -28,6 +28,7 @@
 #![feature(box_syntax)]
 #![cfg_attr(stage0, feature(macro_vis_matcher))]
 #![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(macro_at_most_once_rep)]
@@ -312,7 +313,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         },
         FutureIncompatibleInfo {
             id: LintId::of(ABSOLUTE_PATHS_NOT_STARTING_WITH_CRATE),
-            reference: "issue TBD",
+            reference: "issue #53130 <https://github.com/rust-lang/rust/issues/53130>",
             edition: Some(Edition::Edition2018),
         },
         FutureIncompatibleInfo {
