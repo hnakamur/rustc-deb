@@ -210,11 +210,11 @@ TEST_LOG = debian/rustc-tests.log
 # This is advertised as "5 tests failed" in README.Debian because our counting
 # method is imprecise and in practise we count some failures twice.
 FAILURES_ALLOWED = 8
-ifneq (,$(filter $(DEB_BUILD_ARCH), ppc64))
+ifneq (,$(filter $(DEB_BUILD_ARCH), ppc64 arm64))
   FAILURES_ALLOWED = 12
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
-  FAILURES_ALLOWED = 25
+  FAILURES_ALLOWED = 20
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
   FAILURES_ALLOWED = 180
