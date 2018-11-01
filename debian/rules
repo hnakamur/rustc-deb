@@ -155,7 +155,7 @@ debian/config.toml: debian/config.toml.in debian/rules
 	if $(DOWNLOAD_BOOTSTRAP) || [ $(HAVE_BINARY_TARBALL) != 0 ]; \
 	  then sed -i -e '/^rustc = /d' -e '/^cargo = /d' "$@"; fi
 # Work around low-memory architectures: https://github.com/rust-lang/rust/issues/45854
-ifeq (,$(filter $(DEB_BUILD_ARCH), armhf armel mips mips64el mipsel))
+ifeq (,$(filter $(DEB_BUILD_ARCH), armhf armel mips mipsel))
 	sed -i -e '/^debuginfo-only-std = /d' "$@"
 endif
 
