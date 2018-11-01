@@ -1,9 +1,10 @@
-rustc (1.30.0+dfsg1-1~exp3) UNRELEASED; urgency=medium
+rustc (1.30.0+dfsg1-1) unstable; urgency=medium
 
+  * Upload to unstable. (Closes: #881845)
   * Increase FAILURES_ALLOWED for mips architectures.
   * Set debuginfo-only-std = false for mips architectures.
 
- -- Ximin Luo <infinity0@debian.org>  Thu, 01 Nov 2018 00:28:36 -0700
+ -- Ximin Luo <infinity0@debian.org>  Thu, 01 Nov 2018 10:05:52 -0700
 
 rustc (1.30.0+dfsg1-1~exp2) experimental; urgency=medium
 
