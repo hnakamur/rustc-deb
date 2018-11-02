@@ -1,3 +1,10 @@
+rustc (1.30.0+dfsg1-2) UNRELEASED; urgency=medium
+
+  * Increase FAILURES_ALLOWED for mips mipsel to 20.
+  * Set debuginfo-only-std = false for 32-bit powerpc architectures.
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 01 Nov 2018 18:33:55 -0700
+
 rustc (1.30.0+dfsg1-1) unstable; urgency=medium
 
   * Upload to unstable. (Closes: #881845)
