@@ -301,18 +301,29 @@ say we wanted to take two things that implement `Summary`:
 
 ```rust,ignore
 pub fn notify(item1: impl Summary, item2: impl Summary) {
+```
+
+This would work well if `item1` and `item2` were allowed to have diferent types
+(as long as both implement `Summary`). But what if you wanted to force both to
+have the exact same type? That is only possible if you use a trait bound:
+
+```rust,ignore
 pub fn notify<T: Summary>(item1: T, item2: T) {
 ```
 
-The version with the bound is a bit easier. In general, you should use whatever
-form makes your code the most understandable.
+#### Specify multiple traits with `+`
 
-##### Multiple trait bounds with `+`
+If `notify` needed to display formatting on `item`, as well as use the `summarize`
+method, then `item` would need to implement two different traits at the same time: 
+`Display` and `Summary`. This can be done using the `+` syntax:
 
-We can specify multiple trait bounds on a generic type using the `+` syntax.
-For example, to use display formatting on the type `T` in a function as well as
-the `summarize` method, we can use `T: Summary + Display` to say `T` can be any
-type that implements `Summary` and `Display`. This can grow quite complex!
+```rust,ignore
+pub fn notify(item: impl Summary + Display) {
+```
+ This syntax is also valid with trait bounds on generic types:
+ ```rust,ignore
+pub fn notify<T: Summary + Display>(item: T) {
+```
 
 #### `where` clauses for clearer code
 
@@ -369,7 +380,7 @@ needing to write out a really long type.
 This only works if you have a single type that you're returning, however.
 For example, this would *not* work:
 
-```rust,ignore
+```rust,ignore,does_not_compile
 fn returns_summarizable(switch: bool) -> impl Summary {
     if switch {
         NewsArticle {

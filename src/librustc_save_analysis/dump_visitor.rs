@@ -25,10 +25,12 @@
 
 use rustc::hir::def::Def as HirDef;
 use rustc::hir::def_id::DefId;
+use rustc::session::config::Input;
 use rustc::ty::{self, TyCtxt};
 use rustc_data_structures::fx::FxHashSet;
 
 use std::path::Path;
+use std::env;
 
 use syntax::ast::{self, Attribute, NodeId, PatKind, CRATE_NODE_ID};
 use syntax::parse::token;
@@ -49,8 +51,8 @@ use json_dumper::{Access, DumpOutput, JsonDumper};
 use span_utils::SpanUtils;
 use sig;
 
-use rls_data::{CratePreludeData, Def, DefKind, GlobalCrateId, Import, ImportKind, Ref, RefKind,
-               Relation, RelationKind, SpanData};
+use rls_data::{CompilationOptions, CratePreludeData, Def, DefKind, GlobalCrateId, Import,
+               ImportKind, Ref, RefKind, Relation, RelationKind, SpanData};
 
 macro_rules! down_cast_data {
     ($id:ident, $kind:ident, $sp:expr) => {
@@ -105,10 +107,10 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
             tcx: save_ctxt.tcx,
             save_ctxt,
             dumper,
-            span: span_utils.clone(),
+            span: span_utils,
             cur_scope: CRATE_NODE_ID,
             // mac_defs: FxHashSet::default(),
-            macro_calls: FxHashSet(),
+            macro_calls: FxHashSet::default(),
         }
     }
 
@@ -161,12 +163,60 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                     .to_fingerprint()
                     .as_value(),
             },
-            crate_root: crate_root.unwrap_or("<no source>".to_owned()),
+            crate_root: crate_root.unwrap_or_else(|| "<no source>".to_owned()),
             external_crates: self.save_ctxt.get_external_crates(),
             span: self.span_from_span(krate.span),
         };
 
         self.dumper.crate_prelude(data);
+    }
+
+    pub fn dump_compilation_options(&mut self, input: &Input, crate_name: &str) {
+        // Apply possible `remap-path-prefix` remapping to the input source file
+        // (and don't include remapping args anymore)
+        let (program, arguments) = {
+            let remap_arg_indices = {
+                let mut indices = FxHashSet::default();
+                // Args are guaranteed to be valid UTF-8 (checked early)
+                for (i, e) in env::args().enumerate() {
+                    if e.starts_with("--remap-path-prefix=") {
+                        indices.insert(i);
+                    } else if e == "--remap-path-prefix" {
+                        indices.insert(i);
+                        indices.insert(i + 1);
+                    }
+                }
+                indices
+            };
+
+            let mut args = env::args()
+                .enumerate()
+                .filter(|(i, _)| !remap_arg_indices.contains(i))
+                .map(|(_, arg)| {
+                    match input {
+                        Input::File(ref path) if path == Path::new(&arg) => {
+                            let mapped = &self.tcx.sess.local_crate_source_file;
+                            mapped
+                                .as_ref()
+                                .unwrap()
+                                .to_string_lossy()
+                                .into()
+                        },
+                        _ => arg,
+                    }
+                });
+
+            (args.next().unwrap(), args.collect())
+        };
+
+        let data = CompilationOptions {
+            directory: self.tcx.sess.working_dir.0.clone(),
+            program,
+            arguments,
+            output: self.save_ctxt.compilation_output(crate_name),
+        };
+
+        self.dumper.compilation_opts(data);
     }
 
     // Return all non-empty prefixes of a path.
@@ -600,7 +650,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                         .iter()
                         .enumerate()
                         .map(|(i, f)| {
-                            f.ident.map(|i| i.to_string()).unwrap_or(i.to_string())
+                            f.ident.map(|i| i.to_string()).unwrap_or_else(|| i.to_string())
                         })
                         .collect::<Vec<_>>()
                         .join(", ");
@@ -980,7 +1030,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                         .tables
                         .node_id_to_type_opt(hir_id)
                         .map(|t| t.to_string())
-                        .unwrap_or(String::new());
+                        .unwrap_or_default();
                     value.push_str(": ");
                     value.push_str(&typ);
 
@@ -1687,7 +1737,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
         let value = l.init
             .as_ref()
             .map(|i| self.span.snippet(i.span))
-            .unwrap_or(String::new());
+            .unwrap_or_default();
         self.process_var_decl(&l.pat, value);
 
         // Just walk the initialiser and type (don't want to walk the pattern again).

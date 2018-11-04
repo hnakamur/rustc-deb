@@ -224,6 +224,7 @@ impl<T: ::std::ops::Deref<Target=str>> PartialEq<T> for Symbol {
 }
 
 // The &'static strs in this type actually point into the arena
+#[derive(Default)]
 pub struct Interner {
     arena: DroplessArena,
     names: FxHashMap<&'static str, Symbol>,
@@ -232,17 +233,8 @@ pub struct Interner {
 }
 
 impl Interner {
-    pub fn new() -> Self {
-        Interner {
-            arena: DroplessArena::new(),
-            names: Default::default(),
-            strings: Default::default(),
-            gensyms: Default::default(),
-        }
-    }
-
     fn prefill(init: &[&str]) -> Self {
-        let mut this = Interner::new();
+        let mut this = Interner::default();
         for &string in init {
             if string == "" {
                 // We can't allocate empty strings in the arena, so handle this here
@@ -414,26 +406,25 @@ declare_keywords! {
     (50, Yield,              "yield")
 
     // Edition-specific keywords reserved for future use.
-    (51, Async,              "async") // >= 2018 Edition Only
-    (52, Try,                "try") // >= 2018 Edition Only
+    (51, Async,              "async") // >= 2018 Edition only
+    (52, Dyn,                "dyn") // >= 2018 Edition only
+    (53, Try,                "try") // >= 2018 Edition only
 
     // Special lifetime names
-    (53, UnderscoreLifetime, "'_")
-    (54, StaticLifetime,     "'static")
+    (54, UnderscoreLifetime, "'_")
+    (55, StaticLifetime,     "'static")
 
     // Weak keywords, have special meaning only in specific contexts.
-    (55, Auto,               "auto")
-    (56, Catch,              "catch")
-    (57, Default,            "default")
-    (58, Dyn,                "dyn")
+    (56, Auto,               "auto")
+    (57, Catch,              "catch")
+    (58, Default,            "default")
     (59, Union,              "union")
     (60, Existential,        "existential")
 }
 
 impl Symbol {
     fn is_unused_keyword_2018(self) -> bool {
-        self >= keywords::Async.name() &&
-        self <= keywords::Try.name()
+        self >= keywords::Async.name() && self <= keywords::Try.name()
     }
 }
 
@@ -698,7 +689,7 @@ mod tests {
 
     #[test]
     fn interner_tests() {
-        let mut i: Interner = Interner::new();
+        let mut i: Interner = Interner::default();
         // first one is zero:
         assert_eq!(i.intern("dog"), Symbol(0));
         // re-use gets the same entry:

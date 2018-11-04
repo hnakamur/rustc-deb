@@ -63,6 +63,8 @@
         - [Match expressions](expressions/match-expr.md)
         - [Return expressions](expressions/return-expr.md)
 
+- [Patterns](patterns.md)
+
 - [Type system](type-system.md)
     - [Types](types.md)
     - [Dynamically Sized Types](dynamically-sized-types.md)
@@ -88,6 +90,8 @@
     - [Unsafe blocks](unsafe-blocks.md)
     - [Behavior considered undefined](behavior-considered-undefined.md)
     - [Behavior not considered unsafe](behavior-not-considered-unsafe.md)
+
+- [Constant Evalutation](const_eval.md)
 
 [Appendix: Influences](influences.md)
 

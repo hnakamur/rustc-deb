@@ -436,7 +436,9 @@ pub fn walk_lifetime<'v, V: Visitor<'v>>(visitor: &mut V, lifetime: &'v Lifetime
             visitor.visit_ident(ident);
         }
         LifetimeName::Param(ParamName::Fresh(_)) |
+        LifetimeName::Param(ParamName::Error) |
         LifetimeName::Static |
+        LifetimeName::Error |
         LifetimeName::Implicit |
         LifetimeName::Underscore => {}
     }
@@ -603,6 +605,10 @@ pub fn walk_ty<'v, V: Visitor<'v>>(visitor: &mut V, typ: &'v Ty) {
         TyKind::Path(ref qpath) => {
             visitor.visit_qpath(qpath, typ.hir_id, typ.span);
         }
+        TyKind::Def(item_id, ref lifetimes) => {
+            visitor.visit_nested_item(item_id);
+            walk_list!(visitor, visit_generic_arg, lifetimes);
+        }
         TyKind::Array(ref ty, ref length) => {
             visitor.visit_ty(ty);
             visitor.visit_anon_const(length)
@@ -743,7 +749,7 @@ pub fn walk_generic_param<'v, V: Visitor<'v>>(visitor: &mut V, param: &'v Generi
     walk_list!(visitor, visit_attribute, &param.attrs);
     match param.name {
         ParamName::Plain(ident) => visitor.visit_ident(ident),
-        ParamName::Fresh(_) => {}
+        ParamName::Error | ParamName::Fresh(_) => {}
     }
     match param.kind {
         GenericParamKind::Lifetime { .. } => {}

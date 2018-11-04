@@ -379,7 +379,6 @@ impl<'a> Builder<'a> {
                 test::Ui,
                 test::RunPass,
                 test::CompileFail,
-                test::ParseFail,
                 test::RunFail,
                 test::RunPassValgrind,
                 test::MirOpt,
@@ -998,10 +997,6 @@ impl<'a> Builder<'a> {
 
         if self.config.backtrace_on_ice {
             cargo.env("RUSTC_BACKTRACE_ON_ICE", "1");
-        }
-
-        if self.config.rust_verify_llvm_ir {
-            cargo.env("RUSTC_VERIFY_LLVM_IR", "1");
         }
 
         cargo.env("RUSTC_VERBOSE", self.verbosity.to_string());

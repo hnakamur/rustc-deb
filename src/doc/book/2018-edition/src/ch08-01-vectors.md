@@ -136,7 +136,7 @@ element for. As an example, let’s see what a program will do if it has a vecto
 that holds five elements and then tries to access an element at index 100, as
 shown in Listing 8-7:
 
-```rust,should_panic
+```rust,should_panic,panics
 let v = vec![1, 2, 3, 4, 5];
 
 let does_not_exist = &v[100];
@@ -169,12 +169,14 @@ scope. That rule applies in Listing 8-8, where we hold an immutable reference to
 the first element in a vector and try to add an element to the end, which won’t
 work:
 
-```rust,ignore
+```rust,ignore,does_not_compile
 let mut v = vec![1, 2, 3, 4, 5];
 
 let first = &v[0];
 
 v.push(6);
+
+println!("The first element is: {}", first);
 ```
 
 <span class="caption">Listing 8-8: Attempting to add an element to a vector
@@ -184,16 +186,16 @@ Compiling this code will result in this error:
 
 ```text
 error[E0502]: cannot borrow `v` as mutable because it is also borrowed as immutable
- -->
-  |
-4 |     let first = &v[0];
-  |                  - immutable borrow occurs here
-5 |
-6 |     v.push(6);
-  |     ^ mutable borrow occurs here
-7 |
-8 | }
-  | - immutable borrow ends here
+  --> src/main.rs:10:5
+   |
+8  |     let first = &v[0];
+   |                  - immutable borrow occurs here
+9  |
+10 |     v.push(6);
+   |     ^^^^^^^^^ mutable borrow occurs here
+11 |
+12 |     println!("The first element is: {}", first);
+   |                                          ----- borrow later used here
 ```
 
 The code in Listing 8-8 might look like it should work: why should a reference

@@ -57,7 +57,7 @@ impl<'a, 'gcx, 'tcx> UnsafetyChecker<'a, 'tcx> {
             },
             tcx,
             param_env,
-            used_unsafe: FxHashSet(),
+            used_unsafe: Default::default(),
             inherited_blocks: vec![],
         }
     }
@@ -108,7 +108,7 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafetyChecker<'a, 'tcx> {
         self.source_info = statement.source_info;
         match statement.kind {
             StatementKind::Assign(..) |
-            StatementKind::ReadForMatch(..) |
+            StatementKind::FakeRead(..) |
             StatementKind::SetDiscriminant { .. } |
             StatementKind::StorageLive(..) |
             StatementKind::StorageDead(..) |

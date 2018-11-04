@@ -15,7 +15,7 @@ order they are written.
 
 Alternatively there can be exactly two expressions inside the brackets,
 separated by a semi-colon. The expression after the `;` must be a have type
-`usize` and be a [constant expression](expressions.html#constant-expressions),
+`usize` and be a [constant expression],
 such as a [literal](tokens.html#literals) or a [constant
 item](items/constant-items.html). `[a; b]` creates an array containing `b`
 copies of the value of `a`. If the expression after the semi-colon has a value
@@ -77,4 +77,4 @@ by implementing the [Index] and [IndexMut] traits.
 [memory location]: expressions.html#place-expressions-and-value-expressions
 [Index]: ../std/ops/trait.Index.html
 [IndexMut]: ../std/ops/trait.IndexMut.html
-[constant expression]: expressions.html#constant-expressions
+[constant expression]: const_eval.html#constant-expressions
