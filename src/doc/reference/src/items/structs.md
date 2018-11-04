@@ -25,7 +25,7 @@
 >
 > _StructField_ :\
 > &nbsp;&nbsp; [_OuterAttribute_]<sup>\*</sup>\
-> &nbsp;&nbsp; [_Visibility_]
+> &nbsp;&nbsp; [_Visibility_]<sup>?</sup>\
 > &nbsp;&nbsp; [IDENTIFIER] `:` [_Type_]
 >
 > _TupleFields_ :\
@@ -33,7 +33,7 @@
 >
 > _TupleField_ :\
 > &nbsp;&nbsp; [_OuterAttribute_]<sup>\*</sup>\
-> &nbsp;&nbsp; [_Visibility_]
+> &nbsp;&nbsp; [_Visibility_]<sup>?</sup>\
 > &nbsp;&nbsp; [_Type_]
 
 A _struct_ is a nominal [struct type] defined with the keyword `struct`.
@@ -78,7 +78,7 @@ let c = [Cookie, Cookie {}, Cookie, Cookie {}];
 The precise memory layout of a struct is not specified. One can specify a
 particular layout using the [`repr` attribute].
 
-[`repr` attribute]: attributes.html#ffi-attributes
+[`repr` attribute]: type-layout.html#representations
 
 [_OuterAttribute_]: attributes.html
 [IDENTIFIER]: identifiers.html

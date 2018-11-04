@@ -23,7 +23,7 @@ program to reference data other than the data it’s intended to reference.
 Consider the program in Listing 10-17, which has an outer scope and an inner
 scope.
 
-```rust,ignore
+```rust,ignore,does_not_compile
 {
     let r;
 
@@ -80,7 +80,7 @@ The Rust compiler has a *borrow checker* that compares scopes to determine
 whether all borrows are valid. Listing 10-18 shows the same code as Listing
 10-17 but with annotations showing the lifetimes of the variables.
 
-```rust,ignore
+```rust,ignore,does_not_compile
 {
     let r;                // ---------+-- 'a
                           //          |
@@ -165,7 +165,7 @@ won’t compile.
 
 <span class="filename">Filename: src/main.rs</span>
 
-```rust,ignore
+```rust,ignore,does_not_compile
 fn longest(x: &str, y: &str) -> &str {
     if x.len() > y.len() {
         x
@@ -345,7 +345,7 @@ compile.
 
 <span class="filename">Filename: src/main.rs</span>
 
-```rust,ignore
+```rust,ignore,does_not_compile
 fn main() {
     let string1 = String::from("long string is long");
     let result;
@@ -423,7 +423,7 @@ this attempted implementation of the `longest` function that won’t compile:
 
 <span class="filename">Filename: src/main.rs</span>
 
-```rust,ignore
+```rust,ignore,does_not_compile
 fn longest<'a>(x: &str, y: &str) -> &'a str {
     let result = String::from("really long string");
     result.as_str()
@@ -575,6 +575,8 @@ there aren’t explicit annotations. The first rule applies to input lifetimes,
 and the second and third rules apply to output lifetimes. If the compiler gets
 to the end of the three rules and there are still references for which it can’t
 figure out lifetimes, the compiler will stop with an error.
+
+These rules apply to `fn` definitions, as well as `impl` blocks.
 
 The first rule is that each parameter that is a reference gets its own lifetime
 parameter. In other words, a function with one parameter gets one lifetime
