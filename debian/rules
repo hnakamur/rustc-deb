@@ -154,8 +154,8 @@ debian/config.toml: debian/config.toml.in debian/rules
 		"$<" > "$@"
 	if $(DOWNLOAD_BOOTSTRAP) || [ $(HAVE_BINARY_TARBALL) != 0 ]; \
 	  then sed -i -e '/^rustc = /d' -e '/^cargo = /d' "$@"; fi
-# Work around low-memory architectures: https://github.com/rust-lang/rust/issues/45854
-ifeq (,$(filter $(DEB_BUILD_ARCH), armhf armel mips mipsel))
+# Work around low-memory (32-bit) architectures: https://github.com/rust-lang/rust/issues/45854
+ifneq (,$(filter $(DEB_BUILD_ARCH), armhf armel mips mipsel powerpc powerpcspe))
 	sed -i -e '/^debuginfo-only-std = /d' "$@"
 endif
 
@@ -211,10 +211,10 @@ TEST_LOG = debian/rustc-tests.log
 # This is advertised as "5 tests failed" in README.Debian because our counting
 # method is imprecise and in practise we count some failures twice.
 FAILURES_ALLOWED = 8
-ifneq (,$(filter $(DEB_BUILD_ARCH), ppc64 arm64 mips mipsel mips64el))
+ifneq (,$(filter $(DEB_BUILD_ARCH), ppc64 arm64 mips64el))
   FAILURES_ALLOWED = 12
 endif
-ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
+ifneq (,$(filter $(DEB_BUILD_ARCH), mips mipsel s390x))
   FAILURES_ALLOWED = 20
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
