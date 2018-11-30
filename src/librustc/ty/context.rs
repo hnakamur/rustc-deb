@@ -17,7 +17,7 @@ use session::Session;
 use session::config::{BorrowckMode, OutputFilenames};
 use session::config::CrateType;
 use middle;
-use hir::{TraitCandidate, HirId, ItemLocalId, Node};
+use hir::{TraitCandidate, HirId, ItemKind, ItemLocalId, Node};
 use hir::def::{Def, Export};
 use hir::def_id::{CrateNum, DefId, DefIndex, LOCAL_CRATE};
 use hir::map as hir_map;
@@ -1484,15 +1484,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     /// done with either: `-Ztwo-phase-borrows`, `#![feature(nll)]`,
     /// or by opting into an edition after 2015.
     pub fn two_phase_borrows(self) -> bool {
-        if self.features().nll || self.sess.opts.debugging_opts.two_phase_borrows {
-            return true;
-        }
-
-        match self.sess.edition() {
-            Edition::Edition2015 => false,
-            Edition::Edition2018 => true,
-            _ => true,
-        }
+        self.sess.rust_2018() || self.features().nll ||
+        self.sess.opts.debugging_opts.two_phase_borrows
     }
 
     /// What mode(s) of borrowck should we run? AST? MIR? both?
@@ -1604,6 +1597,20 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         &self,
         scope_def_id: DefId,
     ) -> Option<Ty<'tcx>> {
+        // HACK: `type_of_def_id()` will fail on these (#55796), so return None
+        let node_id = self.hir.as_local_node_id(scope_def_id).unwrap();
+        match self.hir.get(node_id) {
+            Node::Item(item) => {
+                match item.node {
+                    ItemKind::Fn(..) => { /* type_of_def_id() will work */ }
+                    _ => {
+                        return None;
+                    }
+                }
+            }
+            _ => { /* type_of_def_id() will work or panic */ }
+        }
+
         let ret_ty = self.type_of(scope_def_id);
         match ret_ty.sty {
             ty::FnDef(_, _) => {

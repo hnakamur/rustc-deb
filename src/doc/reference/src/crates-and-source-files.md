@@ -14,7 +14,7 @@
 
 > Note: Although Rust, like any other language, can be implemented by an
 > interpreter as well as a compiler, the only existing implementation is a
-> compiler,and the language has always been designed to be compiled. For these
+> compiler, and the language has always been designed to be compiled. For these
 > reasons, this section assumes a compiler.
 
 Rust's semantics obey a *phase distinction* between compile-time and
@@ -42,10 +42,10 @@ extension `.rs`.
 
 A Rust source file describes a module, the name and location of which &mdash;
 in the module tree of the current crate &mdash; are defined from outside the
-source file: either by an explicit `mod_item` in a referencing source file, or
-by the name of the crate itself. Every source file is a module, but not every
-module needs its own source file: [module definitions][module] can be nested
-within one file.
+source file: either by an explicit [`mod` item][module] in a referencing
+source file, or by the name of the crate itself. Every source file is a
+module, but not every module needs its own source file: [module
+definitions][module] can be nested within one file.
 
 Each source file contains a sequence of zero or more `item` definitions, and
 may optionally begin with any number of [attributes]
@@ -87,7 +87,7 @@ fn main() {
 
 All crates have a *prelude* that automatically inserts names from a specific
 module, the *prelude module*, into scope of each [module] and an [`extern
-crate]` into the crate root module. By default, the *standard prelude* is used.
+crate`] into the crate root module. By default, the *standard prelude* is used.
 The linked crate is [`std`] and the prelude module is [`std::prelude::v1`].
 
 The prelude can be changed to the *core prelude* by using the `no_std`
@@ -140,6 +140,7 @@ type must  be one of the following:
 [`Termination`]: ../std/process/trait.Termination.html
 [`core`]: ../core/index.html
 [`core::prelude::v1`]: ../core/prelude/index.html
+[`extern crate`]: items/extern-crates.html
 [`std`]: ../std/index.html
 [`std::prelude::v1`]: ../std/prelude/index.html
 [`use` declaration]: items/use-declarations.html
