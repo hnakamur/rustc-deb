@@ -117,6 +117,7 @@ Files-Excluded:
  src/vendor/rls-rustc
  src/vendor/rls-vfs
  src/vendor/rustc-ap-arena
+ src/vendor/rustc-ap-graphviz
  src/vendor/rustc-ap-rustc_cratesio_shim
  src/vendor/rustc-ap-rustc_data_structures
  src/vendor/rustc-ap-rustc_errors
@@ -132,6 +133,7 @@ Files-Excluded:
  src/vendor/serde_ignored
  src/vendor/shell-escape
  src/vendor/simd
+ src/vendor/syn
  src/vendor/term
  src/vendor/unicode-segmentation
  src/vendor/url_serde
