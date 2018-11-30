@@ -44,13 +44,16 @@ Attributes may be applied to many things in the language:
 
 * All [item declarations] accept outer attributes while [external blocks],
   [functions], [implementations], and [modules] accept inner attributes.
-* [Statements] accept outer attributes.
+* Most [statements] accept outer attributes (see [Expression Attributes] for
+  limitations on expression statements).
 * [Block expressions] accept outer and inner attributes, but only when they are
   the outer expression of an [expression statement] or the final expression of
   another block expression.
 * [Enum] variants and [struct] and [union] fields accept outer attributes.
 * [Match expression arms][match expressions] accept outer attributes.
 * [Generic lifetime or type parameter][generics] accept outer attributes.
+* Expressions accept outer attributes in limited situations, see [Expression
+  Attributes] for details.
 
 Some examples of attributes:
 
@@ -170,8 +173,7 @@ which can be used to control type layout.
 - `macro_use` on an `extern crate` — load macros from this crate.  An optional
   list of names `#[macro_use(foo, bar)]` restricts the import to just those
   macros named.  The `extern crate` must appear at the crate root, not inside
-  `mod`, which ensures proper function of the [`$crate` macro
-  variable](../book/first-edition/macros.html#the-variable-crate).
+  `mod`, which ensures proper function of the `$crate` macro variable.
 
 - `macro_reexport` on an `extern crate` — re-export the named macros.
 
@@ -179,10 +181,6 @@ which can be used to control type layout.
 
 - `no_link` on an `extern crate` — even if we load this crate for macros, don't
   link it into the output.
-
-See the [macros section of the first edition of the
-book](../book/first-edition/macros.html#scoping-and-macro-importexport) for more
-information on `macro_rules` macro scope.
 
 - `proc_macro` - Defines a [function-like macro].
 
@@ -369,7 +367,7 @@ certain tools.
 
 Currently `clippy` is the only available lint tool.
 
-They only get checked when the associated tool is active, so if you try to use an `allow` attribute for a nonexistant tool lint, the compiler will not warn about the nonexistant lint until you use the tool.
+They only get checked when the associated tool is active, so if you try to use an `allow` attribute for a nonexistent tool lint, the compiler will not warn about the nonexistent lint until you use the tool.
 
 Otherwise, they work just like regular lint attributes:
 
@@ -600,3 +598,4 @@ You can implement `derive` for your own traits through [procedural macros].
 [`Termination`]: ../std/process/trait.Termination.html
 [where clause]: items/where-clauses.html
 [trait or lifetime bounds]: trait-bounds.html
+[Expression Attributes]: expressions.html#expression-attributes

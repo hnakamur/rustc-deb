@@ -4,12 +4,19 @@
 > _Trait_ :\
 > &nbsp;&nbsp; `unsafe`<sup>?</sup> `trait` [IDENTIFIER]&nbsp;
 >              [_Generics_]<sup>?</sup>
+>              ( `:` [_TypeParamBounds_]<sup>?</sup> )<sup>?</sup>
 >              [_WhereClause_]<sup>?</sup> `{`\
 > &nbsp;&nbsp;&nbsp;&nbsp; _TraitItem_<sup>\*</sup>\
 > &nbsp;&nbsp; `}`
 >
 > _TraitItem_ :\
-> &nbsp;&nbsp; [_OuterAttribute_]<sup>\*</sup> (_TraitFunc_ | _TraitMethod_ | _TraitConst_ | _TraitType_)
+> &nbsp;&nbsp; [_OuterAttribute_]<sup>\*</sup> (\
+> &nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; _TraitFunc_\
+> &nbsp;&nbsp; &nbsp;&nbsp; | _TraitMethod_\
+> &nbsp;&nbsp; &nbsp;&nbsp; | _TraitConst_\
+> &nbsp;&nbsp; &nbsp;&nbsp; | _TraitType_\
+> &nbsp;&nbsp; &nbsp;&nbsp; | [_MacroInvocationSemi_]\
+> &nbsp;&nbsp; )
 >
 > _TraitFunc_ :\
 > &nbsp;&nbsp; &nbsp;&nbsp; _TraitFunctionDecl_ ( `;` | [_BlockExpression_] )
@@ -34,10 +41,10 @@
 > &nbsp;&nbsp; ( [_Pattern_] `:` )<sup>?</sup> [_Type_]
 >
 > _TraitConst_ :\
-> &nbsp;&nbsp; `const` [IDENTIFIER] ( ( `:` [_Type_] ) ( `=` [_Expression_] )<sup>?</sup> )<sup>?</sup> `;`
+> &nbsp;&nbsp; `const` [IDENTIFIER] `:` [_Type_]&nbsp;( `=` [_Expression_] )<sup>?</sup> `;`
 >
 > _TraitType_ :\
-> &nbsp;&nbsp; `type` [IDENTIFIER] ( `:` [_TypeParamBounds_] )<sup>?</sup> `;`
+> &nbsp;&nbsp; `type` [IDENTIFIER] ( `:` [_TypeParamBounds_]<sup>?</sup> )<sup>?</sup> `;`
 
 A _trait_ describes an abstract interface that types can implement. This
 interface consists of [associated items], which come in three varieties:
@@ -205,14 +212,15 @@ trait T {
 [_FunctionQualifiers_]: items/functions.html
 [_FunctionReturnType_]: items/functions.html
 [_Generics_]: items/generics.html
+[_MacroInvocationSemi_]: macros.html#macro-invocation
 [_OuterAttribute_]: attributes.html
 [_Pattern_]: patterns.html
 [_SelfParam_]: items/associated-items.html#methods
 [_TypeParamBounds_]: trait-bounds.html
-[_Type_]: types.html
+[_Type_]: types.html#type-expressions
 [_WhereClause_]: items/generics.html#where-clauses
 [bounds]: trait-bounds.html
-[trait object]: types.html#trait-objects
+[trait object]: types/trait-object.html
 [explicit]: expressions/operator-expr.html#type-cast-expressions
 [RFC 255]: https://github.com/rust-lang/rfcs/blob/master/text/0255-object-safety.md
 [associated items]: items/associated-items.html

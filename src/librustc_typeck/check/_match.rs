@@ -626,9 +626,9 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
         let discrim_diverges = self.diverges.get();
         self.diverges.set(Diverges::Maybe);
 
-        // Typecheck the patterns first, so that we get types for all the
-        // bindings.
-        let all_arm_pats_diverge = arms.iter().map(|arm| {
+        // rust-lang/rust#55810: Typecheck patterns first (via eager
+        // collection into `Vec`), so we get types for all bindings.
+        let all_arm_pats_diverge: Vec<_> = arms.iter().map(|arm| {
             let mut all_pats_diverge = Diverges::WarnedAlways;
             for p in &arm.pats {
                 self.diverges.set(Diverges::Maybe);
@@ -644,7 +644,7 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
                 Diverges::Maybe => Diverges::Maybe,
                 Diverges::Always | Diverges::WarnedAlways => Diverges::WarnedAlways,
             }
-        });
+        }).collect();
 
         // Now typecheck the blocks.
         //
@@ -814,11 +814,6 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
             report_unexpected_def(def);
             return self.tcx.types.err;
         }
-        // Replace constructor type with constructed type for tuple struct patterns.
-        let pat_ty = pat_ty.fn_sig(tcx).output();
-        let pat_ty = pat_ty.no_late_bound_regions().expect("expected fn type");
-
-        self.demand_eqtype(pat.span, expected, pat_ty);
 
         let variant = match def {
             Def::Err => {
@@ -836,6 +831,13 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
             }
             _ => bug!("unexpected pattern definition: {:?}", def)
         };
+
+        // Replace constructor type with constructed type for tuple struct patterns.
+        let pat_ty = pat_ty.fn_sig(tcx).output();
+        let pat_ty = pat_ty.no_late_bound_regions().expect("expected fn type");
+
+        self.demand_eqtype(pat.span, expected, pat_ty);
+
         // Type check subpatterns.
         if subpats.len() == variant.fields.len() ||
                 subpats.len() < variant.fields.len() && ddpos.is_some() {
