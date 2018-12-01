@@ -36,6 +36,7 @@ d-read-beta-version-from-file.patch
 d-ignore-impl-generic-mismatch-diff.patch
 d-ignore-avx-44056.patch
 d-i686-baseline.patch
+d-filter-llvm-flags.patch
 
 d-no-web-dependencies-in-doc.patch
 # Work around for some porterboxes, keep this commented
