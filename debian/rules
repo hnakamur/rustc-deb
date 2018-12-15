@@ -324,7 +324,6 @@ override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 		-o -name 'COPYING*' \
 		\) -delete
 	# Remove files that autoload remote resources, caught by lintian
-	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/tools/clippy/util/gh-pages/*
 	$(RM) -rf debian/rust-src/usr/src/rustc-*/vendor/cssparser/docs/*.html
 	$(RM) -rf debian/rust-src/usr/src/rustc-*/vendor/kuchiki/docs/*.html
 	$(RM) -rf debian/rust-src/usr/src/rustc-*/vendor/url/docs/*.html

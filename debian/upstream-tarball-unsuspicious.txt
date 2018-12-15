@@ -19,7 +19,6 @@ src/librustc_codegen_ssa/README.md
 src/libstd/sys/cloudabi/abi/cloudabi.rs
 src/libstd/os/raw/*.md
 src/rustc/*/Cargo.toml
-src/tools/clippy/CONTRIBUTING.md
 vendor/*/.travis.yml
 vendor/*/Cargo.toml
 vendor/*/CHANGELOG.md
@@ -51,7 +50,6 @@ vendor/winapi/src/lib.rs
 
 # False-positive, misc
 src/stdsimd/.travis.yml
-src/tools/clippy/.github/deploy_key.enc
 vendor/num/ci/deploy.enc
 vendor/elasticlunr-rs/src/lang/*.rs
 vendor/cloudabi/cloudabi.rs
