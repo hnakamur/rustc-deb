@@ -38,3 +38,21 @@ Last-Update: 2018-10-24
  // ignore-powerpc
  // ignore-powerpc64
  // ignore-powerpc64le
+--- a/src/test/ui/asm/asm-out-assign-imm.nll.stderr
++++ b/src/test/ui/asm/asm-out-assign-imm.nll.stderr
+@@ -1,5 +1,5 @@
+ error[E0384]: cannot assign twice to immutable variable `x`
+-  --> $DIR/asm-out-assign-imm.rs:34:34
++  --> $DIR/asm-out-assign-imm.rs:36:34
+    |
+ LL |     let x: isize;
+    |         - help: make this binding mutable: `mut x`
+--- a/src/test/ui/asm/asm-out-assign-imm.stderr
++++ b/src/test/ui/asm/asm-out-assign-imm.stderr
+@@ -1,5 +1,5 @@
+ error[E0384]: cannot assign twice to immutable variable `x`
+-  --> $DIR/asm-out-assign-imm.rs:34:34
++  --> $DIR/asm-out-assign-imm.rs:36:34
+    |
+ LL |     x = 1;
+    |     ----- first assignment to `x`
