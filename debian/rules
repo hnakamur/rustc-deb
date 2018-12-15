@@ -388,11 +388,12 @@ debian/watch-beta: debian/watch-beta.in debian/rules
 	m4 -DOLDVER="$$oldver" -DNEWVER="$$newver.0" "$<" > "$@"
 
 source_orig-beta: debian/watch-beta
-	uscan $(USCAN_OPTS) --verbose --watchfile "$<"
+	uscan $(USCAN_OPTS) $(if $(USCAN_DESTDIR),--destdir=$(USCAN_DESTDIR),) --verbose --watchfile "$<"
 	set -e; $(get_beta_version); \
-	tar xf ../rustc-$$newver.0-beta.999-src.tar.xz rustc-beta-src/version; \
+	bd="$(if $(USCAN_DESTDIR),$(USCAN_DESTDIR),..)"; \
+	tar xf $$bd/rustc-$$newver.0-beta.999-src.tar.xz rustc-beta-src/version; \
 	bv="$$(sed -re 's/[0-9]+.[0-9]+.[0-9]+-beta.([0-9]+) \(.*\)/\1/g' rustc-beta-src/version)"; \
-	bash -c 'shopt -s nullglob; for i in ../rustc*beta.999*; do mv $$i $${i/beta.999/beta.'"$$bv"'}; done'; \
+	bash -c 'shopt -s nullglob; for i in '"$$bd"'/rustc*beta.999*; do mv $$i $${i/beta.999/beta.'"$$bv"'}; done'; \
 	rm -f rustc-beta-src/version; \
 	rmdir -p rustc-beta-src; \
-	echo "prepared rustc $$newver.0~beta.$$bv"
+	echo "prepared rustc $$newver.0~beta.$$bv in $$bd"
