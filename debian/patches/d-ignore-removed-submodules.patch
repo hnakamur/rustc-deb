@@ -48,7 +48,7 @@ Forwarded: not-needed
  # here
  rustc-workspace-hack = { path = 'tools/rustc-workspace-hack' }
 -
--[patch."https://github.com/rust-lang-nursery/rust-clippy"]
+-[patch."https://github.com/rust-lang/rust-clippy"]
 -clippy_lints = { path = "tools/clippy/clippy_lints" }
 -rustc_tools_util = { path = "tools/clippy/rustc_tools_util" }
 --- a/src/bootstrap/bootstrap.py
