@@ -1,3 +1,5 @@
+Description: Ignore error details with $SRC_DIR
+ We build with --remap-path-prefix so it doesn't work, see bug below
 Bug: https://github.com/rust-lang/rust/issues/53081
 --- a/src/test/ui/impl-trait/impl-generic-mismatch.stderr
 +++ b/src/test/ui/impl-trait/impl-generic-mismatch.stderr
