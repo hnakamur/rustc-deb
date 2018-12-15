@@ -1,3 +1,9 @@
+rustc (1.31.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 14 Dec 2018 21:28:11 -0800
+
 rustc (1.31.0~beta.19+dfsg1-1~exp2) experimental; urgency=medium
 
   * Filter LLVM build flags to not be stupid.
