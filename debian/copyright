@@ -109,6 +109,7 @@ Files-Excluded:
  src/vendor/openssl-src
  src/vendor/openssl-sys
  src/vendor/ordslice
+ src/vendor/packed_simd
  src/vendor/proptest
  src/vendor/quine-mc_cluskey
  src/vendor/racer
@@ -132,7 +133,6 @@ Files-Excluded:
  src/vendor/semver-parser
  src/vendor/serde_ignored
  src/vendor/shell-escape
- src/vendor/simd
  src/vendor/syn
  src/vendor/term
  src/vendor/unicode-segmentation
