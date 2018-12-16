@@ -27,6 +27,7 @@ d-ignore-removed-submodules.patch
 d-read-beta-version-from-file.patch
 d-ignore-avx-44056.patch
 d-i686-baseline.patch
+d-no-jemalloc.patch
 
 d-no-web-dependencies-in-doc.patch
 # Work around for some porterboxes, keep this commented
