@@ -7,10 +7,13 @@ u-fixtestignores-ppc64el.patch
 u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
 u-mips-fixes.diff
-u-debuginfo-gdb-8.2.patch
 
 # not forwarded, or forwarded but unlikely to be merged
 u-reproducible-dl-stage0.patch
+
+# this isn't ready yet for 1.31.0, causes segfaults compiling with LTO
+#u-debuginfo-gdb-8.2.patch
+d-temp-ignore-debuginfo-gdb-enum.patch
 
 gcc-4.8-aarch64-ice.diff
 # Porter fixes under discussion, not suitable for upstreaming
