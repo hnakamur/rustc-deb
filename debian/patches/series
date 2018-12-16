@@ -15,7 +15,6 @@ gcc-4.8-aarch64-ice.diff
 # Porter fixes under discussion, not suitable for upstreaming
 # as-is but a proper fix is being discussed
 d-fix-mips64el-bootstrap.patch
-d-sparc64-dont-pack-spans.patch
 
 # Debian-specific patches, not suitable for upstream
 d-ignore-error-detail-diff.patch
