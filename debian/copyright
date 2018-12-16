@@ -155,6 +155,8 @@ Files-Excluded:
 
 Files: C*.md
        R*.md
+       Cargo.lock
+       Cargo.toml
        COPYRIGHT
        LICENSE*
        configure
@@ -234,10 +236,11 @@ Copyright: 2010-2011 Dmitry Vyukov
 License: BSD-2-Clause
 
 Files: vendor/bitflags/*
-       vendor/bitflags-*
+       vendor/bitflags-0*
        vendor/cc/*
        vendor/cmake/*
        vendor/env_logger/*
+       vendor/env_logger-0*/*
        vendor/getopts/*
        vendor/libc/*
        vendor/log/*
@@ -463,6 +466,11 @@ Comment:
  see https://github.com/withoutboats/failure
  see https://github.com/withoutboats/failure_derive
 
+Files: vendor/fs_extra/*
+Copyright: 2017-2018 Denis Kurilenko <webdesus@gmail.com>
+License: MIT
+Comment: see https://github.com/webdesus/fs_extra
+
 Files: vendor/fuchsia-zircon/*
        vendor/fuchsia-zircon-sys/*
 Copyright: 2014-2018 Raph Levien <raph@google.com>
@@ -579,7 +587,9 @@ Copyright: 2018-2018 The Rust Project Developers
 License: Apache-2.0 or MIT
 Comment: see https://github.com/rust-lang-nursery/polonius
 
-Files: vendor/pulldown-cmark/*
+Files:
+ vendor/pulldown-cmark/*
+ vendor/pulldown-cmark-0*/*
 Copyright: 2015-2017 Raph Levien <raph@google.com>
 License: MIT
 Comment: see https://github.com/google/pulldown-cmark
