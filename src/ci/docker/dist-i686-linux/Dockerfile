@@ -67,7 +67,7 @@ RUN ./build-gcc.sh
 COPY dist-x86_64-linux/build-python.sh /tmp/
 RUN ./build-python.sh
 
-# Now build LLVM+Clang 6, afterwards configuring further compilations to use the
+# Now build LLVM+Clang 7, afterwards configuring further compilations to use the
 # clang/clang++ compilers.
 COPY dist-x86_64-linux/build-clang.sh /tmp/
 RUN ./build-clang.sh
@@ -98,7 +98,8 @@ ENV RUST_CONFIGURE_ARGS \
       --enable-sanitizers \
       --enable-profiler \
       --set target.i686-unknown-linux-gnu.linker=clang \
-      --build=i686-unknown-linux-gnu
+      --build=i686-unknown-linux-gnu \
+      --set rust.jemalloc
 ENV SCRIPT python2.7 ../x.py dist --build $HOSTS --host $HOSTS --target $HOSTS
 ENV CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_LINKER=clang
 
