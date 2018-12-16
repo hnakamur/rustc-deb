@@ -549,9 +549,9 @@ impl<'a> PathSource<'a> {
         match self {
             PathSource::Type => match def {
                 Def::Struct(..) | Def::Union(..) | Def::Enum(..) |
-                Def::Trait(..) | Def::TyAlias(..) | Def::AssociatedTy(..) |
-                Def::PrimTy(..) | Def::TyParam(..) | Def::SelfTy(..) |
-                Def::Existential(..) |
+                Def::Trait(..) | Def::TraitAlias(..) | Def::TyAlias(..) |
+                Def::AssociatedTy(..) | Def::PrimTy(..) | Def::TyParam(..) |
+                Def::SelfTy(..) | Def::Existential(..) |
                 Def::ForeignTy(..) => true,
                 _ => false,
             },
@@ -1760,13 +1760,8 @@ impl<'a, 'crateloader> Resolver<'a, 'crateloader> {
         let segments = &path.segments;
         let path = Segment::from_path(&path);
         // FIXME (Manishearth): Intra doc links won't get warned of epoch changes
-        let def = match self.resolve_path_without_parent_scope(
-            &path,
-            Some(namespace),
-            true,
-            span,
-            CrateLint::No,
-        ) {
+        let def = match self.resolve_path_without_parent_scope(&path, Some(namespace), true,
+                                                               span, CrateLint::No) {
             PathResult::Module(ModuleOrUniformRoot::Module(module)) =>
                 module.def().unwrap(),
             PathResult::NonModule(path_res) if path_res.unresolved_segments() == 0 =>
@@ -1879,22 +1874,22 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
 
             primitive_type_table: PrimitiveTypeTable::new(),
 
-            def_map: NodeMap(),
-            import_map: NodeMap(),
-            freevars: NodeMap(),
-            freevars_seen: NodeMap(),
+            def_map: Default::default(),
+            import_map: Default::default(),
+            freevars: Default::default(),
+            freevars_seen: Default::default(),
             export_map: FxHashMap::default(),
-            trait_map: NodeMap(),
+            trait_map: Default::default(),
             module_map,
-            block_map: NodeMap(),
+            block_map: Default::default(),
             extern_module_map: FxHashMap::default(),
             binding_parent_modules: FxHashMap::default(),
 
             make_glob_map: make_glob_map == MakeGlobMap::Yes,
-            glob_map: NodeMap(),
+            glob_map: Default::default(),
 
             used_imports: FxHashSet::default(),
-            maybe_unused_trait_imports: NodeSet(),
+            maybe_unused_trait_imports: Default::default(),
             maybe_unused_extern_crates: Vec::new(),
 
             unused_labels: FxHashMap::default(),
@@ -1924,7 +1919,7 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
             name_already_seen: FxHashMap::default(),
             whitelisted_legacy_custom_derives: Vec::new(),
             potentially_unused_imports: Vec::new(),
-            struct_constructors: DefIdMap(),
+            struct_constructors: Default::default(),
             found_unresolved_macro: false,
             unused_macros: FxHashSet::default(),
             current_type_ascription: Vec::new(),
@@ -2378,13 +2373,9 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
         self.with_current_self_item(item, |this| {
             this.with_type_parameter_rib(HasTypeParameters(generics, ItemRibKind), |this| {
                 let item_def_id = this.definitions.local_def_id(item.id);
-                if this.session.features_untracked().self_in_typedefs {
-                    this.with_self_rib(Def::SelfTy(None, Some(item_def_id)), |this| {
-                        visit::walk_item(this, item);
-                    });
-                } else {
+                this.with_self_rib(Def::SelfTy(None, Some(item_def_id)), |this| {
                     visit::walk_item(this, item);
-                }
+                });
             });
         });
     }
@@ -3190,16 +3181,8 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
             if is_self_type(path, ns) {
                 __diagnostic_used!(E0411);
                 err.code(DiagnosticId::Error("E0411".into()));
-                let available_in = if this.session.features_untracked().self_in_typedefs {
-                    "impls, traits, and type definitions"
-                } else {
-                    "traits and impls"
-                };
-                err.span_label(span, format!("`Self` is only available in {}", available_in));
-                if this.current_self_item.is_some() && nightly_options::is_nightly_build() {
-                    err.help("add #![feature(self_in_typedefs)] to the crate attributes \
-                              to enable");
-                }
+                err.span_label(span, format!("`Self` is only available in impls, traits, \
+                                              and type definitions"));
                 return (err, Vec::new());
             }
             if is_self_value(path, ns) {
@@ -3291,7 +3274,10 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
                         return (err, candidates);
                     }
                     (Def::TyAlias(..), PathSource::Trait(_)) => {
-                        err.span_label(span, "type aliases cannot be used for traits");
+                        err.span_label(span, "type aliases cannot be used as traits");
+                        if nightly_options::is_nightly_build() {
+                            err.note("did you mean to use a trait alias?");
+                        }
                         return (err, candidates);
                     }
                     (Def::Mod(..), PathSource::Expr(Some(parent))) => match parent.node {
@@ -4055,7 +4041,7 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
                             // report an error.
                             if record_used {
                                 resolve_error(self, span,
-                                        ResolutionError::CannotCaptureDynamicEnvironmentInFnItem);
+                                    ResolutionError::CannotCaptureDynamicEnvironmentInFnItem);
                             }
                             return Def::Err;
                         }
@@ -4063,7 +4049,7 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
                             // Still doesn't deal with upvars
                             if record_used {
                                 resolve_error(self, span,
-                                        ResolutionError::AttemptToUseNonConstantValueInConstant);
+                                    ResolutionError::AttemptToUseNonConstantValueInConstant);
                             }
                             return Def::Err;
                         }
@@ -4587,7 +4573,7 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
                         // declared as public (due to pruning, we don't explore
                         // outside crate private modules => no need to check this)
                         if !in_module_is_extern || name_binding.vis == ty::Visibility::Public {
-                            candidates.push(ImportSuggestion { path: path });
+                            candidates.push(ImportSuggestion { path });
                         }
                     }
                 }
@@ -4684,7 +4670,7 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
                             span: name_binding.span,
                             segments: path_segments,
                         };
-                        result = Some((module, ImportSuggestion { path: path }));
+                        result = Some((module, ImportSuggestion { path }));
                     } else {
                         // add the module to the lookup
                         if seen_modules.insert(module.def_id().unwrap()) {
@@ -5184,7 +5170,7 @@ fn show_candidates(err: &mut DiagnosticBuilder,
         err.span_suggestions_with_applicability(
             span,
             &msg,
-            path_strings,
+            path_strings.into_iter(),
             Applicability::Unspecified,
         );
     } else {
