@@ -2,6 +2,8 @@
 
 # pending, or forwarded
 u-0001-Fix-new-renamed_and_removed_lints-warning-247.patch
+u-0001-librustc_codegen_llvm-Don-t-eliminate-empty-structs-.patch
+u-Fix-alignment-for-array-indexing.patch
 u-reproducible-build.patch
 u-fixtestignores-ppc64el.patch
 u-prefer-local-css.patch
@@ -15,6 +17,7 @@ gcc-4.8-aarch64-ice.diff
 # Porter fixes under discussion, not suitable for upstreaming
 # as-is but a proper fix is being discussed
 d-fix-mips64el-bootstrap.patch
+d-sparc64-fix-fnctls.patch
 
 # Debian-specific patches, not suitable for upstream
 d-ignore-error-detail-diff.patch

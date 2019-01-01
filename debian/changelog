@@ -1,3 +1,10 @@
+rustc (1.32.0~beta.2+dfsg1-1~exp2) UNRELEASED; urgency=medium
+
+  * Note that this upstream version already Closes: #917191.
+  * Backport other upstream fixes. (Closes: #916818, #917000, #917192).
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 01 Jan 2019 15:12:27 -0800
+
 rustc (1.32.0~beta.2+dfsg1-1~exp1) experimental; urgency=medium
 
   * New upstream release.
