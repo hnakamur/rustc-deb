@@ -13,5 +13,5 @@ repack,\
 repacksuffix=+dfsg1+llvm,\
 compression=xz,\
 " \
- https://static.rust-lang.org/dist/index.html \
+ https://forge.rust-lang.org/other-installation-methods.html \
  (?:.*/)rustc?-(\d[\d.]*(?:-[\w.]+)?)-src\.tar\.[gx]z

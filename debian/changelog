@@ -1,8 +1,84 @@
-rustc (1.30.0+dfsg1+llvm-2ubuntu1~18.04.1) bionic; urgency=medium
+rustc (1.31.0+dfsg1+llvm-2ubuntu1) disco; urgency=medium
 
-  * Backport to Bionic.
+  * Merge from Debian unstable. Remaining changes:
+    - Use the bundled llvm to avoid having to do llvm updates in order to
+      deliver rust updates
+      - update debian/config.toml.in
+      - update debian/control
+      - update debian/copyright
+      - update debian/rules
+    - Build-Depend on libc6-dbg on armhf, to workaround a crash in ld.so
+      during some debuginfo tests
+      - update debian/control
+    - Add a hack to ensure the stage0 compiler is extracted to the correct
+      location
+      - update debian/make_orig-stage0_tarball.sh
+    - Scrub -g from CFLAGS and CXXFLAGS in order to let rustbuild control
+      whether LLVM is compiled with debug symbols
+      - update debian/rules
+    - On i386, only build debuginfo for libstd
+      - update debian/rules
+    - Ignore all test failures on every architecture
+      - update debian/rules
+    - Version the Build-Conflict on gdb-minimal as gdb now Provides it
+      - update debian/control
+    - Adjust the rustc Breaks/Replaces libstd-rust-dev version to fix an
+      upgrade issue
+      - update debian/control
+    - Adjust debian/watch to include +llvm in upstream version.
 
- -- Michael Hudson-Doyle <michael.hudson@ubuntu.com>  Tue, 13 Nov 2018 11:24:31 +1300
+ -- Michael Hudson-Doyle <michael.hudson@ubuntu.com>  Fri, 18 Jan 2019 11:43:00 +1300
+
+rustc (1.31.0+dfsg1-2) unstable; urgency=medium
+
+  * Bump mips mipsel s390x allowed-failures to 24.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 16 Dec 2018 14:34:44 -0800
+
+rustc (1.31.0+dfsg1-1) unstable; urgency=medium
+
+  * Revert debuginfo patches, they're not ready yet.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 16 Dec 2018 09:58:06 -0800
+
+rustc (1.31.0+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Drop redundant patches.
+  * Fix line numbers in some test-case patches.
+  * Backport an updated patch for gdb 8.2.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 15 Dec 2018 13:52:26 -0800
+
+rustc (1.31.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 14 Dec 2018 21:30:56 -0800
+
+rustc (1.31.0~beta.19+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Filter LLVM build flags to not be stupid.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 01 Dec 2018 12:17:52 -0800
+
+rustc (1.31.0~beta.19+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 29 Nov 2018 22:29:16 -0800
+
+rustc (1.31.0~beta.4+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Merge changes from Debian unstable.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 06 Nov 2018 19:45:26 -0800
+
+rustc (1.31.0~beta.4+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Drop old maintainers from Uploaders.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 04 Nov 2018 19:00:16 -0800
 
 rustc (1.30.0+dfsg1+llvm-2ubuntu1) disco; urgency=medium
 
