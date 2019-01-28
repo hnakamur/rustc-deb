@@ -186,6 +186,10 @@ s! {
 
 pub const SIGEV_THREAD_ID: ::c_int = 4;
 
+pub const EXTATTR_NAMESPACE_EMPTY: ::c_int = 0;
+pub const EXTATTR_NAMESPACE_USER: ::c_int = 1;
+pub const EXTATTR_NAMESPACE_SYSTEM: ::c_int = 2;
+
 pub const RAND_MAX: ::c_int = 0x7fff_fffd;
 pub const PTHREAD_STACK_MIN: ::size_t = 2048;
 pub const PTHREAD_MUTEX_ADAPTIVE_NP: ::c_int = 4;
@@ -457,6 +461,7 @@ pub const JAIL_SYS_INHERIT: ::c_int = 2;
 pub const SO_BINTIME: ::c_int = 0x2000;
 pub const SO_NO_OFFLOAD: ::c_int = 0x4000;
 pub const SO_NO_DDP: ::c_int = 0x8000;
+pub const SO_REUSEPORT_LB: ::c_int = 0x10000;
 pub const SO_LABEL: ::c_int = 0x1009;
 pub const SO_PEERLABEL: ::c_int = 0x1010;
 pub const SO_LISTENQLIMIT: ::c_int = 0x1011;
@@ -472,6 +477,39 @@ pub const LOCAL_PEERCRED: ::c_int = 1;
 pub const LOCAL_CREDS: ::c_int = 2;
 pub const LOCAL_CONNWAIT: ::c_int = 4;
 pub const LOCAL_VENDOR: ::c_int = SO_VENDOR;
+
+pub const PT_LWPINFO: ::c_int = 13;
+pub const PT_GETNUMLWPS: ::c_int = 14;
+pub const PT_GETLWPLIST: ::c_int = 15;
+pub const PT_CLEARSTEP: ::c_int = 16;
+pub const PT_SETSTEP: ::c_int = 17;
+pub const PT_SUSPEND: ::c_int = 18;
+pub const PT_RESUME: ::c_int = 19;
+pub const PT_TO_SCE: ::c_int = 20;
+pub const PT_TO_SCX: ::c_int = 21;
+pub const PT_SYSCALL: ::c_int = 22;
+pub const PT_FOLLOW_FORK: ::c_int = 23;
+pub const PT_LWP_EVENTS: ::c_int = 24;
+pub const PT_GET_EVENT_MASK: ::c_int = 25;
+pub const PT_SET_EVENT_MASK: ::c_int = 26;
+pub const PT_GETREGS: ::c_int = 33;
+pub const PT_SETREGS: ::c_int = 34;
+pub const PT_GETFPREGS: ::c_int = 35;
+pub const PT_SETFPREGS: ::c_int = 36;
+pub const PT_GETDBREGS: ::c_int = 37;
+pub const PT_SETDBREGS: ::c_int = 38;
+pub const PT_VM_TIMESTAMP: ::c_int = 40;
+pub const PT_VM_ENTRY: ::c_int = 41;
+pub const PT_FIRSTMACH: ::c_int = 64;
+
+pub const PTRACE_EXEC: ::c_int = 0x0001;
+pub const PTRACE_SCE: ::c_int = 0x0002;
+pub const PTRACE_SCX: ::c_int = 0x0004;
+pub const PTRACE_SYSCALL: ::c_int = PTRACE_SCE | PTRACE_SCX;
+pub const PTRACE_FORK: ::c_int = 0x0008;
+pub const PTRACE_LWP: ::c_int = 0x0010;
+pub const PTRACE_VFORK: ::c_int = 0x0020;
+pub const PTRACE_DEFAULT: ::c_int = PTRACE_EXEC;
 
 pub const AF_SLOW: ::c_int = 33;
 pub const AF_SCLUSTER: ::c_int = 34;
@@ -754,6 +792,16 @@ pub const IPPROTO_DIVERT: ::c_int = 258;
 /// SeND pseudo-protocol
 pub const IPPROTO_SEND: ::c_int = 259;
 
+// sys/netinet/TCP.h
+pub const TCP_MD5SIG: ::c_int = 16;
+pub const TCP_INFO: ::c_int = 32;
+pub const TCP_CONGESTION: ::c_int = 64;
+pub const TCP_CCALGOOPT: ::c_int = 65;
+pub const TCP_KEEPINIT: ::c_int = 128;
+pub const TCP_FASTOPEN: ::c_int = 1025;
+pub const TCP_PCAP_OUT: ::c_int = 2048;
+pub const TCP_PCAP_IN: ::c_int = 4096;
+
 pub const IP_BINDANY: ::c_int = 24;
 
 pub const PF_SLOW: ::c_int = AF_SLOW;
@@ -890,6 +938,16 @@ pub const POSIX_SPAWN_SETSCHEDULER: ::c_int = 0x08;
 pub const POSIX_SPAWN_SETSIGDEF: ::c_int = 0x10;
 pub const POSIX_SPAWN_SETSIGMASK: ::c_int = 0x20;
 
+// Flags for chflags(2)
+pub const UF_SYSTEM:    ::c_ulong = 0x00000080;
+pub const UF_SPARSE:    ::c_ulong = 0x00000100;
+pub const UF_OFFLINE:   ::c_ulong = 0x00000200;
+pub const UF_REPARSE:   ::c_ulong = 0x00000400;
+pub const UF_ARCHIVE:   ::c_ulong = 0x00000800;
+pub const UF_READONLY:  ::c_ulong = 0x00001000;
+pub const UF_HIDDEN:    ::c_ulong = 0x00008000;
+pub const SF_SNAPSHOT:  ::c_ulong = 0x00200000;
+
 extern {
     pub fn __error() -> *mut ::c_int;
 
@@ -899,6 +957,58 @@ extern {
     pub fn clock_getres(clk_id: ::clockid_t, tp: *mut ::timespec) -> ::c_int;
     pub fn clock_gettime(clk_id: ::clockid_t, tp: *mut ::timespec) -> ::c_int;
     pub fn clock_settime(clk_id: ::clockid_t, tp: *const ::timespec) -> ::c_int;
+
+    pub fn extattr_delete_fd(fd: ::c_int,
+                             attrnamespace: ::c_int,
+                             attrname: *const ::c_char) -> ::c_int;
+    pub fn extattr_delete_file(path: *const ::c_char,
+                               attrnamespace: ::c_int,
+                               attrname: *const ::c_char) -> ::c_int;
+    pub fn extattr_delete_link(path: *const ::c_char,
+                               attrnamespace: ::c_int,
+                               attrname: *const ::c_char) -> ::c_int;
+    pub fn extattr_get_fd(fd: ::c_int,
+                          attrnamespace: ::c_int,
+                          attrname: *const ::c_char,
+                          data: *mut ::c_void,
+                          nbytes: ::size_t) -> ::ssize_t;
+    pub fn extattr_get_file(path: *const ::c_char,
+                            attrnamespace: ::c_int,
+                            attrname: *const ::c_char,
+                            data: *mut ::c_void,
+                            nbytes: ::size_t) -> ::ssize_t;
+    pub fn extattr_get_link(path: *const ::c_char,
+                            attrnamespace: ::c_int,
+                            attrname: *const ::c_char,
+                            data: *mut ::c_void,
+                            nbytes: ::size_t) -> ::ssize_t;
+    pub fn extattr_list_fd(fd: ::c_int,
+                           attrnamespace: ::c_int,
+                           data: *mut ::c_void,
+                           nbytes: ::size_t) -> ::ssize_t;
+    pub fn extattr_list_file(path: *const ::c_char,
+                             attrnamespace: ::c_int,
+                             data: *mut ::c_void,
+                             nbytes: ::size_t) -> ::ssize_t;
+    pub fn extattr_list_link(path: *const ::c_char,
+                             attrnamespace: ::c_int,
+                             data: *mut ::c_void,
+                             nbytes: ::size_t) -> ::ssize_t;
+    pub fn extattr_set_fd(fd: ::c_int,
+                          attrnamespace: ::c_int,
+                          attrname: *const ::c_char,
+                          data: *const ::c_void,
+                          nbytes: ::size_t) -> ::ssize_t;
+    pub fn extattr_set_file(path: *const ::c_char,
+                            attrnamespace: ::c_int,
+                            attrname: *const ::c_char,
+                            data: *const ::c_void,
+                            nbytes: ::size_t) -> ::ssize_t;
+    pub fn extattr_set_link(path: *const ::c_char,
+                            attrnamespace: ::c_int,
+                            attrname: *const ::c_char,
+                            data: *const ::c_void,
+                            nbytes: ::size_t) -> ::ssize_t;
 
     pub fn jail(jail: *mut ::jail) -> ::c_int;
     pub fn jail_attach(jid: ::c_int) -> ::c_int;
@@ -1022,6 +1132,16 @@ extern {
 
     pub fn statfs(path: *const ::c_char, buf: *mut statfs) -> ::c_int;
     pub fn fstatfs(fd: ::c_int, buf: *mut statfs) -> ::c_int;
+
+    pub fn dup3(src: ::c_int, dst: ::c_int, flags: ::c_int) -> ::c_int;
+}
+
+#[link(name = "util")]
+extern {
+    pub fn extattr_namespace_to_string(attrnamespace: ::c_int,
+                                       string: *mut *mut ::c_char) -> ::c_int;
+    pub fn extattr_string_to_namespace(string: *const ::c_char,
+                                       attrnamespace: *mut ::c_int) -> ::c_int;
 }
 
 cfg_if! {
