@@ -18,6 +18,12 @@ rustc (1.32.0~beta.2+dfsg1-1~exp1) experimental; urgency=medium
 
  -- Ximin Luo <infinity0@debian.org>  Sun, 16 Dec 2018 13:48:25 -0800
 
+rustc (1.31.0+dfsg1-2) unstable; urgency=medium
+
+  * Bump mips mipsel s390x allowed-failures to 24.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 16 Dec 2018 14:34:44 -0800
+
 rustc (1.31.0+dfsg1-1) unstable; urgency=medium
 
   * Revert debuginfo patches, they're not ready yet.
