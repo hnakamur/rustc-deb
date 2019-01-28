@@ -222,6 +222,8 @@ pub const O_DIRECTORY: ::c_int = 0x08000000;
 pub const F_GETLK: ::c_int = 7;
 pub const F_SETLK: ::c_int = 8;
 pub const F_SETLKW: ::c_int = 9;
+pub const ENOMEDIUM: ::c_int = 93;
+pub const EASYNC: ::c_int = 99;
 pub const ELAST: ::c_int = 99;
 pub const RLIMIT_POSIXLOCKS: ::c_int = 11;
 pub const RLIM_NLIMITS: ::rlim_t = 12;
@@ -428,6 +430,8 @@ pub const NOTE_CHILD: ::uint32_t = 0x00000004;
 
 pub const SO_SNDSPACE: ::c_int = 0x100a;
 pub const SO_CPUHINT: ::c_int = 0x1030;
+
+pub const PT_FIRSTMACH: ::c_int = 32;
 
 // https://github.com/DragonFlyBSD/DragonFlyBSD/blob/master/sys/net/if.h#L101
 pub const IFF_UP: ::c_int = 0x1; // interface is up
@@ -680,6 +684,11 @@ pub const IPPROTO_DONE: ::c_int = 257;
 /// Used by RSS: the layer3 protocol is unknown
 pub const IPPROTO_UNKNOWN: ::c_int = 258;
 
+// sys/netinet/tcp.h
+pub const TCP_SIGNATURE_ENABLE:   ::c_int = 16;
+pub const TCP_KEEPINIT:   ::c_int = 32;
+pub const TCP_FASTKEEP:   ::c_int = 128;
+
 pub const AF_BLUETOOTH: ::c_int = 33;
 pub const AF_MPLS: ::c_int = 34;
 pub const AF_IEEE80211: ::c_int = 35;
@@ -764,6 +773,14 @@ pub const RTP_PRIO_REALTIME: ::c_ushort = 0;
 pub const RTP_PRIO_NORMAL: ::c_ushort = 1;
 pub const RTP_PRIO_IDLE: ::c_ushort = 2;
 pub const RTP_PRIO_THREAD: ::c_ushort = 3;
+
+// Flags for chflags(2)
+pub const UF_NOHISTORY: ::c_ulong = 0x00000040;
+pub const UF_CACHE:     ::c_ulong = 0x00000080;
+pub const UF_XLINK:     ::c_ulong = 0x00000100;
+pub const SF_NOHISTORY: ::c_ulong = 0x00400000;
+pub const SF_CACHE:     ::c_ulong = 0x00800000;
+pub const SF_XLINK:     ::c_ulong = 0x01000000;
 
 extern {
     pub fn mprotect(addr: *mut ::c_void, len: ::size_t, prot: ::c_int)
