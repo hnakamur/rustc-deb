@@ -42,7 +42,7 @@ export LD_LIBRARY_PATH
 endif
 
 RUSTBUILD = RUST_BACKTRACE=1 ./x.py
-RUSTBUILD_FLAGS = --config debian/config.toml -vv --on-fail env
+RUSTBUILD_FLAGS = --config debian/config.toml -vvv --on-fail env
 # TODO: This should simply be "$(RUSTBUILD) test" but unfortunately this causes
 # an insane blow up in the time it takes to run tests. See upstream #37477 for
 # details. Upstream worked around it in #38984 but in Debian we can't take
