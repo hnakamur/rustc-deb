@@ -1,3 +1,9 @@
+rustc (1.31.0+dfsg1+llvm-2ubuntu1ppa1~18.04.1) bionic; urgency=medium
+
+  * Backport to Ubuntu 18.04 LTS bionic
+
+ -- Hiroaki Nakamura <hnakamur@gmail.com>  Sun, 24 Feb 2019 22:44:22 +0900
+
 rustc (1.31.0+dfsg1+llvm-2ubuntu1) disco; urgency=medium
 
   * Merge from Debian unstable. Remaining changes:
