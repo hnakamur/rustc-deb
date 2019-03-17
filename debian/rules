@@ -222,7 +222,7 @@ ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
 endif
 FAILED_TESTS = grep "FAILED\|^command did not execute successfully" $(TEST_LOG) | grep -v '^test result: FAILED'
 override_dh_auto_test-arch:
-# ensure that rustc_llvm is actually dynamically linked to libLLVM
+	# ensure that rustc_llvm is actually dynamically linked to libLLVM
 	set -e; find build/*/stage2/lib/rustlib/* -name '*rustc_llvm*.so' | \
 	while read x; do \
 		stat -c '%s %n' "$$x"; \
@@ -232,7 +232,8 @@ override_dh_auto_test-arch:
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	{ $(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS); echo $$?; } | tee -a $(TEST_LOG)
-	test -f $(TEST_LOG)
+	# test that the log has at least 1 pass, to prevent e.g. #57709
+	grep -l "^test .* \.\.\. ok$" $(TEST_LOG)
 	echo "==== Debian rustc test report ===="; \
 	echo "Specific test failures:"; \
 	$(FAILED_TESTS); \

@@ -1,6 +1,7 @@
 rustc (1.32.0+dfsg1-2) UNRELEASED; urgency=medium
 
   * More verbose logging during builds.
+  * Fix compiletest compile error, and check log has at least 1 pass.
 
  -- Ximin Luo <infinity0@debian.org>  Thu, 31 Jan 2019 00:48:26 -0800
 
