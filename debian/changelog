@@ -1,6 +1,7 @@
 rustc (1.32.0+dfsg1-3) UNRELEASED; urgency=medium
 
   * Conditionally-apply u-compiletest.patch based on stage0 compiler.
+  * Fix syntax error in d/rules compiletest check.
 
  -- Ximin Luo <infinity0@debian.org>  Sun, 17 Mar 2019 14:37:19 -0700
 
