@@ -173,6 +173,13 @@ debian/dh_auto_configure.stamp: debian/config.toml
 	# work around #842634
 	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
 	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
+	# work around https://github.com/rust-lang/rust/issues/59264
+	# TODO: remove this in 1.33 and later
+	if dpkg --compare-versions $(LOCAL_RUST_VERSION) '>=' 1.32.0; then \
+	  debian/ensure-patch -N debian/patches/u-compiletest.patch; \
+	else \
+	  debian/ensure-patch -R debian/patches/u-compiletest.patch; \
+	fi
 	# We patched some crates so have to rm the checksums
 	find vendor -name .cargo-checksum.json -execdir "$(CURDIR)/debian/prune-checksums" "{}" ";"
 	# Unfortunately upstream uses a duplicate copy of libbacktrace and wants to

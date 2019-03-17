@@ -1,3 +1,9 @@
+rustc (1.32.0+dfsg1-3) UNRELEASED; urgency=medium
+
+  * Conditionally-apply u-compiletest.patch based on stage0 compiler.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 17 Mar 2019 14:37:19 -0700
+
 rustc (1.32.0+dfsg1-2) unstable; urgency=medium
 
   * More verbose logging during builds.
