@@ -13,7 +13,7 @@ for package maintainers" section further below.
 Embedded libraries
 ==================
 
-This source package embeds several external libraries (foeked and managed
+This source package embeds several external libraries (forked and managed
 by rust upstream as git submodules).
 In early stages, many more libraries were forked/emebedded but we are steadily
 progressing in splitting them out.
