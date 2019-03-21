@@ -11,13 +11,13 @@ to empty structs as well) are to be passed in one register.
  src/librustc_codegen_llvm/abi.rs | 8 ++++++--
  1 file changed, 6 insertions(+), 2 deletions(-)
 
-diff --git a/src/librustc_codegen_llvm/abi.rs b/src/librustc_codegen_llvm/abi.rs
-index b8954dee79..c083137f08 100644
---- a/src/librustc_codegen_llvm/abi.rs
-+++ b/src/librustc_codegen_llvm/abi.rs
-@@ -456,6 +456,9 @@ impl<'tcx> FnTypeExt<'tcx> for FnType<'tcx, Ty<'tcx>> {
-         let linux_s390x = target.target_os == "linux"
-                        && target.arch == "s390x"
+Index: rustc/src/librustc_codegen_llvm/abi.rs
+===================================================================
+--- rustc.orig/src/librustc_codegen_llvm/abi.rs
++++ rustc/src/librustc_codegen_llvm/abi.rs
+@@ -449,6 +449,9 @@ impl<'tcx> FnTypeExt<'tcx> for FnType<'t
+         let linux_sparc64 = target.target_os == "linux"
+                        && target.arch == "sparc64"
                         && target.target_env == "gnu";
 +        let linux_sparc64 = target.target_os == "linux"
 +                       && target.arch == "sparc64"
@@ -25,18 +25,3 @@ index b8954dee79..c083137f08 100644
          let rust_abi = match sig.abi {
              RustIntrinsic | PlatformIntrinsic | Rust | RustCall => true,
              _ => false
-@@ -526,8 +529,9 @@ impl<'tcx> FnTypeExt<'tcx> for FnType<'tcx, Ty<'tcx>> {
-             if arg.layout.is_zst() {
-                 // For some forsaken reason, x86_64-pc-windows-gnu
-                 // doesn't ignore zero-sized struct arguments.
--                // The same is true for s390x-unknown-linux-gnu.
--                if is_return || rust_abi || (!win_x64_gnu && !linux_s390x) {
-+                // The same is true for s390x-unknown-linux-gnu
-+                // and sparc64-unknown-linux-gnu.
-+                if is_return || rust_abi || (!win_x64_gnu && !linux_s390x && !linux_sparc64) {
-                     arg.mode = PassMode::Ignore;
-                 }
-             }
--- 
-2.20.1
-
