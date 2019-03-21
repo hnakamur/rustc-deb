@@ -1,13 +1,3 @@
-// Copyright 2016 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use {AmbiguityError, AmbiguityKind, AmbiguityErrorMisc};
 use {CrateLint, Resolver, ResolutionError, ScopeSet, Weak};
 use {Module, ModuleKind, NameBinding, NameBindingKind, PathResult, Segment, ToNameBinding};
@@ -21,22 +11,17 @@ use rustc::hir::def_id::{DefId, CRATE_DEF_INDEX, DefIndex,
 use rustc::hir::def::{Def, NonMacroAttrKind};
 use rustc::hir::map::{self, DefCollector};
 use rustc::{ty, lint};
-use syntax::ast::{self, Name, Ident};
+use syntax::ast::{self, Ident};
 use syntax::attr;
 use syntax::errors::DiagnosticBuilder;
 use syntax::ext::base::{self, Determinacy};
-use syntax::ext::base::{MacroKind, SyntaxExtension, Resolver as SyntaxResolver};
+use syntax::ext::base::{Annotatable, MacroKind, SyntaxExtension};
 use syntax::ext::expand::{AstFragment, Invocation, InvocationKind};
 use syntax::ext::hygiene::{self, Mark};
 use syntax::ext::tt::macro_rules;
-use syntax::feature_gate::{self, feature_err, emit_feature_err, is_builtin_attr_name, GateIssue};
-use syntax::feature_gate::EXPLAIN_DERIVE_UNDERSCORE;
-use syntax::fold::{self, Folder};
-use syntax::parse::parser::PathStyle;
-use syntax::parse::token::{self, Token};
-use syntax::ptr::P;
+use syntax::feature_gate::{feature_err, is_builtin_attr_name, GateIssue};
 use syntax::symbol::{Symbol, keywords};
-use syntax::tokenstream::{TokenStream, TokenTree, Delimited, DelimSpan};
+use syntax::visit::Visitor;
 use syntax::util::lev_distance::find_best_match_for_name;
 use syntax_pos::{Span, DUMMY_SP};
 use errors::Applicability;
@@ -125,7 +110,7 @@ fn sub_namespace_match(candidate: Option<MacroKind>, requirement: Option<MacroKi
     candidate.is_none() || requirement.is_none() || candidate == requirement
 }
 
-impl<'a, 'crateloader: 'a> base::Resolver for Resolver<'a, 'crateloader> {
+impl<'a> base::Resolver for Resolver<'a> {
     fn next_node_id(&mut self) -> ast::NodeId {
         self.session.next_node_id()
     }
@@ -142,60 +127,24 @@ impl<'a, 'crateloader: 'a> base::Resolver for Resolver<'a, 'crateloader> {
         mark
     }
 
-    fn eliminate_crate_var(&mut self, item: P<ast::Item>) -> P<ast::Item> {
-        struct EliminateCrateVar<'b, 'a: 'b, 'crateloader: 'a>(
-            &'b mut Resolver<'a, 'crateloader>, Span
-        );
-
-        impl<'a, 'b, 'crateloader> Folder for EliminateCrateVar<'a, 'b, 'crateloader> {
-            fn fold_path(&mut self, path: ast::Path) -> ast::Path {
-                match self.fold_qpath(None, path) {
-                    (None, path) => path,
-                    _ => unreachable!(),
+    fn resolve_dollar_crates(&mut self, annotatable: &Annotatable) {
+        pub struct ResolveDollarCrates<'a, 'b: 'a> {
+            pub resolver: &'a mut Resolver<'b>,
+        }
+        impl<'a> Visitor<'a> for ResolveDollarCrates<'a, '_> {
+            fn visit_ident(&mut self, ident: Ident) {
+                if ident.name == keywords::DollarCrate.name() {
+                    let name = match self.resolver.resolve_crate_root(ident).kind {
+                        ModuleKind::Def(_, name) if name != keywords::Invalid.name() => name,
+                        _ => keywords::Crate.name(),
+                    };
+                    ident.span.ctxt().set_dollar_crate_name(name);
                 }
             }
-
-            fn fold_qpath(&mut self, mut qself: Option<ast::QSelf>, mut path: ast::Path)
-                          -> (Option<ast::QSelf>, ast::Path) {
-                qself = qself.map(|ast::QSelf { ty, path_span, position }| {
-                    ast::QSelf {
-                        ty: self.fold_ty(ty),
-                        path_span: self.new_span(path_span),
-                        position,
-                    }
-                });
-
-                if path.segments[0].ident.name == keywords::DollarCrate.name() {
-                    let module = self.0.resolve_crate_root(path.segments[0].ident);
-                    path.segments[0].ident.name = keywords::CrateRoot.name();
-                    if !module.is_local() {
-                        let span = path.segments[0].ident.span;
-                        path.segments.insert(1, match module.kind {
-                            ModuleKind::Def(_, name) => ast::PathSegment::from_ident(
-                                ast::Ident::with_empty_ctxt(name).with_span_pos(span)
-                            ),
-                            _ => unreachable!(),
-                        });
-                        if let Some(qself) = &mut qself {
-                            qself.position += 1;
-                        }
-                    }
-                }
-                (qself, path)
-            }
-
-            fn fold_mac(&mut self, mac: ast::Mac) -> ast::Mac {
-                fold::noop_fold_mac(mac, self)
-            }
+            fn visit_mac(&mut self, _: &ast::Mac) {}
         }
 
-        let ret = EliminateCrateVar(self, item.span).fold_item(item);
-        assert!(ret.len() == 1);
-        ret.into_iter().next().unwrap()
-    }
-
-    fn is_whitelisted_legacy_custom_derive(&self, name: Name) -> bool {
-        self.whitelisted_legacy_custom_derives.contains(&name)
+        annotatable.visit_with(&mut ResolveDollarCrates { resolver: self });
     }
 
     fn visit_ast_fragment_with_placeholders(&mut self, mark: Mark, fragment: &AstFragment,
@@ -226,6 +175,7 @@ impl<'a, 'crateloader: 'a> base::Resolver for Resolver<'a, 'crateloader> {
         self.macro_map.insert(def_id, ext);
         let binding = self.arenas.alloc_name_binding(NameBinding {
             kind: NameBindingKind::Def(Def::Macro(def_id, kind), false),
+            ambiguity: None,
             span: DUMMY_SP,
             vis: ty::Visibility::Public,
             expansion: Mark::root(),
@@ -238,79 +188,6 @@ impl<'a, 'crateloader: 'a> base::Resolver for Resolver<'a, 'crateloader> {
 
     fn resolve_imports(&mut self) {
         ImportResolver { resolver: self }.resolve_imports()
-    }
-
-    // Resolves attribute and derive legacy macros from `#![plugin(..)]`.
-    fn find_legacy_attr_invoc(&mut self, attrs: &mut Vec<ast::Attribute>, allow_derive: bool)
-                              -> Option<ast::Attribute> {
-        if !allow_derive {
-            return None;
-        }
-
-        // Check for legacy derives
-        for i in 0..attrs.len() {
-            let name = attrs[i].name();
-
-            if name == "derive" {
-                let result = attrs[i].parse_list(&self.session.parse_sess, |parser| {
-                    parser.parse_path_allowing_meta(PathStyle::Mod)
-                });
-
-                let mut traits = match result {
-                    Ok(traits) => traits,
-                    Err(mut e) => {
-                        e.cancel();
-                        continue
-                    }
-                };
-
-                for j in 0..traits.len() {
-                    if traits[j].segments.len() > 1 {
-                        continue
-                    }
-                    let trait_name = traits[j].segments[0].ident.name;
-                    let legacy_name = Symbol::intern(&format!("derive_{}", trait_name));
-                    if !self.builtin_macros.contains_key(&legacy_name) {
-                        continue
-                    }
-                    let span = traits.remove(j).span;
-                    self.gate_legacy_custom_derive(legacy_name, span);
-                    if traits.is_empty() {
-                        attrs.remove(i);
-                    } else {
-                        let mut tokens = Vec::with_capacity(traits.len() - 1);
-                        for (j, path) in traits.iter().enumerate() {
-                            if j > 0 {
-                                tokens.push(TokenTree::Token(attrs[i].span, Token::Comma).into());
-                            }
-                            tokens.reserve((path.segments.len() * 2).saturating_sub(1));
-                            for (k, segment) in path.segments.iter().enumerate() {
-                                if k > 0 {
-                                    tokens.push(TokenTree::Token(path.span, Token::ModSep).into());
-                                }
-                                let tok = Token::from_ast_ident(segment.ident);
-                                tokens.push(TokenTree::Token(path.span, tok).into());
-                            }
-                        }
-                        let delim_span = DelimSpan::from_single(attrs[i].span);
-                        attrs[i].tokens = TokenTree::Delimited(delim_span, Delimited {
-                            delim: token::Paren,
-                            tts: TokenStream::concat(tokens).into(),
-                        }).into();
-                    }
-                    return Some(ast::Attribute {
-                        path: ast::Path::from_ident(Ident::new(legacy_name, span)),
-                        tokens: TokenStream::empty(),
-                        id: attr::mk_attr_id(),
-                        style: ast::AttrStyle::Outer,
-                        is_sugared_doc: false,
-                        span,
-                    });
-                }
-            }
-        }
-
-        None
     }
 
     fn resolve_macro_invocation(&mut self, invoc: &Invocation, invoc_id: Mark, force: bool)
@@ -327,7 +204,14 @@ impl<'a, 'crateloader: 'a> base::Resolver for Resolver<'a, 'crateloader> {
         };
 
         let parent_scope = self.invoc_parent_scope(invoc_id, derives_in_scope);
-        let (def, ext) = self.resolve_macro_to_def(path, kind, &parent_scope, true, force)?;
+        let (def, ext) = match self.resolve_macro_to_def(path, kind, &parent_scope, true, force) {
+            Ok((def, ext)) => (def, ext),
+            Err(Determinacy::Determined) if kind == MacroKind::Attr => {
+                // Replace unresolved attributes with used inert attributes for better recovery.
+                return Ok(Some(Lrc::new(SyntaxExtension::NonMacroAttr { mark_used: true })));
+            }
+            Err(determinacy) => return Err(determinacy),
+        };
 
         if let Def::Macro(def_id, _) = def {
             if after_derive {
@@ -340,7 +224,6 @@ impl<'a, 'crateloader: 'a> base::Resolver for Resolver<'a, 'crateloader> {
             self.definitions.add_parent_module_of_macro_def(invoc.expansion_data.mark,
                                                             normal_module_def_id);
             invoc.expansion_data.mark.set_default_transparency(ext.default_transparency());
-            invoc.expansion_data.mark.set_is_builtin(def_id.krate == CrateNum::BuiltinMacros);
         }
 
         Ok(Some(ext))
@@ -371,7 +254,7 @@ impl<'a, 'crateloader: 'a> base::Resolver for Resolver<'a, 'crateloader> {
     }
 }
 
-impl<'a, 'cl> Resolver<'a, 'cl> {
+impl<'a> Resolver<'a> {
     pub fn dummy_parent_scope(&self) -> ParentScope<'a> {
         self.invoc_parent_scope(Mark::root(), Vec::new())
     }
@@ -422,18 +305,13 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                     let features = self.session.features_untracked();
                     if attr_kind == NonMacroAttrKind::Custom {
                         assert!(path.segments.len() == 1);
-                        let name = path.segments[0].ident.name.as_str();
+                        let name = path.segments[0].ident.as_str();
                         if name.starts_with("rustc_") {
                             if !features.rustc_attrs {
                                 let msg = "unless otherwise specified, attributes with the prefix \
                                            `rustc_` are reserved for internal compiler diagnostics";
                                 feature_err(&self.session.parse_sess, "rustc_attrs", path.span,
                                             GateIssue::Language, &msg).emit();
-                            }
-                        } else if name.starts_with("derive_") {
-                            if !features.custom_derive {
-                                feature_err(&self.session.parse_sess, "custom_derive", path.span,
-                                            GateIssue::Language, EXPLAIN_DERIVE_UNDERSCORE).emit();
                             }
                         } else if !features.custom_attribute {
                             let msg = format!("The attribute `{}` is currently unknown to the \
@@ -445,7 +323,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                     }
                 } else {
                     // Not only attributes, but anything in macro namespace can result in
-                    // `Def::NonMacroAttr` definition (e.g. `inline!()`), so we must report
+                    // `Def::NonMacroAttr` definition (e.g., `inline!()`), so we must report
                     // an error for those cases.
                     let msg = format!("expected a macro, found {}", def.kind_name());
                     self.session.span_err(path.span, &msg);
@@ -488,7 +366,6 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                 }
                 PathResult::Indeterminate if !force => return Err(Determinacy::Undetermined),
                 PathResult::NonModule(..) | PathResult::Indeterminate | PathResult::Failed(..) => {
-                    self.found_unresolved_macro = true;
                     Err(Determinacy::Determined)
                 }
                 PathResult::Module(..) => unreachable!(),
@@ -499,15 +376,14 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                     .push((path, path_span, kind, parent_scope.clone(), def.ok()));
             }
 
+            self.prohibit_imported_non_macro_attrs(None, def.ok(), path_span);
             def
         } else {
             let binding = self.early_resolve_ident_in_lexical_scope(
                 path[0].ident, ScopeSet::Macro(kind), parent_scope, false, force, path_span
             );
-            match binding {
-                Ok(..) => {}
-                Err(Determinacy::Determined) => self.found_unresolved_macro = true,
-                Err(Determinacy::Undetermined) => return Err(Determinacy::Undetermined),
+            if let Err(Determinacy::Undetermined) = binding {
+                return Err(Determinacy::Undetermined);
             }
 
             if trace {
@@ -515,14 +391,16 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                     .push((path[0].ident, kind, parent_scope.clone(), binding.ok()));
             }
 
-            binding.map(|binding| binding.def_ignoring_ambiguity())
+            let def = binding.map(|binding| binding.def());
+            self.prohibit_imported_non_macro_attrs(binding.ok(), def.ok(), path_span);
+            def
         }
     }
 
     // Resolve an identifier in lexical scope.
     // This is a variation of `fn resolve_ident_in_lexical_scope` that can be run during
     // expansion and import resolution (perhaps they can be merged in the future).
-    // The function is used for resolving initial segments of macro paths (e.g. `foo` in
+    // The function is used for resolving initial segments of macro paths (e.g., `foo` in
     // `foo::bar!(); or `foo!();`) and also for import paths on 2018 edition.
     crate fn early_resolve_ident_in_lexical_scope(
         &mut self,
@@ -674,7 +552,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                     _ => Err(Determinacy::Determined),
                 }
                 WhereToResolve::CrateRoot => {
-                    let root_ident = Ident::new(keywords::CrateRoot.name(), orig_ident.span);
+                    let root_ident = Ident::new(keywords::PathRoot.name(), orig_ident.span);
                     let root_module = self.resolve_crate_root(root_ident);
                     let binding = self.resolve_ident_in_module_ext(
                         ModuleOrUniformRoot::Module(root_module),
@@ -953,36 +831,34 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
             // but its `Def` should coincide with a crate passed with `--extern`
             // (otherwise there would be ambiguity) and we can skip feature error in this case.
             'ok: {
-                if !is_import || self.session.features_untracked().uniform_paths {
+                if !is_import || !rust_2015 {
                     break 'ok;
                 }
                 if ns == TypeNS && use_prelude && self.extern_prelude_get(ident, true).is_some() {
                     break 'ok;
                 }
-                if rust_2015 {
-                    let root_ident = Ident::new(keywords::CrateRoot.name(), orig_ident.span);
-                    let root_module = self.resolve_crate_root(root_ident);
-                    if self.resolve_ident_in_module_ext(ModuleOrUniformRoot::Module(root_module),
-                                                        orig_ident, ns, None, false, path_span)
-                                                        .is_ok() {
-                        break 'ok;
-                    }
+                let root_ident = Ident::new(keywords::PathRoot.name(), orig_ident.span);
+                let root_module = self.resolve_crate_root(root_ident);
+                if self.resolve_ident_in_module_ext(ModuleOrUniformRoot::Module(root_module),
+                                                    orig_ident, ns, None, false, path_span)
+                                                    .is_ok() {
+                    break 'ok;
                 }
 
-                let msg = "imports can only refer to extern crate names \
-                           passed with `--extern` on stable channel";
-                let mut err = feature_err(&self.session.parse_sess, "uniform_paths",
-                                          ident.span, GateIssue::Language, msg);
-
+                let msg = "imports can only refer to extern crate names passed with \
+                           `--extern` in macros originating from 2015 edition";
+                let mut err = self.session.struct_span_err(ident.span, msg);
                 let what = self.binding_description(binding, ident,
                                                     flags.contains(Flags::MISC_FROM_PRELUDE));
                 let note_msg = format!("this import refers to {what}", what = what);
-                if binding.span.is_dummy() {
+                let label_span = if binding.span.is_dummy() {
                     err.note(&note_msg);
+                    ident.span
                 } else {
                     err.span_note(binding.span, &note_msg);
-                    err.span_label(binding.span, "not an extern crate passed with `--extern`");
-                }
+                    binding.span
+                };
+                err.span_label(label_span, "not an extern crate passed with `--extern`");
                 err.emit();
             }
 
@@ -1007,14 +883,23 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
     pub fn finalize_current_module_macro_resolutions(&mut self) {
         let module = self.current_module;
 
-        let check_consistency = |this: &mut Self, path: &[Segment], span,
-                                 kind: MacroKind, initial_def, def| {
+        let check_consistency = |this: &mut Self, path: &[Segment], span, kind: MacroKind,
+                                 initial_def: Option<Def>, def: Def| {
             if let Some(initial_def) = initial_def {
                 if def != initial_def && def != Def::Err && this.ambiguity_errors.is_empty() {
                     // Make sure compilation does not succeed if preferred macro resolution
                     // has changed after the macro had been expanded. In theory all such
                     // situations should be reported as ambiguity errors, so this is a bug.
-                    span_bug!(span, "inconsistent resolution for a macro");
+                    if initial_def == Def::NonMacroAttr(NonMacroAttrKind::Custom) {
+                        // Yeah, legacy custom attributes are implemented using forced resolution
+                        // (which is a best effort error recovery tool, basically), so we can't
+                        // promise their resolution won't change later.
+                        let msg = format!("inconsistent resolution for a macro: first {}, then {}",
+                                          initial_def.kind_name(), def.kind_name());
+                        this.session.span_err(span, &msg);
+                    } else {
+                        span_bug!(span, "inconsistent resolution for a macro");
+                    }
                 }
             } else {
                 // It's possible that the macro was unresolved (indeterminate) and silently
@@ -1044,7 +929,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                     let def = path_res.base_def();
                     check_consistency(self, &path, path_span, kind, initial_def, def);
                 }
-                path_res @ PathResult::NonModule(..) | path_res @  PathResult::Failed(..) => {
+                path_res @ PathResult::NonModule(..) | path_res @ PathResult::Failed(..) => {
                     let (span, msg) = if let PathResult::Failed(span, msg, ..) = path_res {
                         (span, msg)
                     } else {
@@ -1065,9 +950,9 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                 Ok(binding) => {
                     let initial_def = initial_binding.map(|initial_binding| {
                         self.record_use(ident, MacroNS, initial_binding, false);
-                        initial_binding.def_ignoring_ambiguity()
+                        initial_binding.def()
                     });
-                    let def = binding.def_ignoring_ambiguity();
+                    let def = binding.def();
                     let seg = Segment::from_ident(ident);
                     check_consistency(self, &[seg], ident.span, kind, initial_def, def);
                 }
@@ -1088,6 +973,20 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
             let _ = self.early_resolve_ident_in_lexical_scope(
                 ident, ScopeSet::Macro(MacroKind::Attr), &parent_scope, true, true, ident.span
             );
+        }
+    }
+
+    fn prohibit_imported_non_macro_attrs(&self, binding: Option<&'a NameBinding<'a>>,
+                                         def: Option<Def>, span: Span) {
+        if let Some(Def::NonMacroAttr(kind)) = def {
+            if kind != NonMacroAttrKind::Tool && binding.map_or(true, |b| b.is_import()) {
+                let msg = format!("cannot use a {} through an import", kind.descr());
+                let mut err = self.session.struct_span_err(span, &msg);
+                if let Some(binding) = binding {
+                    err.span_note(binding.span, &format!("the {} imported here", kind.descr()));
+                }
+                err.emit();
+            }
         }
     }
 
@@ -1116,6 +1015,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
             };
             let ident = Ident::new(Symbol::intern(name), span);
             self.lookup_typo_candidate(&[Segment::from_ident(ident)], MacroNS, is_macro, span)
+                .map(|suggestion| suggestion.candidate)
         });
 
         if let Some(suggestion) = suggestion {
@@ -1187,7 +1087,12 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
             let ident = ident.modern();
             self.macro_names.insert(ident);
             let def = Def::Macro(def_id, MacroKind::Bang);
-            let vis = ty::Visibility::Invisible; // Doesn't matter for legacy bindings
+            let is_macro_export = attr::contains_name(&item.attrs, "macro_export");
+            let vis = if is_macro_export {
+                ty::Visibility::Public
+            } else {
+                ty::Visibility::Restricted(DefId::local(CRATE_DEF_INDEX))
+            };
             let binding = (def, vis, item.span, expansion).to_name_binding(self.arenas);
             self.set_binding_parent_module(binding, self.current_module);
             let legacy_binding = self.arenas.alloc_legacy_binding(LegacyBinding {
@@ -1195,9 +1100,8 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
             });
             *current_legacy_scope = LegacyScope::Binding(legacy_binding);
             self.all_macros.insert(ident.name, def);
-            if attr::contains_name(&item.attrs, "macro_export") {
+            if is_macro_export {
                 let module = self.graph_root;
-                let vis = ty::Visibility::Public;
                 self.define(module, ident, MacroNS,
                             (def, vis, item.span, expansion, IsMacroExport));
             } else {
@@ -1214,16 +1118,6 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                 self.unused_macros.insert(def_id);
             }
             self.define(module, ident, MacroNS, (def, vis, item.span, expansion));
-        }
-    }
-
-    fn gate_legacy_custom_derive(&mut self, name: Symbol, span: Span) {
-        if !self.session.features_untracked().custom_derive {
-            let sess = &self.session.parse_sess;
-            let explain = feature_gate::EXPLAIN_CUSTOM_DERIVE;
-            emit_feature_err(sess, "custom_derive", span, GateIssue::Language, explain);
-        } else if !self.is_whitelisted_legacy_custom_derive(name) {
-            self.session.span_warn(span, feature_gate::EXPLAIN_DEPR_CUSTOM_DERIVE);
         }
     }
 }
