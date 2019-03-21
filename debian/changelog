@@ -1,3 +1,9 @@
+rustc (1.33.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Thu, 21 Mar 2019 23:26:22 +0100
+
 rustc (1.32.0+dfsg1-3) unstable; urgency=medium
 
   * Conditionally-apply u-compiletest.patch based on stage0 compiler.
