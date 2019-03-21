@@ -53,9 +53,9 @@ src/doc/book/ferris.js
 src/etc/wasm32-shim.js
 src/grammar/parser-lalr-main.c
 src/libbacktrace/*.c
-src/libcompiler_builtins/compiler-rt/lib/BlocksRuntime/*.c
-src/libcompiler_builtins/compiler-rt/lib/builtins/*.c
-src/libcompiler_builtins/compiler-rt/lib/builtins/*/*.c
+vendor/compiler_builtins/compiler-rt/lib/BlocksRuntime/*.c
+vendor/compiler_builtins/compiler-rt/lib/builtins/*.c
+vendor/compiler_builtins/compiler-rt/lib/builtins/*/*.c
 src/librustdoc/html/static/*.js
 src/test/auxiliary/rust_test_helpers.c
 src/test/run-make/wasm-*/*.js
