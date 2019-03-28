@@ -1,3 +1,9 @@
+rustc (1.32.0+dfsg1-3ubuntu1ppa1~18.04.1) bionic; urgency=medium
+
+  * Backport to Ubuntu bionic.
+
+ -- Hiroaki Nakamura <hnakamur@gmail.com>  Fri, 29 Mar 2019 05:10:38 +0900
+
 rustc (1.32.0+dfsg1-3) unstable; urgency=medium
 
   * Conditionally-apply u-compiletest.patch based on stage0 compiler.
