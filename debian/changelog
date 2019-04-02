@@ -1,3 +1,9 @@
+rustc (1.33.0+dfsg1-1~exp1ppa1~ubuntu18.04.1) bionic; urgency=medium
+
+  * New upstream release. 
+
+ -- Hiroaki Nakamura <hnakamur@gmail.com>  Tue, 02 Apr 2019 20:50:49 +0900
+
 rustc (1.32.0+dfsg1-3ubuntu1ppa1~18.04.1) bionic; urgency=medium
 
   * Backport to Ubuntu bionic.
