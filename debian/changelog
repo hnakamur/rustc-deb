@@ -1,4 +1,4 @@
-rustc (1.33.0+dfsg1-1~exp1ppa1~ubuntu18.04.1) bionic; urgency=medium
+rustc (1.33.0+dfsg1-1ppa1~ubuntu18.04.1) bionic; urgency=medium
 
   [ Hiroaki Nakamura ]
   * Adjust gbp.conf for Ubuntu Bionic
