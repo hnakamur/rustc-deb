@@ -1,3 +1,17 @@
+rustc (1.33.0+dfsg1-1~exp1ppa1~ubuntu18.04.1) bionic; urgency=medium
+
+  [ Hiroaki Nakamura ]
+  * Adjust gbp.conf for Ubuntu Bionic
+
+  [ Sylvestre Ledru ]
+  * New upstream version 1.33.0+dfsg1
+
+  [ Hiroaki Nakamura ]
+  * Apply diff to upstream/experimental
+  * Delete already applied patches
+
+ -- Hiroaki Nakamura <hnakamur@gmail.com>  Tue, 02 Apr 2019 22:19:36 +0900
+
 rustc (1.32.0+dfsg1-3) unstable; urgency=medium
 
   * Conditionally-apply u-compiletest.patch based on stage0 compiler.
