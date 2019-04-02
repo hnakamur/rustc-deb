@@ -17,7 +17,7 @@ LL |     use T::*; //~ ERROR imports cannot refer to type parameters
    |         ^
 
 error: imports cannot refer to type parameters
-  --> $DIR/future-proofing-locals.rs:20:9
+  --> $DIR/future-proofing-locals.rs:19:9
    |
 LL |     use T; //~ ERROR imports cannot refer to type parameters
    |         ^

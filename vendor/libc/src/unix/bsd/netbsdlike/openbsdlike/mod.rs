@@ -319,6 +319,11 @@ pub const IPPROTO_DIVERT: ::c_int = 258;
 
 pub const IP_RECVDSTADDR: ::c_int = 7;
 pub const IP_SENDSRCADDR: ::c_int = IP_RECVDSTADDR;
+pub const IP_RECVIF: ::c_int = 30;
+
+// sys/netinet/in.h
+pub const TCP_MD5SIG: ::c_int = 0x04;
+pub const TCP_NOPUSH: ::c_int = 0x10;
 
 // sys/netinet/in.h
 pub const TCP_MD5SIG: ::c_int = 0x04;
