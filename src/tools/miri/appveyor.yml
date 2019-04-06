@@ -1,0 +1,44 @@
+environment:
+    global:
+        PROJECT_NAME: miri
+    matrix:
+        - TARGET: x86_64-pc-windows-msvc
+          MSYS2_BITS: 64
+        - TARGET: i686-pc-windows-msvc
+          MSYS2_BITS: 32
+
+# branches to build
+branches:
+  # whitelist
+  only:
+    - master
+
+install:
+    # Install Rust.
+    - set PATH=C:\Program Files\Git\mingw64\bin;C:\msys64\mingw%MSYS2_BITS%\bin;%PATH%
+    - set /p RUST_TOOLCHAIN=<rust-version
+    - curl -sSf -o rustup-init.exe https://win.rustup.rs/
+    - rustup-init.exe -y --default-host %TARGET% --default-toolchain %RUST_TOOLCHAIN%
+    - set PATH=%USERPROFILE%\.cargo\bin;%PATH%
+    - rustc --version
+
+build: false
+
+test_script:
+    - set RUST_TEST_NOCAPTURE=1
+    - set RUST_BACKTRACE=1
+    # Build and install miri
+    - cargo build --release --all-features --all-targets
+    - cargo install --all-features --force --path .
+    # Get ourselves a MIR-full libstd, and use it henceforth
+    - cargo miri setup
+    - set MIRI_SYSROOT=%USERPROFILE%\AppData\Local\miri\miri\cache\HOST
+    # Test miri
+    - cargo test --release --all-features
+    # Test cargo integration
+    - cd test-cargo-miri
+    - python3 run-test.py
+
+notifications:
+    - provider: Email
+      on_build_success: false

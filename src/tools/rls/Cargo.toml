@@ -1,0 +1,62 @@
+[package]
+name = "rls"
+version = "1.33.0"
+edition = "2018"
+authors = ["Nick Cameron <ncameron@mozilla.com>", "The RLS developers"]
+description = "Rust Language Server - provides information about Rust programs to IDEs and other tools"
+license = "Apache-2.0/MIT"
+repository = "https://github.com/rust-lang/rls"
+categories = ["development-tools"]
+
+build = "build.rs"
+
+[dependencies]
+cargo = { git = "https://github.com/rust-lang/cargo", rev = "2a9f16da7ffc4877aacf7547bac705f0d82de2d6" }
+cargo_metadata = "0.6"
+clippy_lints = { git = "https://github.com/rust-lang/rust-clippy", rev = "756b32e1e2ad474097f8d3e510b319dd5023297d", optional = true }
+env_logger = "0.5"
+failure = "0.1.1"
+home = "0.3"
+itertools = "0.7.3"
+jsonrpc-core = "9"
+languageserver-types = "0.51.1"
+lazy_static = "1"
+log = "0.4"
+num_cpus = "1"
+racer = { version = "=2.1.16", default-features = false }
+rand = "0.5.5"
+rayon = "1"
+rls-analysis = "0.16.10"
+rls-blacklist = "0.1.3"
+rls-data = { version = "0.18.1", features = ["serialize-serde", "serialize-rustc"] }
+rls-rustc = "0.5.0"
+rls-span = { version = "0.4", features = ["serialize-serde"] }
+rls-vfs = "0.7"
+rustc_tools_util = "0.1.1"
+rustfmt-nightly = "1.0.1"
+rustc-serialize = "0.3"
+serde = "1.0"
+serde_json = "1.0"
+serde_derive = "1.0"
+url = "1"
+walkdir = "2"
+regex = "1"
+ordslice = "0.3"
+crossbeam-channel = "0.2.3"
+toml = "0.4"
+
+# A noop dependency that changes in the Rust repository, it's a bit of a hack.
+# See the `src/tools/rustc-workspace-hack/README.md` file in `rust-lang/rust`
+# for more information.
+rustc-workspace-hack = "1.0.0"
+
+[dev-dependencies]
+difference = "2"
+tempfile = "3"
+
+[build-dependencies]
+rustc_tools_util = "0.1.1"
+
+[features]
+default = ["clippy"]
+clippy = ["clippy_lints"]
