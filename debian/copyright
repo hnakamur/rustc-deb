@@ -42,7 +42,6 @@ Files-Excluded:
  src/libcompiler_builtins/compiler-rt/unittests
  src/libcompiler_builtins/compiler-rt/www
 # Embedded C libraries
- vendor/backtrace-sys*/src/libbacktrace
  vendor/lzma-sys*/xz-*
 # Embedded binary blobs
  vendor/winapi-*/*/*.a
@@ -67,7 +66,6 @@ Files-Excluded:
  vendor/compiletest_rs
  vendor/core-foundation
  vendor/core-foundation-sys
- vendor/crossbeam
  vendor/crossbeam-channel
  vendor/crossbeam-epoch
  vendor/crossbeam-utils-0.5.0
@@ -78,13 +76,13 @@ Files-Excluded:
  vendor/derive_more
  vendor/derive-new
  vendor/directories
- vendor/ena-0.9.3
  vendor/environment
  vendor/env_logger
  vendor/fnv
  vendor/foreign-types
  vendor/foreign-types-shared
  vendor/fs2
+ vendor/fs_extra
  vendor/fst
  vendor/futures
  vendor/fwdansi
@@ -97,6 +95,7 @@ Files-Excluded:
  vendor/if_chain
  vendor/ignore
  vendor/im-rc
+ vendor/jemalloc-sys
  vendor/json
  vendor/jsonrpc-core
  vendor/kernel32-sys
@@ -106,7 +105,6 @@ Files-Excluded:
  vendor/libnghttp2-sys
  vendor/libssh2-sys
  vendor/libz-sys
- vendor/log-0.3.9
  vendor/num-derive
  vendor/opener
  vendor/openssl
@@ -115,7 +113,6 @@ Files-Excluded:
  vendor/openssl-sys
  vendor/ordslice
  vendor/packed_simd
- vendor/parking_lot_core-0.2.14
  vendor/pretty_env_logger
  vendor/proptest
  vendor/pulldown-cmark
@@ -134,17 +131,13 @@ Files-Excluded:
  vendor/rustc-ap-serialize
  vendor/rustc-ap-syntax
  vendor/rustc-ap-syntax_pos
- vendor/rustc_version
+ vendor/rustc_tools_util
  vendor/rusty-fork
  vendor/schannel
- vendor/semver
- vendor/semver-parser
  vendor/serde_ignored
  vendor/shell-escape
- vendor/syn
  vendor/term
  vendor/typenum
- vendor/unicode-segmentation
  vendor/url_serde
  vendor/vcpkg
  vendor/vergen
@@ -192,17 +185,6 @@ License: BSD-3-clause or MIT
 Files: src/libcompiler_builtins/compiler-rt/lib/BlocksRuntime/*
 Copyright: 2008-2010 Apple, Inc.
 License: MIT
-
-Files: src/libbacktrace/*
-Copyright: 2012-2014 Free Software Foundation, Inc.
-           (written by Ian Lance Taylor, Google.)
-License: BSD-3-Clause
-
-Files:
- src/libbacktrace/filenames.h
- src/libbacktrace/ltmain.sh
-Copyright: 2000, 2001, 2007, 2010 Free Software Foundation, Inc.
-License: GPL-2+
 
 Files: src/librustdoc/html/static/FiraSans*
 Copyright: 2014, Mozilla Foundation, 2014, Telefonica S.A.

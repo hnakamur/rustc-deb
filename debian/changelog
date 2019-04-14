@@ -1,8 +1,19 @@
-rustc (1.32.0+dfsg1-3ubuntu1ppa1~18.04.1) bionic; urgency=medium
+rustc (1.33.0+dfsg2-1~exp1) UNRELEASED; urgency=medium
 
-  * Backport to Ubuntu bionic.
+  * Update Files-Excluded for new upstream version 1.33.0
+  * Delete files in src/libbacktrace/ from debian/upstream-tarball-unsuspicious.txt
+  * Add files to debian/source/include-binaries
+  * Add files to debian/upstream-tarball-unsuspicious.txt
+  * New upstream version 1.33.0+dfsg2
+  * Delete debian/patches/u-0001-librustc_codegen_llvm-Don-t-eliminate-empty-structs-.patch
 
- -- Hiroaki Nakamura <hnakamur@gmail.com>  Fri, 29 Mar 2019 05:10:38 +0900
+ -- Hiroaki Nakamura <hnakamur@gmail.com>  Sun, 14 Apr 2019 14:40:42 +0000
+
+rustc (1.33.0+dfsg1-1~exp1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Thu, 21 Mar 2019 23:26:22 +0100
 
 rustc (1.32.0+dfsg1-3) unstable; urgency=medium
 

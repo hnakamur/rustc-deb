@@ -182,9 +182,6 @@ debian/dh_auto_configure.stamp: debian/config.toml
 	fi
 	# We patched some crates so have to rm the checksums
 	find vendor -name .cargo-checksum.json -execdir "$(CURDIR)/debian/prune-checksums" "{}" ";"
-	# Unfortunately upstream uses a duplicate copy of libbacktrace and wants to
-	# compile it again for rust-installer, see #43449
-	ln -rsf src/libbacktrace -t vendor/backtrace-sys/src/
 	# Link against system liblzma, see https://github.com/alexcrichton/xz2-rs/issues/16
 	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > vendor/lzma-sys/build.rs
 	# We don't run ./configure because we use debian/config.toml directly
@@ -201,7 +198,7 @@ endif
 override_dh_auto_clean:
 	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile
 	$(RM) -rf $(TEST_LOG) debian/config.toml debian/rust-src.install debian/rust-src.links debian/*.stamp
-	$(RM) -rf $(SRC_CLEAN) config.toml vendor/backtrace-sys/src/libbacktrace
+	$(RM) -rf $(SRC_CLEAN) config.toml
 
 override_dh_auto_build-arch:
 	$(RUSTBUILD) build $(RUSTBUILD_FLAGS)
