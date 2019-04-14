@@ -13,8 +13,6 @@ src/doc/*/CODE_OF_CONDUCT.md
 src/doc/unstable-book/src/language-features/unsized-locals.md
 src/etc/third-party/README.txt
 src/libcompiler_builtins/compiler-rt/lib/BlocksRuntime/runtime.c
-src/libbacktrace/configure
-src/libbacktrace/config/libtool.m4
 src/librustc_codegen_ssa/README.md
 src/libstd/sys/cloudabi/abi/cloudabi.rs
 src/libstd/os/raw/*.md
@@ -34,9 +32,12 @@ vendor/clap/.github/CONTRIBUTING.md
 # ^ author likes to omit line breaks in their comments
 vendor/failure/book/src/bail-and-ensure.md
 # ^ same with this one
+vendor/compiler_builtins/compiler-rt/test/fuzzer/Bingo.h
+vendor/compiler_builtins/compiler-rt/lib/tsan/go/build.bat
 vendor/handlebars/src/lib.rs
 vendor/maplit/README.rst
 vendor/lazy_static/src/lib.rs
+vendor/miniz_oxide_c_api/miniz_stub/miniz.c
 vendor/pulldown-cmark/tests/footnotes.rs
 vendor/pulldown-cmark/specs/footnotes.txt
 vendor/pulldown-cmark-*/tests/footnotes.rs
@@ -52,10 +53,24 @@ src/doc/book/*/ferris.js
 src/doc/book/ferris.js
 src/etc/wasm32-shim.js
 src/grammar/parser-lalr-main.c
-src/libbacktrace/*.c
 vendor/compiler_builtins/compiler-rt/lib/BlocksRuntime/*.c
+vendor/compiler_builtins/compiler-rt/lib/asan/tests/*.mm
 vendor/compiler_builtins/compiler-rt/lib/builtins/*.c
 vendor/compiler_builtins/compiler-rt/lib/builtins/*/*.c
+vendor/compiler_builtins/compiler-rt/lib/fuzzer/standalone/StandaloneFuzzTargetMain.c
+vendor/compiler_builtins/compiler-rt/lib/profile/*.c
+vendor/compiler_builtins/compiler-rt/lib/tsan/go/*.c
+vendor/compiler_builtins/compiler-rt/test/*/Darwin/*.cc
+vendor/compiler_builtins/compiler-rt/test/*/Darwin/*.mm
+vendor/compiler_builtins/compiler-rt/test/*/*/Darwin/*.mm
+vendor/compiler_builtins/compiler-rt/test/*/*.c
+vendor/compiler_builtins/compiler-rt/test/*/*.h
+vendor/compiler_builtins/compiler-rt/test/*/*.m
+vendor/compiler_builtins/compiler-rt/test/*/*/*.c
+vendor/compiler_builtins/compiler-rt/test/*/*/*/*.c
+vendor/compiler_builtins/compiler-rt/test/*/*/*/*/*.c
+vendor/compiler_builtins/compiler-rt/utils/*.awk
+vendor/miniz_oxide_c_api/miniz_stub/*.c
 src/librustdoc/html/static/*.js
 src/test/auxiliary/rust_test_helpers.c
 src/test/run-make/wasm-*/*.js
@@ -72,14 +87,20 @@ src/etc/platform-intrinsics/*/*.json
 src/etc/platform-intrinsics/*.json
 src/libcompiler_builtins/compiler-rt/.arcconfig
 src/libcompiler_builtins/*.json
+src/librustdoc/html/static/.eslintrc.js
 src/stdsimd/.travis.yml
+src/stdsimd/ci/cross/nvptx64-nvidia-cuda.json
+src/stdsimd/crates/coresimd/foo.wasm
+src/stdsimd/crates/stdsimd-verify/arm-intrinsics.html
 src/test/run-make-fulldeps/target-specs/*.json
 src/test/run-make-fulldeps/libtest-json/output.json
 vendor/clap/.mention-bot
 vendor/cloudabi/cloudabi.rs
+vendor/dlmalloc/src/dlmalloc.c
 vendor/elasticlunr-rs/src/lang/*.rs
 vendor/markup5ever/data/entities.json
 vendor/num/ci/deploy.enc
+vendor/unicode-segmentation/src/tables.rs
 
 # False-positive, hand-editable small image
 src/etc/installer/gfx/
@@ -95,6 +116,8 @@ src/doc/book/2018-edition/src/img/*.png
 src/doc/book/tools/docx-to-md.xsl
 src/librustdoc/html/static/*.svg
 vendor/difference/assets/*.png
+vendor/fortanix-sgx-abi/images/enclave-execution-lifecycle.png
+vendor/heck/no_step_on_snek.png
 vendor/mdbook/src/theme/favicon.png
 vendor/num/doc/favicon.ico
 vendor/num/doc/rust-logo-128x128-blk-v2.png
@@ -126,6 +149,10 @@ vendor/html5ever/data/bench/*.html
 vendor/html5ever/html5lib-tests/*/*.dat
 vendor/html5ever/html5lib-tests/*/*.test
 vendor/minifier/tests/files/test.json
+vendor/miniz_oxide/tests/test_data/issue_14.zlib
+vendor/miniz_oxide/tests/test_data/invalid_code_len_short
+vendor/miniz_oxide/tests/test_data/invalid_code_len_oom
+vendor/miniz_oxide/tests/test_data/issue_19.deflate
 vendor/pest/benches/data.json
 vendor/pretty_assertions/src/format_changeset.rs
 vendor/regex/src/testdata/basic.dat
@@ -151,6 +178,9 @@ src/librustdoc/html/static/*.woff
 # C and JS files not part of an external library
 vendor/mdbook/src/theme/book.js
 vendor/mdbook/src/theme/searcher/searcher.js
+vendor/miniz_oxide_c_api/examples/*.c
+vendor/miniz_oxide_c_api/miniz/*.c
+vendor/miniz_oxide_c_api/miniz_sub/*.c
 vendor/miniz-sys/miniz.c
 vendor/walkdir/compare/nftw.c
 vendor/walkdir-*/compare/nftw.c

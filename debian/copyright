@@ -42,7 +42,6 @@ Files-Excluded:
  src/libcompiler_builtins/compiler-rt/unittests
  src/libcompiler_builtins/compiler-rt/www
 # Embedded C libraries
- vendor/backtrace-sys*/src/libbacktrace
  vendor/lzma-sys*/xz-*
 # Embedded binary blobs
  vendor/winapi-*/*/*.a
@@ -186,17 +185,6 @@ License: BSD-3-clause or MIT
 Files: src/libcompiler_builtins/compiler-rt/lib/BlocksRuntime/*
 Copyright: 2008-2010 Apple, Inc.
 License: MIT
-
-Files: src/libbacktrace/*
-Copyright: 2012-2014 Free Software Foundation, Inc.
-           (written by Ian Lance Taylor, Google.)
-License: BSD-3-Clause
-
-Files:
- src/libbacktrace/filenames.h
- src/libbacktrace/ltmain.sh
-Copyright: 2000, 2001, 2007, 2010 Free Software Foundation, Inc.
-License: GPL-2+
 
 Files: src/librustdoc/html/static/FiraSans*
 Copyright: 2014, Mozilla Foundation, 2014, Telefonica S.A.
